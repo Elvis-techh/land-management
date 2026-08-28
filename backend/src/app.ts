@@ -1,21 +1,65 @@
+import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
+import rateLimit from "@fastify/rate-limit";
 import Fastify from "fastify";
 
+import authPlugin from "./auth/plugin.js";
 import type { AppConfig } from "./config/env.js";
+import type { Db } from "./db/client.js";
+import { auditRoutes } from "./routes/audit.js";
+import { authRoutes } from "./routes/auth.js";
 import { healthRoutes } from "./routes/health.js";
+import { exchangeRateRoutes } from "./routes/exchangeRate.js";
+import { lotRoutes } from "./routes/lots.js";
+import { permissionRoutes } from "./routes/permissions.js";
+import { projectRoutes } from "./routes/projects.js";
 
-export async function buildApp(config: AppConfig) {
+export async function buildApp(config: AppConfig, db: Db) {
   const app = Fastify({
     logger: config.nodeEnv !== "test",
   });
 
   await app.register(cors, {
     origin: config.frontendOrigins,
+    // Required for the session cookie to travel with fetch() requests.
     credentials: true,
   });
 
-  await app.register(healthRoutes, { prefix: "/api" });
+  await app.register(cookie, { secret: config.cookieSecret });
+
+  // A generous ceiling for normal use; the login route is far stricter below.
+  await app.register(rateLimit, {
+    max: 300,
+    timeWindow: "1 minute",
+  });
+
+  await app.register(authPlugin, { db });
+
+  await app.register(
+    async (api) => {
+      await api.register(healthRoutes);
+
+      // Login is the one route worth attacking with a script, so it gets its
+      // own tight limit — by default ten attempts per minute from one address.
+      await api.register(async (scoped) => {
+        await scoped.register(rateLimit, {
+          max: config.loginAttemptsPerMinute,
+          timeWindow: "1 minute",
+        });
+        await scoped.register(authRoutes, {
+          sessionDays: config.sessionDays,
+          isProduction: config.nodeEnv === "production",
+        });
+      });
+
+      await api.register(lotRoutes);
+      await api.register(projectRoutes);
+      await api.register(permissionRoutes);
+      await api.register(exchangeRateRoutes);
+      await api.register(auditRoutes);
+    },
+    { prefix: "/api" },
+  );
 
   return app;
 }
-

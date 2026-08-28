@@ -1,3 +1,17 @@
+Terminal 1:
+
+￼
+npm run dev:backend
+Wait for Server listening at http://...:3000
+
+Terminal 2:
+
+￼
+npm run dev:frontend
+Wait for Local: http://localhost:5173/
+
+
+
 # Architecture decisions
 
 ## System shape
@@ -43,8 +57,26 @@ users/roles, audit events, attachments, and reminder deliveries.
 - Posted payments are not silently edited or deleted. Reverse and replace them.
 - Receipt numbers are assigned atomically by the database and are never reused.
 - Currency conversion display toggles are estimates unless they reference a
-  persisted transaction rate; the current mockup's hard-coded conversion is only
-  visual behavior.
+  persisted transaction rate. The lempira/dollar rate shown in the header is
+  refreshed from a market feed and can be overridden by a supervisor; it is
+  display only. It is stored as an append-only history of readings, so an old
+  figure can still be explained, and a manual rate is never overwritten by the
+  scheduler until somebody asks for automatic updates again.
+- The market feed quotes an indicative rate. It is neither the Banco Central's
+  official rate nor what a bank pays out after its spread, which is why it may
+  price a lot on screen but must never settle a payment.
+
+## Measurement invariants
+
+- Store area as square metres on the lot, never in the unit it was quoted in.
+  Land here is sold by the manzana and the vara cuadrada as often as by the
+  metre, so people must be able to work in those — but a comparison, a total or
+  a price-per-unit across two lots stored in different units needs a conversion
+  table to be trusted, which is the same trap as storing money as floats.
+- The unit belongs to the PROJECT, not the lot: one project is sold in one unit,
+  so it is chosen once and every lot in it is captured and displayed that way.
+- Changing a project's unit rewrites nothing. It changes how the same land is
+  written down, never how much of it there is.
 
 ## Status model
 
@@ -80,7 +112,13 @@ defined. Offline financial writes without those rules risk duplicates.
 
 ## Security and reliability baseline
 
-- Server-side authorization for every write and sensitive read
+- Server-side authorization for every write and sensitive read, asked of the
+  database rather than a hard-coded table: a supervisor can change what the
+  associate role may do, and a revoked capability has to stop working on that
+  user's very next request, not at their next login
+- Managing users and editing permissions can never be granted to another role.
+  Without that lock, an associate could be given the power to grant themselves
+  everything, including the account that would have to take it back
 - Password hashing or a managed identity provider; never custom plaintext auth
 - Append-only audit events for financial and lifecycle changes
 - Database backups plus tested restore procedures
