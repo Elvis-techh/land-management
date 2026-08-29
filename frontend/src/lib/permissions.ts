@@ -27,6 +27,7 @@ export type Capability =
   | "customer:edit"
   | "customer:delete"
   | "contract:create"
+  | "contract:edit"
   | "contract:cancel"
   | "payment:record"
   | "payment:reverse"
@@ -60,6 +61,7 @@ const DEFAULT_CAPABILITIES_BY_ROLE: Record<Role, ReadonlySet<Capability>> = {
     "customer:edit",
     "customer:delete",
     "contract:create",
+    "contract:edit",
     "contract:cancel",
     "payment:record",
     "payment:reverse",

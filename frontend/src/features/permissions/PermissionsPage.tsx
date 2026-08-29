@@ -52,6 +52,11 @@ const GROUPS: Array<{
       },
       { capability: "contract:create", label: "Crear contratos y reservas" },
       {
+        capability: "contract:edit",
+        label: "Editar los términos de un contrato",
+        hint: "Plazo, cuota, día de pago. Cambiar el precio exige además el permiso de precios.",
+      },
+      {
         capability: "contract:cancel",
         label: "Cancelar contratos",
         hint: "Libera el lote y deja el contrato en el historial.",

@@ -232,18 +232,35 @@ export const customers = sqliteTable(
 /* -------------------------------------------------------------------------- */
 
 /**
- * A contract joins one customer to one lot.
+ * A contract joins one customer to ONE lot.
  *
- * `kind` separates a temporary hold from a signed sale; `status` is the
- * contract's own lifecycle. Payment health (current / overdue / at risk) is a
- * THIRD, separate concept computed from the payment schedule — it is
- * deliberately not a column here.
+ * That grain is deliberate even though a customer usually buys several lots at
+ * once and thinks of it as a single purchase. Lots are released, titled,
+ * cancelled and repossessed one at a time, so each one needs a balance of its
+ * own: paying off two of three lots has to leave two lots transferable and one
+ * outstanding, which a merged row cannot express.
+ *
+ * The "one purchase" the customer experiences is `saleGroupId`, and the single
+ * receipt they get for it is a payment split across the group's contracts —
+ * see src/lib/allocation.ts.
+ *
+ * Three separate concepts, none of which is allowed to stand in for another:
+ *
+ * - `kind`   — a temporary hold vs a signed sale.
+ * - `status` — the contract's own lifecycle.
+ * - payment health (al día / atrasado / en riesgo) — computed from the terms
+ *   below and the posted payments, in src/lib/contracts.ts. Deliberately NOT a
+ *   column: a stored alert status is stale the morning after it is written.
+ *
+ * Everything about how much is owed is likewise derived, never stored:
+ * `financed` is salePrice − downPayment, and the balance is salePrice minus
+ * the non-reversed payments. There is no balance column anywhere in Lindero.
  */
 export const contracts = sqliteTable(
   "contracts",
   {
     id: text("id").primaryKey(),
-    /** Human-facing number, e.g. "CT-2026-014". */
+    /** Human-facing number, e.g. "CT-2026-014". Assigned by the server. */
     code: text("code").notNull(),
     lotId: text("lot_id")
       .notNull()
@@ -251,17 +268,104 @@ export const contracts = sqliteTable(
     customerId: text("customer_id")
       .notNull()
       .references(() => customers.id),
+    /**
+     * The purchase this contract belongs to, or null when the lot was bought on
+     * its own.
+     *
+     * Lots bought together are one legal document and one payment: the customer
+     * hands over a single amount and gets a single receipt, which is then split
+     * across the group. Grouping implicitly by customer instead would be wrong
+     * for the common case of somebody who bought two lots in 2024 and a third
+     * this year — a payment for the new lot must not be spread over the old
+     * ones. So the group is recorded rather than guessed at.
+     *
+     * A plain shared id, with no table of its own. A group is always one
+     * customer's, it carries nothing a contract does not already know, and it
+     * cannot exist before the contracts that define it.
+     */
+    saleGroupId: text("sale_group_id"),
     /** "reservation" | "contract" */
     kind: text("kind").notNull(),
+    /**
+     * How the lot is being paid for: "financed" | "cash" | "donation".
+     *
+     * The Crédito / Comprado / Donación distinction, and it decides which of
+     * the terms below apply at all. A financed sale has a term, a monthly
+     * amount and a due day; a cash sale is settled at signing and has none of
+     * them; a donation is a transfer of land for no money, recorded at a sale
+     * price of zero so the lot's history says what became of it instead of the
+     * lot simply going quiet.
+     */
+    saleType: text("sale_type").notNull().default("financed"),
     /** "draft" | "active" | "paid_off" | "cancelled" | "defaulted" */
     status: text("status").notNull().default("active"),
     /**
      * The agreed price for THIS sale, which is independent of the lot's current
      * base price. Changing a lot's list price must never alter what a customer
      * already owes.
+     *
+     * Always lempira centavos. A payment made in dollars keeps its own dollar
+     * amount and the rate it was actually settled at, in `payments`, so the
+     * bank's real rate on the day is what enters the accounts — never today's
+     * display rate applied after the fact.
      */
     salePriceCents: integer("sale_price_cents").notNull(),
+    /**
+     * The prima as AGREED, which is not the same question as whether it has
+     * been paid. Whether it arrived is summed from the payments of type
+     * `down_payment`; keeping one column for both is how a spreadsheet ends up
+     * insisting on a prima nobody ever handed over.
+     */
+    downPaymentCents: integer("down_payment_cents").notNull().default(0),
+    /** How many installments were agreed. Null for a cash sale or a donation. */
+    termMonths: integer("term_months"),
+    /**
+     * The agreed installment, stored rather than computed.
+     *
+     * It is tempting to derive it as financed ÷ months, but the real figure is
+     * negotiated and rounded: L 47,000 over 13 months is L 3,615.38, which
+     * nobody pays. A round number is agreed and the last installment absorbs
+     * the difference. Computing it would quietly overwrite what was signed.
+     */
+    monthlyPaymentCents: integer("monthly_payment_cents"),
+    /** Day of the month the installment falls due, 1–31. See src/lib/contracts.ts. */
+    dueDay: integer("due_day"),
+    /**
+     * The date the contract was signed — the date the schedule counts from.
+     * Distinct from `created_at`, which is when the row was typed in, often
+     * days or years later.
+     */
+    signedOn: text("signed_on"),
+    /**
+     * When the first installment falls due, if it was negotiated rather than
+     * following from the signing date. Usually null: see `firstDueDate` in
+     * src/lib/contracts.ts for what is used instead.
+     */
+    firstDueOn: text("first_due_on"),
+    /**
+     * When a reservation lapses. Only meaningful for `kind = "reservation"`: a
+     * hold with no expiry keeps a lot off the market forever and nobody ever
+     * notices.
+     */
+    expiresOn: text("expires_on"),
+    /**
+     * When and why the contract stopped being active.
+     *
+     * The audit log records who did it, but the date belongs on the row: a
+     * status of "cancelled" with no date cannot answer when the lot came back,
+     * which is the first thing asked of a cancelled sale.
+     */
+    closedAt: text("closed_at"),
+    closedReason: text("closed_reason"),
+    /** What was agreed verbally, and anything the columns above cannot hold. */
+    notes: text("notes"),
     createdAt: timestamp("created_at"),
+    /**
+     * Nullable and written by the application, for the same reason as
+     * `projects.updated_at`: SQLite cannot add a NOT NULL column defaulting to
+     * CURRENT_TIMESTAMP to a table that already holds rows.
+     */
+    updatedAt: text("updated_at"),
   },
   (table) => [uniqueIndex("contracts_code_unique").on(table.code)],
 );
