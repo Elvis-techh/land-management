@@ -6,7 +6,7 @@ import type { Currency } from "../lib/money";
 import { formatRate } from "../lib/money";
 import { useDismiss } from "../lib/useDismiss";
 import { useIsMobile } from "../lib/viewport";
-import { IconBell, IconChevronDown, IconMenu, IconPlus, IconSearch } from "./Icons";
+import { IconBell, IconChevronDown, IconMenu, IconPlus } from "./Icons";
 import { MenuSurface } from "./MenuSurface";
 
 interface TopbarProps {
@@ -65,12 +65,14 @@ export function Topbar({
         <IconMenu />
       </button>
 
+      {/*
+        The header used to carry a search box here. It searched nothing — it was
+        never wired to anything — and the screens that actually hold lists have
+        since grown their own search, which knows what it is looking through.
+        One box per table beats one box that promises to find everything and
+        finds nothing.
+      */}
       <div className="page-title">{title}</div>
-
-      <div className="search">
-        <IconSearch />
-        <input type="text" placeholder="Buscar cliente, lote o contrato..." />
-      </div>
 
       <div className="currency-anchor" ref={currencyRef}>
         <div className="currency-toggle">

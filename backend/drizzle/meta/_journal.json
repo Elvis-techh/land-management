@@ -22,6 +22,13 @@
       "when": 1787877718300,
       "tag": "0002_useful_jimmy_woo",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1787975214736,
+      "tag": "0003_happy_roughhouse",
+      "breakpoints": true
     }
   ]
 }

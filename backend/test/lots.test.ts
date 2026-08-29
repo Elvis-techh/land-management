@@ -149,6 +149,44 @@ describe("lots", async () => {
       assert.equal(response.statusCode, 400);
     });
 
+    it("refuses to rename a lot on to a number already used in the project", async () => {
+      // A-01 belongs to the other lot. Before this was checked the write
+      // reached SQLite and came back as "UNIQUE constraint failed:
+      // lots.project_id, lots.code", which reached the user's screen verbatim.
+      const response = await app.inject({
+        method: "PATCH",
+        url: `/api/lots/${ids.freeLotId}`,
+        headers: { cookie: ownerCookie },
+        payload: { ...validEdit, code: "A-01" },
+      });
+
+      assert.equal(response.statusCode, 409);
+      assert.equal(response.json().error, "duplicate_code");
+
+      // The refusal has to name the lot and the project, in Spanish, with no
+      // trace of the column names behind it.
+      const { message } = response.json();
+      assert.match(message, /A-01/);
+      assert.match(message, /Proyecto Prueba/);
+      assert.doesNotMatch(message, /UNIQUE|constraint|project_id/i);
+
+      const row = db.select().from(lots).where(eq(lots.id, ids.freeLotId)).get();
+      assert.equal(row?.code, "A-02");
+    });
+
+    it("does not mistake a lot for a duplicate of itself", async () => {
+      // Editing the area while leaving the number alone is the commonest edit
+      // there is; a self-clash here would block it entirely.
+      const response = await app.inject({
+        method: "PATCH",
+        url: `/api/lots/${ids.freeLotId}`,
+        headers: { cookie: ownerCookie },
+        payload: { ...validEdit, areaM2: 334 },
+      });
+
+      assert.equal(response.statusCode, 200);
+    });
+
     it("returns 404 for a lot that does not exist", async () => {
       const response = await app.inject({
         method: "PATCH",

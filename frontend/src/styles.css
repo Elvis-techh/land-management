@@ -91,7 +91,21 @@ button {
 /* ---------- layout ---------- */
 .app {
   display: flex;
+  /*
+   * `dvh`, not `vh` — and the difference is the whole reason a short page used
+   * to scroll on a phone.
+   *
+   * `100vh` is the viewport with the browser's address bar RETRACTED, so while
+   * the bar is on screen it is taller than what you can actually see. Asking
+   * for at least that much made every page a little longer than the screen,
+   * and the phone dutifully offered a scroll that revealed nothing but blank
+   * paper. `100dvh` is the height that is really there right now.
+   *
+   * The `vh` line stays first as the fallback for browsers that do not know
+   * `dvh`; the same pair is used for the sidebar and the modals.
+   */
   min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .sidebar {
@@ -106,6 +120,7 @@ button {
   position: sticky;
   top: 0;
   height: 100vh;
+  height: 100dvh;
 }
 
 .brand {
@@ -272,36 +287,6 @@ nav.nav {
   font-weight: 600;
   margin-right: auto;
   white-space: nowrap;
-}
-
-.search {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 7px 12px;
-  width: 260px;
-  color: var(--text-muted);
-  font-size: 0.8125rem;
-}
-
-.search svg {
-  width: 15px;
-  height: 15px;
-  opacity: 0.6;
-  flex-shrink: 0;
-}
-
-.search input {
-  border: none;
-  outline: none;
-  background: none;
-  font-size: 0.8125rem;
-  width: 100%;
-  font-family: inherit;
-  color: var(--text-primary);
 }
 
 .currency-toggle {
@@ -1008,6 +993,7 @@ tbody tr:hover {
   left: 0;
   width: 100vw;
   height: 100vh;
+  height: 100dvh;
   background: rgba(61, 49, 42, 0.4);
   backdrop-filter: blur(2px);
   z-index: 15;
@@ -1026,13 +1012,27 @@ body.modal-open {
   overflow: hidden;
 }
 
+/*
+ * The backdrop is the scroll container, and it centres its panel with an auto
+ * margin rather than with `place-items: center`.
+ *
+ * That distinction is the whole bug. A grid or flex item centred by the
+ * CONTAINER and taller than it overflows past BOTH edges — including upward,
+ * off the top of the screen, where there is no way to scroll it back. That is
+ * how the filter sheet lost its "Filtros" heading and its close button on a
+ * real phone, leaving no way out of it. An `auto` margin collapses to zero
+ * instead of going negative, so the top of the panel is never pushed out of
+ * reach, and anything that does not fit scrolls here.
+ */
 .modal-backdrop {
   position: fixed;
   inset: 0;
   z-index: 50;
-  display: grid;
-  place-items: center;
+  display: flex;
   padding: 24px;
+  overflow-y: auto;
+  /* Scrolling the sheet must not start scrolling the page behind it. */
+  overscroll-behavior: contain;
   background: rgba(61, 49, 42, 0.48);
   backdrop-filter: blur(3px);
   opacity: 0;
@@ -1047,7 +1047,23 @@ body.modal-open {
 
 .entity-modal {
   width: min(620px, 100%);
+  flex: 0 0 auto;
+  /* Centred while it fits; see the note on .modal-backdrop for why this is a
+     margin and not container alignment. */
+  margin: auto;
+  /*
+   * `vh` first as a fallback, then `dvh`.
+   *
+   * On a phone `100vh` is the viewport with the browser's address bar RETRACTED
+   * — a height the page does not actually have while the bar is showing. The
+   * panel was therefore allowed to be taller than the screen it was being drawn
+   * on, by roughly the height of the address bar, which is roughly the height
+   * of the header that went missing. `dvh` tracks the real, current viewport.
+   * Chrome's device toolbar does not simulate a collapsing address bar, which
+   * is why this looked correct on a desktop and wrong on the actual handset.
+   */
   max-height: calc(100vh - 48px);
+  max-height: calc(100dvh - 48px);
   overflow-y: auto;
   background: var(--card);
   border: 1px solid var(--line);
@@ -1217,6 +1233,21 @@ body.modal-open {
 .field-hint {
   color: var(--text-muted);
   font-size: 0.6875rem;
+}
+
+/* A problem with ONE field, said next to that field. The red banner at the foot
+   of a form is for what the server refused; this is for what the form can see
+   before anybody presses Guardar. */
+.field-error {
+  color: var(--red-dark);
+  font-size: 0.6875rem;
+  font-weight: 500;
+}
+
+.form-field input[aria-invalid="true"],
+.form-field select[aria-invalid="true"],
+.form-field textarea[aria-invalid="true"] {
+  border-color: var(--red);
 }
 
 /* ---------- lotes: ordenar y filtrar ---------- */
@@ -2095,7 +2126,11 @@ body.modal-open {
     position: fixed;
     left: 0;
     top: 0;
+    /* Same reasoning as .entity-modal: `vh` is the address-bar-retracted
+       height, so the drawer overhung the screen and its sign-out footer went
+       with it. */
     height: 100vh;
+    height: 100dvh;
     transform: translateX(-100%);
     transition: transform .25s cubic-bezier(0.4, 0, 0.2, 1);
     z-index: 20;
@@ -2113,10 +2148,6 @@ body.modal-open {
   .topbar {
     padding: 0 12px;
     gap: 10px;
-  }
-
-  .search {
-    display: none;
   }
 
   /* Condense the primary button to icon-only on mobile */
@@ -2166,13 +2197,27 @@ body.modal-open {
   }
 
   .modal-backdrop {
-    align-items: end;
     padding: 12px;
   }
 
   .entity-modal {
+    /* Sits at the bottom of the screen like a sheet — the top auto margin
+       pushes it down while there is room, and collapses to zero the moment the
+       content is taller than the viewport, keeping the header on screen. */
+    margin: auto auto 0;
     max-height: calc(100vh - 24px);
+    max-height: calc(100dvh - 24px);
     border-radius: 14px;
+  }
+
+  /* The way out of a full-screen sheet must never scroll off the top. The
+     filter list is long enough to scroll on a phone, and the close button was
+     going with it. */
+  .modal-header {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    background: var(--card);
   }
 
   .modal-header,
@@ -2190,7 +2235,9 @@ body.modal-open {
   }
 
   .modal-actions {
-    padding: 14px 18px;
+    /* The gesture bar overlaps the bottom of the screen on phones like the S24.
+       `env()` is 0 where there is no such inset, so this costs nothing. */
+    padding: 14px 18px calc(14px + env(safe-area-inset-bottom, 0px));
   }
 }
 
@@ -2341,12 +2388,6 @@ body.modal-open {
   .topbar {
     gap: 10px;
     padding: 0 16px;
-  }
-
-  /* The search box is a placeholder that does nothing yet, and it was the
-     widest thing in the row. */
-  .search {
-    display: none;
   }
 
   .topbar .icon-btn:not(.menu-btn) {
@@ -2629,6 +2670,20 @@ body.modal-open {
   line-height: 1.55;
 }
 
+/* Said before the user types, not after they click: this one really does
+   destroy the record. Red rather than the amber of .form-blocked, which stops
+   an action — this one allows it and wants it read first. */
+.form-warning {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--red-bg);
+  border: 1px solid var(--red);
+  color: var(--text-primary);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+}
+
 .danger-eyebrow {
   color: var(--red-dark);
 }
@@ -2721,6 +2776,7 @@ input:disabled {
 
 .app-booting {
   min-height: 100vh;
+  min-height: 100dvh;
   display: grid;
   place-items: center;
   background: var(--paper);
@@ -2730,6 +2786,7 @@ input:disabled {
 
 .login-screen {
   min-height: 100vh;
+  min-height: 100dvh;
   display: grid;
   place-items: center;
   padding: 24px;
@@ -2955,5 +3012,146 @@ input:disabled {
   .audit-time {
     margin-left: 0;
     width: 100%;
+  }
+}
+
+/* ==========================================================================
+   Clientes
+   ========================================================================== */
+
+/* The identity cell reuses the holder block from the Lotes table so the same
+   person looks the same on both screens. Here there is nowhere to click
+   through to yet, so it is a plain block rather than a button. */
+.holder-btn.is-static {
+  cursor: default;
+  margin: 0;
+  padding: 0;
+}
+
+.holder-btn.is-static:hover {
+  background: transparent;
+  border-color: transparent;
+}
+
+/* Search sits in the toolbar where the Lotes screen keeps its sort and filter
+   chips, so the two tables are driven from the same place on the page.
+
+   Sized as a THIRD CHIP rather than as a form field: the same padding, the same
+   pill radius, the same type size, so the three controls read as one row of
+   controls. It was a 420px slab next to two small chips before, which made the
+   row look like a search box that had brought two buttons along.
+
+   Height is left to the padding instead of being fixed, so it tracks the chips
+   when the root font size grows on a wide screen. */
+.table-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  /* Does not grow: the spacer to its left is what absorbs the spare width. */
+  flex: 0 1 250px;
+  padding: 6px 13px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--card);
+  color: var(--text-muted);
+}
+
+.table-search:focus-within {
+  border-color: var(--clay);
+}
+
+.table-search svg {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+}
+
+.table-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  font-family: inherit;
+  font-size: 0.7812rem;
+  color: var(--text-primary);
+}
+
+.table-search input:focus {
+  outline: none;
+}
+
+/* Country code and national number, side by side and reading as one field. The
+   code is a select because it is picked far more often than it is typed, and
+   because a number saved without one cannot be dialled later. */
+.phone-input {
+  display: flex;
+  gap: 8px;
+}
+
+.phone-input .phone-dial {
+  width: auto;
+  flex: 0 0 auto;
+  max-width: 44%;
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+}
+
+.phone-input input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+@media (max-width: 760px) {
+  /* On a phone the country name does not fit beside the number; the dial code
+     alone is what identifies it anyway. */
+  .phone-input .phone-dial {
+    max-width: 108px;
+  }
+}
+
+/* A customer may hold more than one lot, so the cell is a list rather than a
+   single value. Stacked, because two contracts side by side in a table cell
+   stop being readable at the second one. */
+.contract-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.contract-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+/* The contract number is the anchor — it is what gets quoted on the phone. The
+   lot and project ride behind it as context, so they are set back a step. */
+.contract-line .cell-project {
+  font-size: 0.7812rem;
+  color: var(--text-secondary);
+}
+
+/* Notes are free text of any length. Clipped to keep row heights even; the full
+   text is on the cell's tooltip and always in the edit form. */
+.cell-notes {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  max-width: 260px;
+  font-size: 0.7812rem;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+@media (max-width: 760px) {
+  /* The count and the search box each get a full row rather than fighting over
+     one; the spacer between them is meaningless once they are stacked. */
+  .table-search {
+    flex-basis: 100%;
   }
 }

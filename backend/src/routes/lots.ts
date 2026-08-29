@@ -53,6 +53,43 @@ const lotsListQuery = (db: import("../db/client.js").Db) =>
     )
     .leftJoin(customers, eq(customers.id, contracts.customerId));
 
+/**
+ * The clash a lot code would cause inside a project, worded for the person at
+ * the screen — or `null` when the number is free.
+ *
+ * The unique index on (project_id, code) is what actually guarantees
+ * uniqueness. This lookup exists so a refusal reads as a sentence naming the
+ * lot that already holds the number, instead of surfacing SQLite's
+ * "UNIQUE constraint failed: lots.project_id, lots.code", which tells the user
+ * nothing they can act on.
+ *
+ * `ignoreLotId` is the lot being edited: a lot keeping its own number is not a
+ * duplicate of itself.
+ */
+function lotCodeClash(
+  db: import("../db/client.js").Db,
+  project: { id: string; name: string },
+  code: string,
+  ignoreLotId?: string,
+): string | null {
+  const clash = db
+    .select({ id: lots.id, archivedAt: lots.archivedAt })
+    .from(lots)
+    .where(and(eq(lots.projectId, project.id), eq(lots.code, code)))
+    .get();
+
+  if (!clash || clash.id === ignoreLotId) {
+    return null;
+  }
+
+  // An archived clash is the confusing one: the number looks free because the
+  // lot holding it is hidden from every screen, so the message has to say so.
+  return clash.archivedAt === null
+    ? `El lote ${code} ya existe en ${project.name}. Usa otro número.`
+    : `El lote ${code} ya existe en ${project.name}, pero está archivado. ` +
+        "Usa otro número o restaura ese lote.";
+}
+
 const updateLotBody = z.object({
   code: z.string().trim().min(1).max(40),
   projectName: z.string().trim().min(1).max(160),
@@ -121,6 +158,7 @@ export const lotRoutes: FastifyPluginAsync = async (app) => {
           email: customers.email,
           address: customers.address,
           customerSince: customers.customerSince,
+          notes: customers.notes,
         })
         .from(customers)
         .all(),
@@ -162,24 +200,10 @@ export const lotRoutes: FastifyPluginAsync = async (app) => {
       });
     }
 
-    // The database has a unique index on (project, code), so this check is not
-    // what guarantees uniqueness — it is what turns the constraint into a
-    // sentence the user can act on, naming the lot that is already there.
-    const duplicate = app.db
-      .select({ id: lots.id, archivedAt: lots.archivedAt })
-      .from(lots)
-      .where(and(eq(lots.projectId, project.id), eq(lots.code, parsed.data.code)))
-      .get();
+    const clash = lotCodeClash(app.db, project, parsed.data.code);
 
-    if (duplicate) {
-      return reply.code(409).send({
-        error: "duplicate_code",
-        message:
-          duplicate.archivedAt === null
-            ? `El lote ${parsed.data.code} ya existe en ${project.name}.`
-            : `El lote ${parsed.data.code} ya existe en ${project.name} y está archivado. ` +
-              "Usa otro número.",
-      });
+    if (clash) {
+      return reply.code(409).send({ error: "duplicate_code", message: clash });
     }
 
     const now = new Date().toISOString();
@@ -252,6 +276,16 @@ export const lotRoutes: FastifyPluginAsync = async (app) => {
           error: "unknown_project",
           message: "Ese proyecto no existe o está archivado.",
         });
+      }
+
+      // Renaming a lot on to a number that is taken is the same mistake as
+      // creating one there, and it has to be refused the same way. Without
+      // this the write reached SQLite and the unique index answered in its own
+      // words, which arrived in the dialog as raw constraint text.
+      const clash = lotCodeClash(app.db, project, parsed.data.code, existing.id);
+
+      if (clash) {
+        return reply.code(409).send({ error: "duplicate_code", message: clash });
       }
 
       // A lot under contract can still be repriced — prices really do get

@@ -44,13 +44,55 @@ export interface Project {
 export interface Customer {
   id: string;
   fullName: string;
-  /** Número de identidad. */
+  /** Número de identidad. Unique: one person, one record. */
   identification: string;
+  /**
+   * Stored in E.164, e.g. "+50499824471" — see lib/phone.ts.
+   *
+   * Never printed raw. Run it through `formatPhone` first, which writes it back
+   * out as "9982-4471". It is stored with its country code because this is the
+   * number a WhatsApp receipt will be sent to.
+   */
   phone: string;
   email: string | null;
   address: string | null;
   /** Year this person became a customer. */
   customerSince: number;
+  /**
+   * Free text: how they pay, who to call instead, what was agreed verbally.
+   * The column that stops people keeping a second list somewhere else.
+   */
+  notes: string | null;
+}
+
+/**
+ * One contract a customer currently holds, as the Clientes screen needs it.
+ *
+ * Assembled by the server from the contract, its lot and its payments. Like
+ * `LotHolding`, none of this is stored on the customer: a "2 contratos" written
+ * on the customer row would be wrong the moment a contract was cancelled, and
+ * nobody would find out.
+ */
+export interface CustomerContract {
+  contractId: string;
+  /** Human-facing contract number, e.g. "CT-2026-014". */
+  contractCode: string;
+  kind: HoldingKind;
+  lotCode: string;
+  projectName: string;
+  /** Agreed sale price, in lempira centavos. */
+  salePrice: Cents;
+  /** Total posted payments, in lempira centavos. Summed, never stored. */
+  paidToDate: Cents;
+}
+
+/** A customer with everything they are currently holding. */
+export interface CustomerRecord extends Customer {
+  /**
+   * ACTIVE contracts only. Cancelled, defaulted and paid-off contracts belong
+   * to the customer's history rather than to "what are they holding now".
+   */
+  contracts: CustomerContract[];
 }
 
 /**

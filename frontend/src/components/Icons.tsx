@@ -138,6 +138,25 @@ export function IconArchive() {
   );
 }
 
+/**
+ * Bin — delete a record for good.
+ *
+ * Deliberately NOT the archive box: archiving hides something and keeps it,
+ * deleting destroys it. Two actions that cannot be undone the same way must not
+ * share a picture.
+ */
+export function IconTrash() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 7H20" />
+      <path d="M9 7V5H15V7" />
+      <path d="M6 7L7 20H17L18 7" />
+      <path d="M10 11V16" />
+      <path d="M14 11V16" />
+    </svg>
+  );
+}
+
 /** Arrow leaving a door — sign out. */
 export function IconSignOut() {
   return (

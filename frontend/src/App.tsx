@@ -4,7 +4,13 @@ import { PlaceholderPage } from "./components/PlaceholderPage";
 import { Sidebar } from "./components/Sidebar";
 import { Topbar } from "./components/Topbar";
 import { AuditPage } from "./features/audit/AuditPage";
+import { CustomerDeleteDialog } from "./features/customers/CustomerDeleteDialog";
+import { CustomerFormDialog } from "./features/customers/CustomerFormDialog";
 import { CustomerPanel } from "./features/customers/CustomerPanel";
+import { CustomersPage } from "./features/customers/CustomersPage";
+import { createCustomer, deleteCustomer, updateCustomer } from "./features/customers/api";
+import type { CustomerDraft } from "./features/customers/api";
+import { useCustomers } from "./features/customers/useCustomers";
 import { LoginPage } from "./features/auth/LoginPage";
 import { authApi } from "./features/auth/api";
 import { LotArchiveDialog } from "./features/lots/LotArchiveDialog";
@@ -31,7 +37,7 @@ import type { User } from "./lib/permissions";
 import { isMobileViewport } from "./lib/viewport";
 import { can } from "./lib/permissions";
 import type { AreaUnit } from "./lib/area";
-import type { Lot, Project, TabId } from "./types";
+import type { CustomerRecord, Lot, Project, TabId } from "./types";
 
 const pageTitles: Record<TabId, string> = {
   dashboard: "Panel general",
@@ -97,10 +103,16 @@ export default function App() {
   const [isProjectFormOpen, setProjectFormOpen] = useState(false);
   const [projectBeingEdited, setProjectBeingEdited] = useState<Project | null>(null);
   const [projectBeingArchived, setProjectBeingArchived] = useState<Project | null>(null);
+  // As with the project form, `null` in `customerBeingEdited` means the form is
+  // creating rather than editing, so the two states are kept apart.
+  const [isCustomerFormOpen, setCustomerFormOpen] = useState(false);
+  const [customerBeingEdited, setCustomerBeingEdited] = useState<CustomerRecord | null>(null);
+  const [customerBeingDeleted, setCustomerBeingDeleted] = useState<CustomerRecord | null>(null);
 
   const isSignedIn = session.status === "signed-in";
   const { state: lotsState, reload: reloadLots } = useLots(isSignedIn);
   const { state: projectsState, reload: reloadProjects } = useProjects(isSignedIn);
+  const { state: customersState, reload: reloadCustomers } = useCustomers(isSignedIn);
   const { rate, setRate } = useExchangeRate(isSignedIn);
 
   // Currency and rate travel together, so a component cannot format money with
@@ -228,6 +240,45 @@ export default function App() {
     await reloadLots();
   };
 
+  const openCustomerForm = (customer: CustomerRecord | null) => {
+    setCustomerBeingEdited(customer);
+    setCustomerFormOpen(true);
+  };
+
+  const closeCustomerForm = () => {
+    setCustomerFormOpen(false);
+    setCustomerBeingEdited(null);
+  };
+
+  const handleSaveCustomer = async (draft: CustomerDraft) => {
+    if (customerBeingEdited) {
+      await updateCustomer(customerBeingEdited.id, draft).catch(handleApiError);
+    } else {
+      await createCustomer(draft).catch(handleApiError);
+    }
+
+    await reloadCustomers();
+    // The lots table names the customer holding each lot, so it goes stale the
+    // moment somebody is renamed.
+    await reloadLots();
+    closeCustomerForm();
+  };
+
+  const handleDeleteCustomer = async (reason: string) => {
+    if (!customerBeingDeleted) {
+      return;
+    }
+
+    await deleteCustomer(customerBeingDeleted.id, reason).catch(handleApiError);
+
+    await reloadCustomers();
+    // A deleted customer can never have held a lot — the server refuses
+    // otherwise — but the Lotes table also names them, so it is re-read for the
+    // same reason a rename forces it: nothing on screen should outlive the row.
+    await reloadLots();
+    setCustomerBeingDeleted(null);
+  };
+
   const handleCreateLot = async (lot: {
     code: string;
     projectName: string;
@@ -280,7 +331,11 @@ export default function App() {
               ? () => setCreatingLot(true)
               : activeTab === "projects" && can(user, "project:create")
                 ? () => openProjectForm(null)
-                : undefined
+                : activeTab === "customers" &&
+                    customersState.status === "ready" &&
+                    can(user, "customer:create")
+                  ? () => openCustomerForm(null)
+                  : undefined
           }
           currency={currency}
           onCurrencyChange={setCurrency}
@@ -293,6 +348,7 @@ export default function App() {
         <div className="content">
           {activeTab !== "lots" &&
             activeTab !== "projects" &&
+            activeTab !== "customers" &&
             activeTab !== "audit" &&
             activeTab !== "permissions" && (
               <PlaceholderPage title={pageTitles[activeTab]} />
@@ -348,6 +404,38 @@ export default function App() {
             />
           )}
 
+          {activeTab === "customers" && customersState.status === "loading" && (
+            <section className="panel active">
+              <div className="card">
+                <p className="state-message">Cargando clientes…</p>
+              </div>
+            </section>
+          )}
+
+          {activeTab === "customers" && customersState.status === "error" && (
+            <section className="panel active">
+              <div className="card">
+                <p className="form-error">{customersState.message}</p>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => void reloadCustomers()}
+                >
+                  Reintentar
+                </button>
+              </div>
+            </section>
+          )}
+
+          {activeTab === "customers" && customersState.status === "ready" && (
+            <CustomersPage
+              customers={customersState.customers}
+              user={user}
+              onEditCustomer={openCustomerForm}
+              onDeleteCustomer={setCustomerBeingDeleted}
+            />
+          )}
+
           {activeTab === "lots" && lotsState.status === "loading" && (
             <section className="panel active">
               <div className="card">
@@ -400,6 +488,23 @@ export default function App() {
         />
       )}
 
+      {isCustomerFormOpen && (
+        <CustomerFormDialog
+          customer={customerBeingEdited}
+          customers={customersState.status === "ready" ? customersState.customers : []}
+          onCancel={closeCustomerForm}
+          onSave={handleSaveCustomer}
+        />
+      )}
+
+      {customerBeingDeleted && (
+        <CustomerDeleteDialog
+          customer={customerBeingDeleted}
+          onCancel={() => setCustomerBeingDeleted(null)}
+          onConfirm={handleDeleteCustomer}
+        />
+      )}
+
       {projectBeingArchived && (
         <ProjectArchiveDialog
           project={projectBeingArchived}
@@ -411,6 +516,7 @@ export default function App() {
       {lotBeingEdited && (
         <LotEditDialog
           lot={lotBeingEdited}
+          lots={lotsState.status === "ready" ? lotsState.data.lots : []}
           unitByProject={
             lotsState.status === "ready" ? lotsState.data.unitByProject : new Map()
           }

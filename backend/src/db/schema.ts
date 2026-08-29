@@ -194,12 +194,36 @@ export const customers = sqliteTable(
     fullName: text("full_name").notNull(),
     /** Número de identidad. */
     identification: text("identification").notNull(),
+    /**
+     * E.164, e.g. "+50499824471" — see src/lib/phone.ts.
+     *
+     * Stored with its country code and no punctuation because this is the
+     * address a WhatsApp receipt will be sent to, and WhatsApp cannot dial
+     * "9982-4471". The interface still shows and accepts the local form.
+     */
     phone: text("phone").notNull(),
     email: text("email"),
     address: text("address"),
     customerSince: integer("customer_since").notNull(),
+    /**
+     * Free text about this person: how they pay, who to call instead, what was
+     * agreed verbally. Deliberately unstructured — it is the column that stops
+     * people keeping a second list in WhatsApp because the app had nowhere to
+     * put what they know.
+     */
+    notes: text("notes"),
     createdAt: timestamp("created_at"),
+    /**
+     * Nullable and written by the application, for the same reason as
+     * `projects.updated_at`: SQLite cannot add a NOT NULL column defaulting to
+     * CURRENT_TIMESTAMP to a table that already holds rows. Customers written
+     * before this column existed say NULL, which is true, rather than claiming
+     * a modification time nobody recorded.
+     */
+    updatedAt: text("updated_at"),
   },
+  // One person, one identity number. This is what stops the same customer being
+  // entered twice and their contracts splitting across two records.
   (table) => [uniqueIndex("customers_identification_unique").on(table.identification)],
 );
 

@@ -27,6 +27,7 @@ export interface AuditEntry {
     | "reprice"
     | "archive"
     | "restore"
+    | "delete"
     | "cancel"
     | "reverse"
     | "login"

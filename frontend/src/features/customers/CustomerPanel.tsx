@@ -1,6 +1,7 @@
 import { Dialog } from "../../components/Dialog";
 import { IconClose } from "../../components/Icons";
 import { getInitials } from "../../lib/initials";
+import { formatPhone } from "../../lib/phone";
 import type { MoneyView } from "../../lib/money";
 import { formatMoney, subtractMoney } from "../../lib/money";
 import type { Customer, Lot } from "../../types";
@@ -58,7 +59,8 @@ export function CustomerPanel({
             </div>
             <div className="cp-row">
               <span>Teléfono</span>
-              <span className="mono">{customer.phone}</span>
+              {/* Stored with its country code; read back the local way. */}
+              <span className="mono">{formatPhone(customer.phone)}</span>
             </div>
             <div className="cp-row">
               <span>Correo</span>

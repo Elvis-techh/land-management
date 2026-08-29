@@ -45,6 +45,11 @@ const GROUPS: Array<{
     items: [
       { capability: "customer:create", label: "Registrar clientes" },
       { capability: "customer:edit", label: "Editar clientes" },
+      {
+        capability: "customer:delete",
+        label: "Eliminar clientes",
+        hint: "Solo a quien nunca ha tenido un contrato. Exige escribir un motivo.",
+      },
       { capability: "contract:create", label: "Crear contratos y reservas" },
       {
         capability: "contract:cancel",

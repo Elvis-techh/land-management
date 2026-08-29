@@ -13,6 +13,7 @@ const actionPresentation: Record<AuditAction, { label: string; stampClass: strin
   update: { label: "Editado", stampClass: "stamp neutral" },
   reprice: { label: "Cambio de precio", stampClass: "stamp clay" },
   archive: { label: "Archivado", stampClass: "stamp danger" },
+  delete: { label: "Eliminado", stampClass: "stamp danger" },
   cancel: { label: "Cancelado", stampClass: "stamp danger" },
   reverse: { label: "Reversado", stampClass: "stamp danger" },
   login: { label: "Inicio de sesión", stampClass: "stamp neutral" },
@@ -22,6 +23,13 @@ const actionPresentation: Record<AuditAction, { label: string; stampClass: strin
 /** Field names as staff would say them, rather than as the database spells them. */
 const fieldLabels: Record<string, string> = {
   code: "Lote",
+  fullName: "Cliente",
+  identification: "Identidad",
+  phone: "Teléfono",
+  email: "Correo",
+  address: "Dirección",
+  customerSince: "Cliente desde",
+  notes: "Notas",
   projectId: "Proyecto",
   areaM2: "Área",
   basePriceCents: "Precio base",

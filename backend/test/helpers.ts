@@ -77,7 +77,7 @@ export async function buildTestApp(configOverrides: Partial<AppConfig> = {}) {
       id: customerId,
       fullName: "Cliente Prueba",
       identification: "0801-1990-00001",
-      phone: "9999-0000",
+      phone: "+50499990000",
       email: null,
       address: null,
       customerSince: 2024,

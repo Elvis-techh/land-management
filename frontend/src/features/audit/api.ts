@@ -6,6 +6,7 @@ export type AuditAction =
   | "update"
   | "reprice"
   | "archive"
+  | "delete"
   | "cancel"
   | "reverse"
   | "login"

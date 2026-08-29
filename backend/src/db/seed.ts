@@ -47,13 +47,21 @@ const projectId = (name: string) => {
   return found.id;
 };
 
+/*
+ * Phones are seeded in E.164, the shape they are stored in — see
+ * src/lib/phone.ts. The interface still shows and accepts "9944-7781".
+ */
 const customerRows = [
-  { id: randomUUID(), fullName: "José Rodríguez", identification: "0801-1985-04412", phone: "9944-7781", email: "jrodriguez@correo.hn", address: "Col. Las Colinas, Tegucigalpa", customerSince: 2024 },
-  { id: randomUUID(), fullName: "Roberto Cruz", identification: "0501-1979-00238", phone: "9871-3320", email: null, address: "Barrio El Centro, San Pedro Sula", customerSince: 2025 },
-  { id: randomUUID(), fullName: "Carlos Mendoza", identification: "0801-1990-11207", phone: "9982-4471", email: "cmendoza@correo.hn", address: "Res. El Trapiche, Tegucigalpa", customerSince: 2024 },
-  { id: randomUUID(), fullName: "Ana Lucía Paz", identification: "0703-1988-00951", phone: "9915-2093", email: "alpaz@correo.hn", address: "Col. Satélite, La Ceiba", customerSince: 2023 },
-  { id: randomUUID(), fullName: "Elena Castillo", identification: "0801-1975-08830", phone: "9903-6612", email: null, address: "Col. Kennedy, Tegucigalpa", customerSince: 2022 },
-  { id: randomUUID(), fullName: "María Fernández", identification: "0601-1992-02274", phone: "9958-1104", email: "mfernandez@correo.hn", address: "Col. Modelo, Comayagua", customerSince: 2025 },
+  { id: randomUUID(), fullName: "José Rodríguez", identification: "0801-1985-04412", phone: "+50499447781", email: "jrodriguez@correo.hn", address: "Col. Las Colinas, Tegucigalpa", customerSince: 2024, notes: "Prefiere que le escriban por WhatsApp en las tardes." },
+  { id: randomUUID(), fullName: "Roberto Cruz", identification: "0501-1979-00238", phone: "+50498713320", email: null, address: "Barrio El Centro, San Pedro Sula", customerSince: 2025, notes: null },
+  { id: randomUUID(), fullName: "Carlos Mendoza", identification: "0801-1990-11207", phone: "+50499824471", email: "cmendoza@correo.hn", address: "Res. El Trapiche, Tegucigalpa", customerSince: 2024, notes: "Paga por transferencia los primeros días del mes." },
+  { id: randomUUID(), fullName: "Ana Lucía Paz", identification: "0703-1988-00951", phone: "+50499152093", email: "alpaz@correo.hn", address: "Col. Satélite, La Ceiba", customerSince: 2023, notes: null },
+  { id: randomUUID(), fullName: "Elena Castillo", identification: "0801-1975-08830", phone: "+50499036612", email: null, address: "Col. Kennedy, Tegucigalpa", customerSince: 2022, notes: "Contrato pagado por completo en 2025." },
+  { id: randomUUID(), fullName: "María Fernández", identification: "0601-1992-02274", phone: "+50499581104", email: "mfernandez@correo.hn", address: "Col. Modelo, Comayagua", customerSince: 2025, notes: "Contactar al esposo, Luis, al 9958-1105 si no contesta." },
+  // Nobody has put her on a contract yet: a real cartera is mostly people who
+  // asked once. She is also the only seeded record the delete button will
+  // actually let go of, and the only one the "Sin contrato activo" filter finds.
+  { id: randomUUID(), fullName: "Sofía Núñez", identification: "0801-1996-03318", phone: "+50497720145", email: null, address: "Col. Miraflores, Tegucigalpa", customerSince: 2026, notes: "Preguntó por lotes de esquina en Valle Verde; no ha vuelto." },
 ];
 
 const customerId = (fullName: string) => {

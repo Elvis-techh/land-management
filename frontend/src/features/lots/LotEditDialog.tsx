@@ -11,6 +11,12 @@ import type { Lot } from "../../types";
 
 interface LotEditDialogProps {
   lot: Lot;
+  /**
+   * Every active lot, so a number that is already taken can be caught here
+   * rather than on the round trip. The server checks the same thing and its
+   * answer is the one that counts — this only spares the user a failed save.
+   */
+  lots: Lot[];
   /** The area unit each project is captured in — see lib/area.ts. */
   unitByProject: Map<string, AreaUnit>;
   onCancel: () => void;
@@ -24,7 +30,13 @@ interface LotEditDialogProps {
   }) => Promise<void>;
 }
 
-export function LotEditDialog({ lot, unitByProject, onCancel, onSave }: LotEditDialogProps) {
+export function LotEditDialog({
+  lot,
+  lots,
+  unitByProject,
+  onCancel,
+  onSave,
+}: LotEditDialogProps) {
   // The lot is shown in its project's unit, and converted back to the stored
   // square metres on save.
   const unit = unitByProject.get(lot.projectName) ?? "m2";
@@ -47,6 +59,16 @@ export function LotEditDialog({ lot, unitByProject, onCancel, onSave }: LotEditD
   const priceChanged = fromCurrencyUnits(parseMoneyInput(basePrice) || 0) !== lot.basePrice;
   const needsJustification = lot.holding !== null && priceChanged;
 
+  // Lot numbers are unique WITHIN a project, so moving a lot to another project
+  // can collide exactly as renaming it can. Both are measured against whichever
+  // project is selected right now, not the one the lot started in.
+  const duplicate = lots.some(
+    (other) =>
+      other.id !== lot.id &&
+      other.projectName === projectName.trim() &&
+      other.code.toUpperCase() === code.trim().toUpperCase(),
+  );
+
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
     setError(null);
@@ -60,6 +82,10 @@ export function LotEditDialog({ lot, unitByProject, onCancel, onSave }: LotEditD
     }
     if (!projectName.trim()) {
       setError("El proyecto es obligatorio.");
+      return;
+    }
+    if (duplicate) {
+      setError(`El lote ${code.trim()} ya existe en ${projectName.trim()}. Usa otro número.`);
       return;
     }
     if (area.trim() === "" || !Number.isFinite(areaValue) || areaValue <= 0) {
@@ -93,7 +119,8 @@ export function LotEditDialog({ lot, unitByProject, onCancel, onSave }: LotEditD
       });
     } catch (caught) {
       // The server enforces the same rules independently, so this is where a
-      // permission refusal or a duplicate lot number surfaces.
+      // permission refusal — or a number held by a lot this screen cannot see,
+      // an archived one — surfaces.
       setError(caught instanceof Error ? caught.message : "No se pudo guardar el lote.");
     } finally {
       setSaving(false);
@@ -119,7 +146,17 @@ export function LotEditDialog({ lot, unitByProject, onCancel, onSave }: LotEditD
         <div className="modal-form-grid">
           <div className="form-field">
             <label htmlFor="lot-code">Lote</label>
-            <input id="lot-code" value={code} onChange={(e) => setCode(e.target.value)} />
+            <input
+              id="lot-code"
+              value={code}
+              aria-invalid={duplicate}
+              onChange={(e) => setCode(e.target.value)}
+            />
+            {duplicate && (
+              <span className="field-error">
+                Ya hay un lote {code.trim()} en {projectName.trim()}.
+              </span>
+            )}
           </div>
 
           <div className="form-field">
@@ -185,7 +222,11 @@ export function LotEditDialog({ lot, unitByProject, onCancel, onSave }: LotEditD
           <button type="button" className="btn-secondary" onClick={onCancel} disabled={isSaving}>
             Cancelar
           </button>
-          <button type="submit" className="btn-primary modal-submit" disabled={isSaving}>
+          <button
+            type="submit"
+            className="btn-primary modal-submit"
+            disabled={isSaving || duplicate}
+          >
             <span>{isSaving ? "Guardando…" : "Guardar cambios"}</span>
           </button>
         </div>

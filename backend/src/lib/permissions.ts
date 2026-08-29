@@ -26,6 +26,7 @@ export const CAPABILITIES = [
   "project:archive",
   "customer:create",
   "customer:edit",
+  "customer:delete",
   "contract:create",
   "contract:cancel",
   "payment:record",

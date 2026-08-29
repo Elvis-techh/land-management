@@ -25,6 +25,7 @@ export type Capability =
   | "project:archive"
   | "customer:create"
   | "customer:edit"
+  | "customer:delete"
   | "contract:create"
   | "contract:cancel"
   | "payment:record"
@@ -57,6 +58,7 @@ const DEFAULT_CAPABILITIES_BY_ROLE: Record<Role, ReadonlySet<Capability>> = {
     "project:archive",
     "customer:create",
     "customer:edit",
+    "customer:delete",
     "contract:create",
     "contract:cancel",
     "payment:record",
@@ -122,6 +124,7 @@ export const ROLE_LABELS: Record<Role, string> = {
  */
 export const REQUIRES_REASON: ReadonlySet<Capability> = new Set<Capability>([
   "lot:archive",
+  "customer:delete",
   "contract:cancel",
   "payment:reverse",
   "price:change",
