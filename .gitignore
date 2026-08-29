@@ -7,3 +7,9 @@ coverage/
 .DS_Store
 *.log
 
+
+# SQLite database files — never commit real data
+backend/data/
+*.db
+*.db-wal
+*.db-shm

@@ -7,13 +7,21 @@
     "backend"
   ],
   "scripts": {
+    "dev": "concurrently --names \"api,web\" --prefix-colors \"magenta.bold,cyan.bold\" --kill-others-on-fail \"npm:dev:backend\" \"npm:dev:frontend\"",
     "dev:frontend": "npm run dev --workspace @lindero/frontend",
     "dev:backend": "npm run dev --workspace @lindero/backend",
     "build": "npm run build --workspaces --if-present",
-    "typecheck": "npm run typecheck --workspaces --if-present"
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "db:migrate": "npm run db:migrate --workspace @lindero/backend",
+    "db:seed": "npm run db:seed --workspace @lindero/backend",
+    "db:reset": "npm run db:reset --workspace @lindero/backend",
+    "db:studio": "npm run db:studio --workspace @lindero/backend"
   },
   "engines": {
     "node": ">=22"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.5"
   }
 }
-
