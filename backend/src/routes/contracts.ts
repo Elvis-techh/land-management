@@ -130,7 +130,18 @@ function present(row: ContractRow, asOf: string) {
       monthlyPayment: row.monthlyPaymentCents,
       dueDay: row.dueDay,
       signedOn: terms.signedOn,
+      /** When the first installment actually falls due — derived if not agreed. */
       firstDueOn: firstDueDate(terms),
+      /**
+       * The stored column, `null` when the first due date simply follows from
+       * the signing date.
+       *
+       * Sent alongside the computed one because the edit form cannot tell them
+       * apart otherwise, and the difference matters: writing a derived date
+       * back into the column would PIN it, so a later correction to `signedOn`
+       * would silently stop moving the schedule with it.
+       */
+      firstDueOnAgreed: row.firstDueOn,
       expiresOn: row.expiresOn,
     },
     /** Every figure below is computed on this request. */
@@ -192,7 +203,11 @@ const contractBody = z.object({
 const updateBody = contractBody
   .omit({ customerId: true, lotId: true, joinGroupOfContractId: true })
   .extend({
-    /** Required when repricing a contract that already has money against it. */
+    /**
+     * Why the terms are being changed. Required for EVERY edit — the handler
+     * rejects a missing one with its own `reason_required` code, which is why
+     * this stays `.optional()` here rather than being enforced by the schema.
+     */
     reason: z.string().trim().min(10).max(500).optional(),
   });
 
@@ -566,24 +581,34 @@ export const contractRoutes: FastifyPluginAsync = async (app) => {
           .where(and(eq(payments.contractId, existing.id), sql`${payments.reversedAt} IS NULL`))
           .get()?.total ?? 0;
 
-      // Repricing a signed contract is the one edit here that moves money, so
-      // it carries the same conditions as repricing a lot under contract: a
-      // separate capability, a written motive, and its own audit action.
-      const isRepricing = parsed.data.salePriceCents !== existing.salePriceCents;
-
-      if (isRepricing && !roleCan(app.db, actor.role, "price:change")) {
-        return reply.code(403).send({
-          error: "forbidden",
-          message: "Tu usuario no puede cambiar el precio de un contrato.",
-        });
-      }
-
-      if (isRepricing && paidToDateCents > 0 && !parsed.data.reason) {
+      // EVERY edit to signed terms demands a written motive, not only a
+      // reprice. These are the figures both parties shook hands on, so a due
+      // day that quietly moved from the 15th to the 5th is exactly the kind of
+      // change somebody has to be able to ask about six months later — and the
+      // person who moved it will not remember. `reason` stays optional in the
+      // schema so this can answer with its own error code and its own wording
+      // instead of a generic body rejection.
+      if (!parsed.data.reason) {
         return reply.code(400).send({
           error: "reason_required",
           message:
-            `El contrato ${existing.code} ya tiene pagos registrados. ` +
-            "Explica el motivo del cambio de precio (mínimo 10 caracteres).",
+            `Explica por qué se modifican los términos del contrato ${existing.code} ` +
+            "(mínimo 10 caracteres).",
+        });
+      }
+
+      // Repricing is the one edit here that moves money, so on top of the
+      // motive it carries a capability of its own and is filed under its own
+      // audit action. Deliberately NOT `price:change`, which is about a lot's
+      // list price: changing what a lot is advertised at and changing what a
+      // customer already owes are different powers, and an owner may well want
+      // to hand over the first without the second.
+      const isRepricing = parsed.data.salePriceCents !== existing.salePriceCents;
+
+      if (isRepricing && !roleCan(app.db, actor.role, "contract:reprice")) {
+        return reply.code(403).send({
+          error: "forbidden",
+          message: "Tu usuario puede editar contratos, pero no cambiar el precio de venta.",
         });
       }
 

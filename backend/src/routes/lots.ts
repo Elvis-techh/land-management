@@ -6,7 +6,7 @@ import { z } from "zod";
 
 import { contracts, customers, lots, payments, projects } from "../db/schema.js";
 import { recordAudit } from "../lib/audit.js";
-import { can } from "../lib/permissions.js";
+import { roleCan } from "../lib/capabilities.js";
 
 /**
  * The lots list, shaped exactly as the table needs it.
@@ -301,7 +301,7 @@ export const lotRoutes: FastifyPluginAsync = async (app) => {
       const isRepricing = parsed.data.basePriceCents !== existing.basePriceCents;
       const needsJustification = isRepricing && activeContract !== undefined;
 
-      if (needsJustification && !can(actor.role, "price:change")) {
+      if (needsJustification && !roleCan(app.db, actor.role, "price:change")) {
         return reply.code(403).send({
           error: "forbidden",
           message: "Tu usuario no puede cambiar el precio de un lote con contrato.",

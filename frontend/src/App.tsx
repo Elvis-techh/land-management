@@ -11,6 +11,15 @@ import { CustomersPage } from "./features/customers/CustomersPage";
 import { createCustomer, deleteCustomer, updateCustomer } from "./features/customers/api";
 import type { CustomerDraft } from "./features/customers/api";
 import { useCustomers } from "./features/customers/useCustomers";
+import { ContractCancelDialog } from "./features/contracts/ContractCancelDialog";
+import { ContractCreateDialog } from "./features/contracts/ContractCreateDialog";
+import { ContractEditDialog } from "./features/contracts/ContractEditDialog";
+import { ContractPanel } from "./features/contracts/ContractPanel";
+import { ContractsPage } from "./features/contracts/ContractsPage";
+import { SplitPreviewDialog } from "./features/contracts/SplitPreviewDialog";
+import { cancelContract, createContract, updateContract } from "./features/contracts/api";
+import type { ContractCreateDraft, ContractTermsDraft } from "./features/contracts/api";
+import { useContracts } from "./features/contracts/useContracts";
 import { LoginPage } from "./features/auth/LoginPage";
 import { authApi } from "./features/auth/api";
 import { LotArchiveDialog } from "./features/lots/LotArchiveDialog";
@@ -37,7 +46,7 @@ import type { User } from "./lib/permissions";
 import { isMobileViewport } from "./lib/viewport";
 import { can } from "./lib/permissions";
 import type { AreaUnit } from "./lib/area";
-import type { CustomerRecord, Lot, Project, TabId } from "./types";
+import type { Contract, CustomerRecord, Lot, Project, TabId } from "./types";
 
 const pageTitles: Record<TabId, string> = {
   dashboard: "Panel general",
@@ -108,11 +117,18 @@ export default function App() {
   const [isCustomerFormOpen, setCustomerFormOpen] = useState(false);
   const [customerBeingEdited, setCustomerBeingEdited] = useState<CustomerRecord | null>(null);
   const [customerBeingDeleted, setCustomerBeingDeleted] = useState<CustomerRecord | null>(null);
+  const [isCreatingContract, setCreatingContract] = useState(false);
+  const [contractBeingViewed, setContractBeingViewed] = useState<Contract | null>(null);
+  const [contractBeingEdited, setContractBeingEdited] = useState<Contract | null>(null);
+  const [contractBeingCancelled, setContractBeingCancelled] = useState<Contract | null>(null);
+  // The lots of ONE purchase, while their split is being previewed.
+  const [contractsBeingSplit, setContractsBeingSplit] = useState<Contract[] | null>(null);
 
   const isSignedIn = session.status === "signed-in";
   const { state: lotsState, reload: reloadLots } = useLots(isSignedIn);
   const { state: projectsState, reload: reloadProjects } = useProjects(isSignedIn);
   const { state: customersState, reload: reloadCustomers } = useCustomers(isSignedIn);
+  const { state: contractsState, reload: reloadContracts } = useContracts(isSignedIn);
   const { rate, setRate } = useExchangeRate(isSignedIn);
 
   // Currency and rate travel together, so a component cannot format money with
@@ -279,6 +295,56 @@ export default function App() {
     setCustomerBeingDeleted(null);
   };
 
+  const handleSaveContract = async (draft: ContractTermsDraft) => {
+    if (!contractBeingEdited) {
+      return;
+    }
+
+    await updateContract(contractBeingEdited.id, draft).catch(handleApiError);
+
+    // Re-read rather than patch: the balance, the arrears, the payment health
+    // and the next due date are all recomputed server-side from the terms that
+    // just changed, so only the server knows what this edit actually did.
+    await reloadContracts();
+    // A reservation that became a contract changes what the Lotes table says
+    // about the lot, and a new sale price changes the customer's holdings.
+    await reloadLots();
+    await reloadCustomers();
+    setContractBeingEdited(null);
+    // The panel underneath is now showing the terms as they were before the
+    // save. Close it rather than leave a stale copy on screen.
+    setContractBeingViewed(null);
+  };
+
+  const handleCancelContract = async (reason: string) => {
+    if (!contractBeingCancelled) {
+      return;
+    }
+
+    await cancelContract(contractBeingCancelled.id, reason).catch(handleApiError);
+
+    await reloadContracts();
+    // Cancelling releases the lot, and the Lotes table derives availability
+    // from active contracts — so it is wrong on screen until it is re-read.
+    await reloadLots();
+    await reloadCustomers();
+    setContractBeingCancelled(null);
+    setContractBeingViewed(null);
+  };
+
+  const handleCreateContract = async (draft: ContractCreateDraft) => {
+    await createContract(draft).catch(handleApiError);
+
+    // All three lists move, and none of them can be patched by hand. The new
+    // contract carries a balance and a payment health only the server computes;
+    // the lot it names has just left the available inventory; and the customer
+    // is now holding something they were not holding a second ago.
+    await reloadContracts();
+    await reloadLots();
+    await reloadCustomers();
+    setCreatingContract(false);
+  };
+
   const handleCreateLot = async (lot: {
     code: string;
     projectName: string;
@@ -298,6 +364,43 @@ export default function App() {
     await archiveLot(lotBeingArchived.id, reason).catch(handleApiError);
     await reloadLots();
     setLotBeingArchived(null);
+  };
+
+  /**
+   * What the button in the top right does on this screen, or `undefined` when
+   * there is nothing for it to do — which is what hides it.
+   *
+   * A `switch` rather than the chain of ternaries this used to be. Each arm
+   * also waits on the data its form is built from: "Nuevo contrato" opens onto
+   * two pickers made of customers and lots, so offering it before those have
+   * loaded would open an empty form that tells the user they have no clients.
+   */
+  const primaryAction = (): (() => void) | undefined => {
+    switch (activeTab) {
+      case "lots":
+        return lotsState.status === "ready" && can(user, "lot:create")
+          ? () => setCreatingLot(true)
+          : undefined;
+
+      case "projects":
+        return can(user, "project:create") ? () => openProjectForm(null) : undefined;
+
+      case "customers":
+        return customersState.status === "ready" && can(user, "customer:create")
+          ? () => openCustomerForm(null)
+          : undefined;
+
+      case "contracts":
+        return contractsState.status === "ready" &&
+          lotsState.status === "ready" &&
+          customersState.status === "ready" &&
+          can(user, "contract:create")
+          ? () => setCreatingContract(true)
+          : undefined;
+
+      default:
+        return undefined;
+    }
   };
 
   const selectedCustomer =
@@ -326,17 +429,7 @@ export default function App() {
         <Topbar
           title={pageTitles[activeTab]}
           primaryActionLabel={primaryActionLabels[activeTab]}
-          onPrimaryAction={
-            activeTab === "lots" && lotsState.status === "ready" && can(user, "lot:create")
-              ? () => setCreatingLot(true)
-              : activeTab === "projects" && can(user, "project:create")
-                ? () => openProjectForm(null)
-                : activeTab === "customers" &&
-                    customersState.status === "ready" &&
-                    can(user, "customer:create")
-                  ? () => openCustomerForm(null)
-                  : undefined
-          }
+          onPrimaryAction={primaryAction()}
           currency={currency}
           onCurrencyChange={setCurrency}
           rate={rate}
@@ -349,6 +442,7 @@ export default function App() {
           {activeTab !== "lots" &&
             activeTab !== "projects" &&
             activeTab !== "customers" &&
+            activeTab !== "contracts" &&
             activeTab !== "audit" &&
             activeTab !== "permissions" && (
               <PlaceholderPage title={pageTitles[activeTab]} />
@@ -436,6 +530,39 @@ export default function App() {
             />
           )}
 
+          {activeTab === "contracts" && contractsState.status === "loading" && (
+            <section className="panel active">
+              <div className="card">
+                <p className="state-message">Cargando contratos…</p>
+              </div>
+            </section>
+          )}
+
+          {activeTab === "contracts" && contractsState.status === "error" && (
+            <section className="panel active">
+              <div className="card">
+                <p className="form-error">{contractsState.message}</p>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => void reloadContracts()}
+                >
+                  Reintentar
+                </button>
+              </div>
+            </section>
+          )}
+
+          {activeTab === "contracts" && contractsState.status === "ready" && (
+            <ContractsPage
+              contracts={contractsState.contracts}
+              money={money}
+              user={user}
+              onOpenContract={setContractBeingViewed}
+              onSplitPayment={setContractsBeingSplit}
+            />
+          )}
+
           {activeTab === "lots" && lotsState.status === "loading" && (
             <section className="panel active">
               <div className="card">
@@ -480,6 +607,21 @@ export default function App() {
         />
       )}
 
+      {isCreatingContract &&
+        contractsState.status === "ready" &&
+        lotsState.status === "ready" &&
+        customersState.status === "ready" && (
+          <ContractCreateDialog
+            customers={customersState.customers}
+            lots={lotsState.data.lots}
+            contracts={contractsState.contracts}
+            unitByProject={lotsState.data.unitByProject}
+            money={money}
+            onCancel={() => setCreatingContract(false)}
+            onCreate={handleCreateContract}
+          />
+        )}
+
       {isProjectFormOpen && (
         <ProjectFormDialog
           project={projectBeingEdited}
@@ -520,6 +662,7 @@ export default function App() {
           unitByProject={
             lotsState.status === "ready" ? lotsState.data.unitByProject : new Map()
           }
+          canChangePrice={can(user, "price:change")}
           onCancel={() => setLotBeingEdited(null)}
           onSave={handleSaveLot}
         />
@@ -530,6 +673,55 @@ export default function App() {
           lot={lotBeingArchived}
           onCancel={() => setLotBeingArchived(null)}
           onConfirm={handleArchiveLot}
+        />
+      )}
+
+      {contractBeingViewed && (
+        <ContractPanel
+          contract={contractBeingViewed}
+          // The other lots of the SAME purchase, not merely the same customer:
+          // two lots bought years apart share a person, not a receipt.
+          siblings={
+            contractBeingViewed.saleGroupId === null || contractsState.status !== "ready"
+              ? []
+              : contractsState.contracts.filter(
+                  (candidate) =>
+                    candidate.saleGroupId === contractBeingViewed.saleGroupId &&
+                    candidate.id !== contractBeingViewed.id,
+                )
+          }
+          money={money}
+          user={user}
+          onClose={() => setContractBeingViewed(null)}
+          onEditContract={setContractBeingEdited}
+          onCancelContract={setContractBeingCancelled}
+        />
+      )}
+
+      {contractBeingEdited && (
+        <ContractEditDialog
+          contract={contractBeingEdited}
+          money={money}
+          canReprice={can(user, "contract:reprice")}
+          onCancel={() => setContractBeingEdited(null)}
+          onSave={handleSaveContract}
+        />
+      )}
+
+      {contractBeingCancelled && (
+        <ContractCancelDialog
+          contract={contractBeingCancelled}
+          money={money}
+          onCancel={() => setContractBeingCancelled(null)}
+          onConfirm={handleCancelContract}
+        />
+      )}
+
+      {contractsBeingSplit && (
+        <SplitPreviewDialog
+          contracts={contractsBeingSplit}
+          money={money}
+          onClose={() => setContractsBeingSplit(null)}
         />
       )}
 

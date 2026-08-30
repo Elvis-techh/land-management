@@ -8,6 +8,15 @@ interface MoneyInputProps {
   value: string;
   onChange: (formatted: string) => void;
   placeholder?: string;
+  /**
+   * Show the amount but refuse edits — for a user who may see a price without
+   * being allowed to move it.
+   *
+   * A real `readOnly` rather than a no-op `onChange`: both stop the keystroke,
+   * but only this one tells a screen reader why and gives CSS something to
+   * style, instead of a field that silently swallows what is typed into it.
+   */
+  readOnly?: boolean;
 }
 
 /** Where the caret should sit to be after the same `digits` characters as before. */
@@ -44,7 +53,7 @@ function caretAfterDigits(text: string, digits: number): number {
  * many DIGITS precede it — a position that survives commas appearing and
  * disappearing around it — and restored after the value is rewritten.
  */
-export function MoneyInput({ id, value, onChange, placeholder }: MoneyInputProps) {
+export function MoneyInput({ id, value, onChange, placeholder, readOnly }: MoneyInputProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [digitsBeforeCaret, setDigitsBeforeCaret] = useState<number | null>(null);
 
@@ -68,6 +77,7 @@ export function MoneyInput({ id, value, onChange, placeholder }: MoneyInputProps
         inputMode="decimal"
         autoComplete="off"
         placeholder={placeholder}
+        readOnly={readOnly}
         value={value}
         onChange={(event) => {
           const caret = event.target.selectionStart ?? event.target.value.length;

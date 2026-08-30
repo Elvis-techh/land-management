@@ -159,3 +159,114 @@ export interface Lot {
    */
   archivedAt: string | null;
 }
+
+/* -------------------------------------------------------------------------- */
+/* Contracts                                                                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * How the lot is being paid for — the Crédito / Comprado / Donación split.
+ *
+ * A separate question from `HoldingKind`, which asks whether this is a hold or
+ * a signed sale. A reservation can be on credit, and a donation is still a
+ * contract; collapsing the two axes into one column is what made the old
+ * spreadsheet unable to answer either.
+ */
+export type SaleType = "financed" | "cash" | "donation";
+
+/** The contract's own lifecycle. Stored on the row. */
+export type ContractStatus = "draft" | "active" | "paid_off" | "cancelled" | "defaulted";
+
+/**
+ * Payment health, the THIRD concept, computed by the server from the schedule
+ * and the posted payments on every read.
+ *
+ * Never stored, and deliberately not merged with `ContractStatus`: a contract
+ * can be perfectly active and two months behind, and one word cannot say both.
+ */
+export type PaymentHealth = "current" | "due_soon" | "overdue" | "at_risk";
+
+/** What was agreed. Only `financed` is computed — the rest is on the contract. */
+export interface ContractTerms {
+  salePrice: Cents;
+  /** The prima as AGREED. Whether it arrived is `downPaymentPaid`. */
+  downPayment: Cents;
+  /** Derived: salePrice − downPayment. Never a stored column. */
+  financed: Cents;
+  /** Null on a cash sale or a donation, which have no schedule. */
+  termMonths: number | null;
+  monthlyPayment: Cents | null;
+  dueDay: number | null;
+  /** YYYY-MM-DD. The date the schedule counts from, not the row's insert date. */
+  signedOn: string;
+  /** When the first installment falls due. Derived from `signedOn` if not agreed. */
+  firstDueOn: string | null;
+  /**
+   * The date that was NEGOTIATED, or `null` when it simply follows from the
+   * signing date.
+   *
+   * Kept apart from `firstDueOn` because the edit form has to know which of the
+   * two it is looking at: saving a derived date back would pin it, and the
+   * schedule would then stop following a later correction to `signedOn`.
+   */
+  firstDueOnAgreed: string | null;
+  /** Only meaningful on a reservation: the date the hold lapses. */
+  expiresOn: string | null;
+}
+
+/** Where the contract stands today. Every field is computed by the server. */
+export interface ContractHealth {
+  status: PaymentHealth;
+  /** What is late right now, after the five-day grace. Zero when up to date. */
+  arrears: Cents;
+  monthsBehind: number;
+  /** Customers here routinely pay two months at once. */
+  monthsAhead: number;
+  nextDueOn: string | null;
+  nextDueAmount: Cents;
+  /** Nothing further is owed. Kept apart from the lifecycle above. */
+  settled: boolean;
+}
+
+/**
+ * One contract: one customer, one lot.
+ *
+ * A customer who bought three lots at once has three of these sharing a
+ * `saleGroupId` — one purchase, three balances, because lots are released and
+ * titled one at a time. The Contratos screen groups them back together for
+ * display; the money stays separate underneath.
+ */
+export interface Contract {
+  id: string;
+  /** Human-facing number, e.g. "CT-2026-014". Assigned by the server. */
+  code: string;
+  /** The purchase this belongs to, or null when the lot was bought alone. */
+  saleGroupId: string | null;
+  kind: HoldingKind;
+  saleType: SaleType;
+  status: ContractStatus;
+  lot: {
+    id: string;
+    code: string;
+    projectName: string;
+    areaM2: number;
+  };
+  customer: {
+    id: string;
+    fullName: string;
+    /** E.164 — run it through `formatPhone` before showing it. */
+    phone: string;
+  };
+  terms: ContractTerms;
+  /** Summed from payments of type `down_payment`, not the agreed figure. */
+  downPaymentPaid: Cents;
+  paidToDate: Cents;
+  /** salePrice − paidToDate, computed server-side. Never typed in. */
+  balance: Cents;
+  health: ContractHealth;
+  /** How many installments the schedule works out to. */
+  installmentCount: number;
+  closedAt: string | null;
+  closedReason: string | null;
+  notes: string | null;
+}

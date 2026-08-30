@@ -28,6 +28,7 @@ export type Capability =
   | "customer:delete"
   | "contract:create"
   | "contract:edit"
+  | "contract:reprice"
   | "contract:cancel"
   | "payment:record"
   | "payment:reverse"
@@ -62,6 +63,7 @@ const DEFAULT_CAPABILITIES_BY_ROLE: Record<Role, ReadonlySet<Capability>> = {
     "customer:delete",
     "contract:create",
     "contract:edit",
+    "contract:reprice",
     "contract:cancel",
     "payment:record",
     "payment:reverse",
@@ -123,10 +125,21 @@ export const ROLE_LABELS: Record<Role, string> = {
  * Deliberately short. Asking for a justification on every edit trains people to
  * type "x" and move on, which destroys the value of asking at all. Ask only
  * where the answer will actually matter to somebody reading it back later.
+ *
+ * `contract:edit` is on the list where `lot:edit` and `customer:edit` are not,
+ * and the difference is worth stating: a lot's area or a customer's phone is a
+ * FACT somebody is correcting, and being wrong about it helps nobody. A
+ * contract's terms are an AGREEMENT two people signed. A plazo that went from
+ * 24 months to 30, or a due day that moved from the 15th to the 5th, is a
+ * change to what was promised — and the question "who agreed to this, and
+ * when?" gets asked months later, long after the person who typed it has
+ * forgotten. That is precisely the case this list exists for.
  */
 export const REQUIRES_REASON: ReadonlySet<Capability> = new Set<Capability>([
   "lot:archive",
   "customer:delete",
+  "contract:edit",
+  "contract:reprice",
   "contract:cancel",
   "payment:reverse",
   "price:change",

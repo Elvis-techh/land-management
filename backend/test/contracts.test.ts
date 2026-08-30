@@ -363,6 +363,7 @@ describe("editing and cancelling", async () => {
       ...terms,
       salePriceCents: lempiras(185_000),
       dueDay: 15,
+      reason: "El contrato firmado dice día 15; se capturó día 5 por error.",
     });
 
     assert.equal(response.statusCode, 200);
@@ -370,6 +371,67 @@ describe("editing and cancelling", async () => {
     const row = db.select().from(contracts).where(eq(contracts.id, ids.contractId)).get();
     assert.equal(row?.dueDay, 15);
     assert.equal(row?.termMonths, 24);
+  });
+
+  it("demands a written motive for ANY edit, not only a reprice", async () => {
+    // Same price, only the due day moves — and it is still refused. What was
+    // signed does not change quietly.
+    const response = await patch(ownerCookie, ids.contractId, { ...terms, dueDay: 20 });
+
+    assert.equal(response.statusCode, 400);
+    assert.equal(response.json().error, "reason_required");
+
+    const row = db.select().from(contracts).where(eq(contracts.id, ids.contractId)).get();
+    assert.equal(row?.dueDay, 15, "the refused edit must not have landed");
+  });
+
+  it("lets an associate with contract:edit change terms but not the price", async () => {
+    const grant = (capabilities: string[]) =>
+      app.inject({
+        method: "PUT",
+        url: "/api/permissions",
+        headers: { cookie: ownerCookie },
+        payload: { capabilities },
+      });
+
+    // Editing is handed over; repricing deliberately is not.
+    await grant(["contract:create", "contract:edit", "customer:create", "payment:record"]);
+
+    const edit = await patch(staffCookie, ids.contractId, {
+      ...terms,
+      dueDay: 15,
+      termMonths: 30,
+      reason: "El cliente pidió alargar el plazo y el supervisor lo autorizó.",
+    });
+    assert.equal(edit.statusCode, 200);
+
+    const reprice = await patch(staffCookie, ids.contractId, {
+      ...terms,
+      termMonths: 30,
+      salePriceCents: lempiras(190_000),
+      reason: "Intento de subir el precio sin el permiso correspondiente.",
+    });
+    assert.equal(reprice.statusCode, 403);
+
+    // And with the second switch on, the same request goes through.
+    await grant([
+      "contract:create",
+      "contract:edit",
+      "contract:reprice",
+      "customer:create",
+      "payment:record",
+    ]);
+
+    const allowed = await patch(staffCookie, ids.contractId, {
+      ...terms,
+      termMonths: 30,
+      salePriceCents: lempiras(190_000),
+      reason: "Precio corregido contra la escritura, ya con el permiso concedido.",
+    });
+    assert.equal(allowed.statusCode, 200);
+
+    const row = db.select().from(contracts).where(eq(contracts.id, ids.contractId)).get();
+    assert.equal(row?.salePriceCents, lempiras(190_000));
   });
 
   it("refuses to price a contract below what has already been paid", async () => {
@@ -393,6 +455,30 @@ describe("editing and cancelling", async () => {
 
     assert.equal(response.statusCode, 400);
     assert.equal(response.json().error, "reason_required");
+  });
+
+  it("files an edit that leaves the price alone under `update`, not `reprice`", async () => {
+    // Read the price back rather than restating it: earlier cases in this
+    // block have already moved it, and what makes this an `update` is that the
+    // price does not change — not that it happens to be any given figure.
+    const before = db.select().from(contracts).where(eq(contracts.id, ids.contractId)).get();
+
+    const response = await patch(ownerCookie, ids.contractId, {
+      ...terms,
+      salePriceCents: before!.salePriceCents,
+      dueDay: 25,
+      reason: "Se movió el día de cobro a fin de mes a pedido del cliente.",
+    });
+
+    assert.equal(response.statusCode, 200);
+
+    const entries = db
+      .select()
+      .from(auditEvents)
+      .where(eq(auditEvents.entityId, ids.contractId))
+      .all();
+
+    assert.ok(entries.some((entry) => entry.action === "update" && entry.reason !== null));
   });
 
   it("files a reprice under its own audit action", async () => {

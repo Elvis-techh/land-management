@@ -1146,7 +1146,10 @@ body.modal-open {
   gap: 7px;
 }
 
-.form-field.full-width {
+/* Any direct child of the grid, not only a .form-field: the archive and cancel
+   dialogs put a warning and an error paragraph in here too, and bound to
+   .form-field those quietly wrapped inside half the dialog's width. */
+.modal-form-grid > .full-width {
   grid-column: 1 / -1;
 }
 
@@ -1233,6 +1236,24 @@ body.modal-open {
 .field-hint {
   color: var(--text-muted);
   font-size: 0.6875rem;
+}
+
+/* A field somebody may READ but not change — a sale price shown to a user
+   without the permission to move it. Deliberately not `disabled`: a disabled
+   input is skipped by the keyboard and greyed past legibility, and the whole
+   point here is that the number stays readable. */
+.form-field input[readonly],
+.form-field textarea[readonly] {
+  background: var(--paper);
+  border-style: dashed;
+  color: var(--text-secondary);
+  cursor: not-allowed;
+}
+
+.form-field input[readonly]:focus,
+.form-field textarea[readonly]:focus {
+  border-color: var(--line-strong);
+  box-shadow: none;
 }
 
 /* A problem with ONE field, said next to that field. The red banner at the foot
@@ -2230,7 +2251,7 @@ body.modal-open {
     grid-template-columns: 1fr;
   }
 
-  .form-field.full-width {
+  .modal-form-grid > .full-width {
     grid-column: auto;
   }
 
@@ -3153,5 +3174,720 @@ input:disabled {
      one; the spacer between them is meaningless once they are stacked. */
   .table-search {
     flex-basis: 100%;
+  }
+}
+
+
+/* ==========================================================================
+   Contratos
+
+   The row is the CONTRACT, because that is where the money lives — one lot,
+   one balance, released and titled on its own. What the customer experiences,
+   though, is one purchase and one receipt, so a person holding several lots
+   gets a header row carrying their totals and their contracts folded under it.
+
+   A customer with a single contract gets no header at all: a group of one is
+   a heading nobody needed.
+   ========================================================================== */
+
+/* Each customer is its own <tbody>, so the last row of one group keeps its rule
+   and the next group starts cleanly. */
+.contracts-table tbody.contract-group:not(:last-child) tr:last-child td {
+  border-bottom: 1px solid var(--line);
+}
+
+.contracts-table tbody.contract-group:last-child tr:last-child td {
+  border-bottom: none;
+}
+
+.group-row td {
+  background: var(--paper);
+  border-bottom: 1px solid var(--line-strong);
+  padding-top: 11px;
+  padding-bottom: 11px;
+}
+
+/* The header already carries the totals; hovering it should not suggest the
+   whole block is one clickable thing, because it is not. */
+.group-row:hover {
+  background: var(--paper);
+}
+
+.group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  text-align: left;
+}
+
+.group-toggle svg {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+  /* Points right when shut, down when open — the arrow IS the state. */
+  transform: rotate(-90deg);
+  transition: transform .15s ease;
+}
+
+.group-toggle.open svg {
+  transform: rotate(0deg);
+}
+
+.group-toggle:hover .holder-name {
+  color: var(--clay-dark);
+}
+
+/* A total is the sum of the rows beneath it, so it reads heavier than they do
+   rather than competing with them at the same weight. */
+.cell-money.is-total {
+  font-weight: 700;
+}
+
+/* The one number this whole screen exists to show. */
+.cell-money.is-balance {
+  color: var(--clay-dark);
+}
+
+.group-split {
+  font-size: 0.75rem;
+}
+
+/* Rows inside a group are stepped in, so the eye can see at a glance which
+   contracts belong to the header above them. */
+.contracts-table tr.is-grouped td:first-child {
+  padding-left: 40px;
+}
+
+.contracts-table tr.is-grouped .holder-empty {
+  color: var(--text-muted);
+}
+
+/* The contract number is the anchor — it is what gets quoted on the phone — so
+   it is the thing you click to open the whole record. */
+.contract-open {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+}
+
+.contract-kind {
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.contract-open:hover .code-badge {
+  border-color: var(--clay);
+  color: var(--clay-dark);
+}
+
+/* The second line in a cell: the due day under a monthly, how far behind under
+   a stamp, what is still owed on a prima. Always secondary to the figure it
+   sits under. */
+.cell-sub {
+  display: block;
+  margin-top: 3px;
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+  font-family: var(--font-body);
+  font-weight: 400;
+}
+
+.cell-sub.warn,
+.cell-money.warn {
+  color: var(--clay-dark);
+}
+
+/* --------------------------------------------------------------------------
+   Contract detail panel
+   -------------------------------------------------------------------------- */
+
+.contract-progress-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.contract-progress-label {
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin: 0 0 4px;
+}
+
+.contract-progress-balance {
+  font-family: var(--font-mono);
+  font-size: 1.375rem;
+  font-weight: 600;
+  color: var(--ink);
+  margin: 0;
+}
+
+.contract-progress {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.contract-progress-fill {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+  background: var(--green);
+  transition: width .2s ease;
+}
+
+.contract-progress-foot {
+  margin: 8px 0 0;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+/* Free text, so it wraps and keeps its line breaks rather than running
+   together the way a table cell would force it to. */
+.cp-note-body {
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+}
+
+/* --------------------------------------------------------------------------
+   Split preview
+   -------------------------------------------------------------------------- */
+
+.split-preview {
+  padding: 0 26px 18px;
+}
+
+.split-table th {
+  padding: 8px 10px;
+}
+
+.split-table td {
+  padding: 10px;
+  white-space: nowrap;
+}
+
+.split-table td:first-child {
+  padding-left: 0;
+}
+
+.split-table td:last-child,
+.split-table th:last-child {
+  padding-right: 0;
+}
+
+/* Sits at the left of the footer, opposite the close button, so the row reads
+   as "here is what happens next" rather than as a disabled action. */
+.modal-foot-note {
+  margin-right: auto;
+  align-self: center;
+  text-align: left;
+  max-width: 60%;
+}
+
+/* --------------------------------------------------------------------------
+   Phones
+
+   Nine columns do not fit on a 360px screen, and horizontal scrolling through
+   a receivables table is how a number gets misread. The same rows are rebuilt
+   as cards leading with the two things being looked for: who, and how much do
+   they owe.
+   -------------------------------------------------------------------------- */
+
+.contracts-cards {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  .contracts-desktop {
+    display: none;
+  }
+
+  .contracts-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: 14px;
+  }
+
+  .contract-card-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .contract-card-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding-bottom: 4px;
+  }
+
+  .contract-card {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 14px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--card);
+    box-shadow: var(--shadow-card);
+    font-family: inherit;
+    cursor: pointer;
+  }
+
+  /* A card inside a group is stepped in for the same reason the table rows
+     are: it belongs to the name above it. */
+  .contract-card-group .contract-card-head ~ .contract-card {
+    margin-left: 14px;
+  }
+
+  .contract-card-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+
+  .contract-card-name {
+    margin: 0;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--text-primary);
+  }
+
+  .contract-card-lot {
+    margin: 2px 0 0;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+  }
+
+  .contract-card-balance {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-top: 11px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--line-strong);
+  }
+
+  .contract-card-balance span {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+  }
+
+  .contract-card-balance strong {
+    font-family: var(--font-mono);
+    font-size: 1rem;
+    color: var(--clay-dark);
+  }
+
+  .contract-card-foot {
+    margin: 8px 0 0;
+    font-size: 0.7188rem;
+    color: var(--text-muted);
+  }
+
+  .split-preview {
+    padding: 0 18px 14px;
+  }
+
+  .modal-foot-note {
+    display: none;
+  }
+}
+
+/* The contract's own note, in the Cliente column under the customer's name.
+   "Dejó de pagar en julio. Llamar al hijo si no contesta." is the most useful
+   sentence on the row, and it used to be readable only by opening the contract.
+
+   `white-space: normal` is the line that makes this work, and its absence is
+   why the note used to arrive cut mid-word — "…Llamar al hijo si no con". Every
+   cell in the table inherits `white-space: nowrap` from `tbody td`, which is
+   right for a code, a date or an amount and wrong for a sentence. Under it the
+   note could not wrap at all, so it ran as one long line that `overflow:
+   hidden` sliced off at the edge of the box, and the two-line clamp below it
+   never had a second line to allow. Turning wrapping back on is what lets the
+   clamp do the job it was written for.
+
+   The width is fluid rather than a fixed 34ch, so the note spreads out to meet
+   the Lote column on a wide screen and gives the space back on a narrow one.
+   `vw` in the middle term is what makes it shrink; the `ch` bounds stop it
+   collapsing to a ribbon on a small laptop or running to an unreadable line
+   length on a very large monitor.
+
+   Three lines rather than two, since the row is allowed to be a little taller:
+   at this width that holds around 120 characters, which is every note anybody
+   actually writes. The clamp stays because it is the only thing stopping a
+   pasted paragraph from making one row four times the height of its
+   neighbours — and past it the full text is still in the tooltip and in the
+   detail panel. */
+.contract-note {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+  margin-top: 3px;
+  /* Undoes the nowrap inherited from `tbody td`. Without it nothing else here
+     has any effect. */
+  white-space: normal;
+  /* A pasted URL or a run of digits has no space to break at, and would
+     otherwise push the column wider than the clamp above can contain. */
+  overflow-wrap: break-word;
+  max-width: clamp(20ch, 19vw, 46ch);
+  font-size: 0.6875rem;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+/* Rows are no longer a uniform height: one with a three-line note stands twice
+   as tall as its neighbours. `tbody td` centres its content, which floated the
+   contract number and the amounts into the middle of a tall row while the name
+   they belong to started at the top — so the eye had to travel down and back
+   up to read one contract. Top-aligning the data rows lines every cell up with
+   the first line of the name. Scoped to `.contract-row` so the customer group
+   header, which is a single line, keeps the centring that suits it. */
+.contracts-table .contract-row td {
+  vertical-align: top;
+}
+
+/* Top-align the avatar ONLY on a row that actually carries a note.
+   .holder-btn centres its children, which is right for a lone name against a
+   28px avatar — but wrong once the text beside it is three lines tall, where
+   centring floats the initials down past the name they belong to. Most rows
+   have no note and should keep the centring they have. */
+.contract-row .holder-btn.is-static:has(.contract-note) {
+  align-items: flex-start;
+}
+
+/* Inside a group the row has no name, so the note sits beside the arrow that
+   stands in for one. The arrow is a single character rather than an avatar, so
+   it wants a tighter gap than the 9px .holder-btn uses for initials. */
+.contract-row.is-grouped .holder-btn.is-static {
+  gap: 7px;
+}
+
+/* The note on a phone card, where there is no Cliente column to put it in. It
+   is the last line, after the schedule, because a card is read top-down and
+   the balance is what the card is opened for. */
+.contract-card-note {
+  margin: 6px 0 0;
+  font-size: 0.6875rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+  text-align: left;
+}
+
+/* The lot is a number plus a project name, and the name is the long part.
+   Stacked so the column stays narrow enough for the health chip to survive on
+   a laptop screen. */
+.contract-lot {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+}
+
+/* Nine columns need tighter gutters than seven. Everything else about the
+   table — type, rules, alignment — is unchanged. */
+.contracts-table thead th,
+.contracts-table tbody td {
+  padding-left: 12px;
+  padding-right: 12px;
+}
+
+.contracts-table thead th:first-child,
+.contracts-table tbody td:first-child {
+  padding-left: 18px;
+}
+
+.contracts-table thead th:last-child,
+.contracts-table tbody td:last-child {
+  padding-right: 18px;
+}
+
+.contracts-table tr.is-grouped td:first-child {
+  padding-left: 34px;
+}
+
+/* The whole row opens the contract. The pointer says so; the contract-number
+   button inside it is what a keyboard reaches. */
+.contract-row {
+  cursor: pointer;
+}
+
+/* --------------------------------------------------------------------------
+   Nuevo contrato: the cliente and lote pickers
+
+   A native <select> was the obvious control and the wrong one. Both lists grow
+   without limit, and a dropdown gives one line of text per option, no search
+   worth the name on a phone, and nowhere to put the identity number that tells
+   two Josés apart or the price that says whether this is the right lot.
+
+   So each is a search box over a scrolling list of real rows, collapsing to a
+   single confirmation line once the question is answered.
+   -------------------------------------------------------------------------- */
+
+/* Named like a field label because it is one — but it is a <p>, since a <label>
+   has to name a control and the search box below it disappears on selection. */
+.picker-label {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 0.7812rem;
+  font-weight: 500;
+}
+
+.picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.picker-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  min-height: 42px;
+  background: var(--paper);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  transition: border-color .15s ease, box-shadow .15s ease, background .15s ease;
+}
+
+.picker-search:focus-within {
+  background: var(--card);
+  border-color: var(--clay);
+  box-shadow: 0 0 0 3px var(--clay-bg);
+}
+
+.picker-search svg {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  color: var(--text-muted);
+}
+
+.picker-search input {
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  outline: none;
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: 0.8438rem;
+}
+
+/*
+ * A fixed ceiling rather than a height that grows with the results.
+ *
+ * The dialog itself scrolls, and a list that pushed it past the viewport would
+ * put the Continuar button below the fold on every screen with more than a
+ * handful of lots. 268px is a shade over four rows: enough to read as a list
+ * you scroll rather than a box that happens to be cut off.
+ */
+.picker-list {
+  max-height: 268px;
+  overflow-y: auto;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.picker-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 12px;
+  text-align: left;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+  font-family: var(--font-body);
+}
+
+.picker-option:last-child {
+  border-bottom: none;
+}
+
+.picker-option:hover,
+.picker-option:focus-visible {
+  background: var(--clay-bg);
+  outline: none;
+}
+
+/* The text column takes what is left, so a long name truncates instead of
+   shoving the price off the right edge of the row. */
+.picker-option .holder-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.picker-option .holder-name,
+.picker-option .holder-contract {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A sticky heading, because the project a lot belongs to is what its number
+   means: "A-07" exists in every project, and scrolling past the name that says
+   which one leaves the rows below it ambiguous. */
+.picker-group-label {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0;
+  padding: 7px 12px;
+  background: var(--paper);
+  border-bottom: 1px solid var(--line);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.6562rem;
+  font-weight: 500;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.picker-group-label span {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.picker-price {
+  flex: 0 0 auto;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+
+/* "2 vigentes" — this person already holds something, which is the case where
+   the purchase may want grouping. */
+.picker-tag {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--slate-bg);
+  color: var(--slate-dark);
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+}
+
+.picker-empty,
+.picker-more {
+  margin: 0;
+  padding: 14px;
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.picker-more {
+  border-top: 1px solid var(--line);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+/* Standing alone outside a .picker-list — nothing to search, so no search box
+   above it to sit under. */
+.form-field > .picker-empty {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  text-align: left;
+}
+
+/* The answer, once given. Green rather than the form's usual paper: this row
+   is a decision that has been made, sitting among fields that have not. */
+.picker-chosen {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--green-bg);
+  border: 1px solid var(--green);
+  border-radius: 8px;
+}
+
+.picker-chosen .holder-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.picker-chosen .holder-name,
+.picker-chosen .holder-contract {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.picker-chosen .link-btn {
+  flex: 0 0 auto;
+}
+
+/*
+ * The schedule preview under the credit terms.
+ *
+ * Deliberately not .form-blocked (amber, something is wrong) or .form-warning
+ * (red, read this before you act). Nothing is wrong here — it is the form
+ * telling you what the numbers you typed actually produce, which is worth
+ * seeing before a cuota is promised to somebody rather than a year later.
+ */
+.form-note {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--paper);
+  border: 1px solid var(--line-strong);
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+}
+
+.form-note strong {
+  color: var(--text-primary);
+}
+
+@media (max-width: 760px) {
+  /* Shorter, because the on-screen keyboard takes half the viewport the moment
+     the search box is focused, and a 268px list under it leaves nothing of the
+     dialog visible. */
+  .picker-list {
+    max-height: 208px;
   }
 }
