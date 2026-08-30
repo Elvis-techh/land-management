@@ -335,3 +335,76 @@ export function assessContract(
     settled,
   };
 }
+
+/* -------------------------------------------------------------------------- */
+/* What a payment was applied to                                               */
+/* -------------------------------------------------------------------------- */
+
+/** One installment a payment covered, in whole or in part. */
+export interface AppliedInstallment {
+  /** 1-based, as a person would say it: "la cuota 7 de 24". */
+  number: number;
+  dueOn: string;
+  /** What this payment put towards it — not the installment's full amount. */
+  appliedCents: number;
+  /** Was the installment left fully covered afterwards? */
+  settled: boolean;
+}
+
+/**
+ * Which installments a payment went towards, given the paid-to-date either side
+ * of it.
+ *
+ * This is the line a receipt needs in order to be worth keeping: "cuota 7 de 24
+ * — L 3,500; abono a capital — L 1,500" is an answer, where "recibí L 5,000" is
+ * only a number. What the money was applied to is disputed far more often than
+ * how much of it there was.
+ *
+ * The prima is deducted first because the schedule in `buildSchedule` covers
+ * the FINANCED part only — the down payment is not installment 1. A payment
+ * that lands entirely inside the prima therefore covers no installments and
+ * returns an empty list, which is correct: it was a prima, not a cuota.
+ */
+export function appliedInstallments(
+  terms: ContractTerms,
+  paidBeforeCents: number,
+  paidAfterCents: number,
+): AppliedInstallment[] {
+  const schedule = buildSchedule(terms);
+
+  if (schedule.length === 0 || paidAfterCents <= paidBeforeCents) {
+    return [];
+  }
+
+  // Position within the FINANCED part, so the prima does not shift the numbering.
+  const from = Math.max(0, paidBeforeCents - terms.downPaymentCents);
+  const to = Math.max(0, paidAfterCents - terms.downPaymentCents);
+
+  const applied: AppliedInstallment[] = [];
+  let cursor = 0;
+
+  for (const installment of schedule) {
+    const start = cursor;
+    const end = cursor + installment.amountCents;
+    cursor = end;
+
+    // How much of THIS payment landed inside this installment's slice.
+    const overlap = Math.min(to, end) - Math.max(from, start);
+
+    if (overlap <= 0) {
+      if (start >= to) {
+        break;
+      }
+      continue;
+    }
+
+    applied.push({
+      number: installment.number,
+      dueOn: installment.dueOn,
+      appliedCents: overlap,
+      settled: to >= end,
+    });
+  }
+
+  return applied;
+}

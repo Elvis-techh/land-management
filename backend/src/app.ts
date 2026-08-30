@@ -16,6 +16,8 @@ import { exchangeRateRoutes } from "./routes/exchangeRate.js";
 import { lotRoutes } from "./routes/lots.js";
 import { permissionRoutes } from "./routes/permissions.js";
 import { projectRoutes } from "./routes/projects.js";
+import { receiptRoutes } from "./routes/receipts.js";
+import { transactionRoutes } from "./routes/transactions.js";
 
 export async function buildApp(config: AppConfig, db: Db) {
   const app = Fastify({
@@ -91,6 +93,8 @@ export async function buildApp(config: AppConfig, db: Db) {
       await api.register(projectRoutes);
       await api.register(customerRoutes);
       await api.register(contractRoutes);
+      await api.register(receiptRoutes, { uploadsPath: config.uploadsPath });
+      await api.register(transactionRoutes);
       await api.register(permissionRoutes);
       await api.register(exchangeRateRoutes);
       await api.register(auditRoutes);

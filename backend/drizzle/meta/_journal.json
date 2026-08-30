@@ -36,6 +36,20 @@
       "when": 1788037976136,
       "tag": "0004_contract_terms",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1788124946972,
+      "tag": "0005_receipts",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1788131061244,
+      "tag": "0006_attachments",
+      "breakpoints": true
     }
   ]
 }

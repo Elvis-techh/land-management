@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 
@@ -17,6 +20,9 @@ const testConfig: AppConfig = {
   port: 3000,
   frontendOrigins: ["http://localhost:5173"],
   databasePath: ":memory:",
+  // Each test app gets its own directory, so uploads from one test can
+  // never be read by another and nothing lands in the real data folder.
+  uploadsPath: mkdtempSync(join(tmpdir(), "lindero-test-uploads-")),
   cookieSecret: "test-cookie-secret-that-is-long-enough-x",
   sessionDays: 7,
   // Effectively off for most tests; the rate-limit test lowers it on purpose.
