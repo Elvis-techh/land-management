@@ -270,3 +270,139 @@ export interface Contract {
   closedReason: string | null;
   notes: string | null;
 }
+
+/* -------------------------------------------------------------------------- */
+/* Receipts                                                                    */
+/* -------------------------------------------------------------------------- */
+
+/** One cuota a payment went towards, in whole or in part. */
+export interface AppliedInstallment {
+  /** 1-based, as a person would say it: "la cuota 7 de 24". */
+  number: number;
+  dueOn: string;
+  /** What this payment put towards it — not the installment's full amount. */
+  applied: Cents;
+  /** Was the cuota left fully covered afterwards? */
+  settled: boolean;
+}
+
+/**
+ * One lot's line on a receipt.
+ *
+ * A customer holding three lots hands over a single amount and gets a single
+ * document, but the money lands on three contracts and each keeps its own
+ * balance — so the receipt carries a line per lot rather than one merged total.
+ */
+export interface ReceiptLine {
+  paymentId: string;
+  contractId: string;
+  contractCode: string | null;
+  lotCode: string | null;
+  projectName: string | null;
+  amount: Cents;
+  type: string;
+  /** Derived by replaying the ledger, never stored. */
+  previousBalance: Cents;
+  newBalance: Cents;
+  /** Which cuotas this money went towards. */
+  appliedTo: AppliedInstallment[];
+}
+
+/**
+ * A receipt: the document, not the money.
+ *
+ * Every balance on it is DERIVED by the server on read, by replaying the
+ * customer's transactions in order — see backend/src/lib/ledger.ts. None of
+ * them is a stored column, which is what lets a correction to an older payment
+ * flow through into every receipt after it instead of leaving frozen numbers
+ * that no longer add up.
+ */
+export interface Receipt {
+  id: string;
+  /** The sequence, as an integer. Never reused, even after a void. */
+  number: number;
+  /** The sequence as people say it: "REC-2026-00042". */
+  code: string;
+  /**
+   * A short, random, unguessable code for looking the receipt up.
+   *
+   * Deliberately not the sequence: this one goes in a link sent over WhatsApp,
+   * and a predictable code would let anybody holding one receipt walk the
+   * numbers and read every other customer's.
+   */
+  lookupCode: string;
+  issuedOn: string;
+  note: string | null;
+  /** Set when the receipt was voided. The row and the number both survive. */
+  voidedAt: string | null;
+  voidReason: string | null;
+  supersededById: string | null;
+  customer: { id: string; fullName: string; identification: string; phone: string };
+  issuedBy: { id: string; name: string };
+  /** What the customer handed over. Unaffected by a later void. */
+  totalPaid: Cents;
+  previousBalance: Cents;
+  newBalance: Cents;
+  /** Everything this customer has ever paid, across every lot, up to this receipt. */
+  cumulativePaid: Cents;
+  transactionCount: number;
+  method: string | null;
+  /** Empty on the list endpoint, populated on the detail one. */
+  lines: ReceiptLine[];
+  /** The customer's proof of transfer. Empty on the list endpoint. */
+  attachments: ReceiptAttachment[];
+}
+
+
+/**
+ * One posted transaction, with everything needed to make sense of it on screen.
+ *
+ * The Recibos screen is transaction-first: both of its views — the flat list by
+ * date and the grouped list by customer — are built from one ordered array of
+ * these, because grouping is a question about presentation and answering it
+ * twice on the server is how two lists end up disagreeing about what exists.
+ *
+ * `receiptId` is null for money recorded before the receipts screen existed.
+ * That is the truth, and it counts in every balance regardless.
+ */
+export interface Transaction {
+  id: string;
+  amount: Cents;
+  /** What the customer handed over, before conversion. */
+  originalAmount: Cents;
+  originalCurrency: string;
+  exchangeRate: string;
+  /** YYYY-MM-DD — the day the money moved, not the day it was typed in. */
+  paidOn: string;
+  method: string;
+  type: string;
+  /** The bank's confirmation number, for a transfer. */
+  reference: string | null;
+  notes: string | null;
+  /** Set once reversed. The row keeps its amount but stops counting. */
+  reversedAt: string | null;
+  reversalReason: string | null;
+  createdAt: string;
+  contractId: string;
+  contractCode: string;
+  contractStatus: string;
+  lotCode: string;
+  projectName: string;
+  customerId: string;
+  customerName: string;
+  customerIdentification: string;
+  /** Null when this money has never been printed on a receipt. */
+  receiptId: string | null;
+  receiptCode: string | null;
+  receiptVoidedAt: string | null;
+  recordedByName: string;
+}
+
+/** A file attached to a receipt — the customer's proof of transfer. */
+export interface ReceiptAttachment {
+  id: string;
+  fileName: string;
+  contentType: string;
+  byteSize: number;
+  createdAt: string;
+}

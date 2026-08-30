@@ -37,6 +37,11 @@ import {
 } from "./features/projects/api";
 import { useProjects } from "./features/projects/useProjects";
 import { PermissionsPage } from "./features/permissions/PermissionsPage";
+import { NewReceiptDialog } from "./features/receipts/NewReceiptDialog";
+import { ReceiptVoidDialog } from "./features/receipts/ReceiptVoidDialog";
+import { ReceiptsPage } from "./features/receipts/ReceiptsPage";
+import { TransactionEditDialog } from "./features/receipts/TransactionEditDialog";
+import { useTransactions } from "./features/receipts/useTransactions";
 import { useExchangeRate } from "./features/rate/useExchangeRate";
 import { archiveLot, createLot, updateLot } from "./features/lots/api";
 import { useLots } from "./features/lots/useLots";
@@ -46,7 +51,7 @@ import type { User } from "./lib/permissions";
 import { isMobileViewport } from "./lib/viewport";
 import { can } from "./lib/permissions";
 import type { AreaUnit } from "./lib/area";
-import type { Contract, CustomerRecord, Lot, Project, TabId } from "./types";
+import type { Contract, CustomerRecord, Lot, Project, Receipt, TabId, Transaction } from "./types";
 
 const pageTitles: Record<TabId, string> = {
   dashboard: "Panel general",
@@ -118,6 +123,9 @@ export default function App() {
   const [customerBeingEdited, setCustomerBeingEdited] = useState<CustomerRecord | null>(null);
   const [customerBeingDeleted, setCustomerBeingDeleted] = useState<CustomerRecord | null>(null);
   const [isCreatingContract, setCreatingContract] = useState(false);
+  const [isCreatingReceipt, setCreatingReceipt] = useState(false);
+  const [receiptBeingVoided, setReceiptBeingVoided] = useState<Receipt | null>(null);
+  const [transactionBeingEdited, setTransactionBeingEdited] = useState<Transaction | null>(null);
   const [contractBeingViewed, setContractBeingViewed] = useState<Contract | null>(null);
   const [contractBeingEdited, setContractBeingEdited] = useState<Contract | null>(null);
   const [contractBeingCancelled, setContractBeingCancelled] = useState<Contract | null>(null);
@@ -129,6 +137,7 @@ export default function App() {
   const { state: projectsState, reload: reloadProjects } = useProjects(isSignedIn);
   const { state: customersState, reload: reloadCustomers } = useCustomers(isSignedIn);
   const { state: contractsState, reload: reloadContracts } = useContracts(isSignedIn);
+  const { state: transactionsState, reload: reloadTransactions } = useTransactions(isSignedIn);
   const { rate, setRate } = useExchangeRate(isSignedIn);
 
   // Currency and rate travel together, so a component cannot format money with
@@ -398,6 +407,15 @@ export default function App() {
           ? () => setCreatingContract(true)
           : undefined;
 
+      // Recording a payment needs the customers to pick from and their
+      // contracts to split across, so both have to have arrived first.
+      case "receipts":
+        return contractsState.status === "ready" &&
+          customersState.status === "ready" &&
+          can(user, "payment:record")
+          ? () => setCreatingReceipt(true)
+          : undefined;
+
       default:
         return undefined;
     }
@@ -443,6 +461,7 @@ export default function App() {
             activeTab !== "projects" &&
             activeTab !== "customers" &&
             activeTab !== "contracts" &&
+            activeTab !== "receipts" &&
             activeTab !== "audit" &&
             activeTab !== "permissions" && (
               <PlaceholderPage title={pageTitles[activeTab]} />
@@ -563,6 +582,39 @@ export default function App() {
             />
           )}
 
+          {activeTab === "receipts" && transactionsState.status === "loading" && (
+            <section className="panel active">
+              <div className="card">
+                <p className="state-message">Cargando transacciones…</p>
+              </div>
+            </section>
+          )}
+
+          {activeTab === "receipts" && transactionsState.status === "error" && (
+            <section className="panel active">
+              <div className="card">
+                <p className="form-error">{transactionsState.message}</p>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => void reloadTransactions()}
+                >
+                  Reintentar
+                </button>
+              </div>
+            </section>
+          )}
+
+          {activeTab === "receipts" && transactionsState.status === "ready" && (
+            <ReceiptsPage
+              transactions={transactionsState.transactions}
+              money={money}
+              user={user}
+              onVoidReceipt={setReceiptBeingVoided}
+              onEditTransaction={setTransactionBeingEdited}
+            />
+          )}
+
           {activeTab === "lots" && lotsState.status === "loading" && (
             <section className="panel active">
               <div className="card">
@@ -596,6 +648,66 @@ export default function App() {
           )}
         </div>
       </div>
+
+      {isCreatingReceipt &&
+        contractsState.status === "ready" &&
+        customersState.status === "ready" && (
+          <NewReceiptDialog
+            customers={customersState.customers}
+            contracts={contractsState.contracts}
+            money={money}
+            onClose={() => setCreatingReceipt(false)}
+            onIssued={() => {
+              setCreatingReceipt(false);
+              // Everything that counts money has to be re-read, not just the
+              // receipts: a payment moves the contract's balance, the lot's
+              // paid-to-date and the customer's totals, all of which are
+              // derived server-side.
+              void reloadTransactions();
+              void reloadContracts();
+              void reloadCustomers();
+              void reloadLots();
+            }}
+          />
+        )}
+
+      {/* Editing shows the customer's whole history beside the form, so a
+          changed amount is judged against the payments around it rather than
+          as a number on its own. */}
+      {transactionBeingEdited && transactionsState.status === "ready" && (
+        <TransactionEditDialog
+          transaction={transactionBeingEdited}
+          customerTransactions={transactionsState.transactions.filter(
+            (transaction) => transaction.customerId === transactionBeingEdited.customerId,
+          )}
+          money={money}
+          onClose={() => setTransactionBeingEdited(null)}
+          onSaved={() => {
+            setTransactionBeingEdited(null);
+            // A corrected transaction moves every balance after it, so
+            // everything that shows money has to be re-read.
+            void reloadTransactions();
+            void reloadContracts();
+            void reloadCustomers();
+            void reloadLots();
+          }}
+        />
+      )}
+
+      {receiptBeingVoided && (
+        <ReceiptVoidDialog
+          receipt={receiptBeingVoided}
+          money={money}
+          onClose={() => setReceiptBeingVoided(null)}
+          onVoided={() => {
+            setReceiptBeingVoided(null);
+            void reloadTransactions();
+            void reloadContracts();
+            void reloadCustomers();
+            void reloadLots();
+          }}
+        />
+      )}
 
       {isCreatingLot && lotsState.status === "ready" && (
         <LotCreateDialog
