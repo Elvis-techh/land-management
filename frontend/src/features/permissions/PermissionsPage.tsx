@@ -52,6 +52,20 @@ const GROUPS: Array<{
       },
       { capability: "contract:create", label: "Crear contratos y reservas" },
       {
+        capability: "contract:edit",
+        label: "Editar los términos de un contrato",
+        hint:
+          "Plazo, cuota, día de pago, fechas y notas. Siempre exige escribir un motivo, " +
+          "porque cambia lo que se firmó. El precio de venta va aparte.",
+      },
+      {
+        capability: "contract:reprice",
+        label: "Cambiar el precio de venta de un contrato",
+        hint:
+          "Cambia lo que el cliente debe. Se puede ceder «Editar los términos» sin ceder " +
+          "esto: mover un día de cobro y mover un saldo no son la misma confianza.",
+      },
+      {
         capability: "contract:cancel",
         label: "Cancelar contratos",
         hint: "Libera el lote y deja el contrato en el historial.",

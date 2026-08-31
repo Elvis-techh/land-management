@@ -5,6 +5,14 @@ export type AppConfig = {
   frontendOrigins: string[];
   /** Path to the SQLite file. One file = one database. */
   databasePath: string;
+  /**
+   * Where uploaded proof-of-payment files are written.
+   *
+   * Deliberately outside the database: a SQLite file holding the ledger AND
+   * every customer's photo of a deposit slip is one nobody can back up or move.
+   * See the note on `attachments` in src/db/schema.ts.
+   */
+  uploadsPath: string;
   /** Signs the session cookie so it cannot be tampered with. */
   cookieSecret: string;
   /** How long a login lasts, in days. */
@@ -81,6 +89,7 @@ export function loadConfig(environment = process.env): AppConfig {
       .map((origin) => origin.trim())
       .filter(Boolean),
     databasePath: environment.DATABASE_PATH ?? "./data/lindero.db",
+    uploadsPath: environment.UPLOADS_PATH ?? "./data/uploads",
     cookieSecret,
     sessionDays,
     loginAttemptsPerMinute,

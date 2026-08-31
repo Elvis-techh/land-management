@@ -72,16 +72,188 @@ const customerId = (fullName: string) => {
   return found.id;
 };
 
-/** [lot code, project, area, base price, holder or null, contract code, kind, paid so far] */
-const lotSpecs: Array<[string, string, number, number, string | null, string, string, number]> = [
-  ["A-07", "Proyecto Santiago Etapa 1", 320, 185_000, "José Rodríguez", "CT-2026-014", "reservation", 158_250],
-  ["A-12", "Proyecto Santiago Etapa 1", 298, 172_000, null, "", "", 0],
-  ["B-03", "Proyecto Santiago Etapa 2", 310, 178_500, "Roberto Cruz", "CT-2026-021", "reservation", 35_000],
-  ["B-14", "Proyecto Santiago Etapa 2", 340, 196_000, "Carlos Mendoza", "CT-2025-088", "reservation", 154_000],
-  ["C-02", "Valle Verde", 285, 164_000, "Ana Lucía Paz", "CT-2025-052", "reservation", 145_500],
-  ["C-08", "Valle Verde", 305, 176_000, null, "", "", 0],
-  ["D-04", "Monte Real", 330, 210_000, "Elena Castillo", "CT-2024-007", "contract", 210_000],
-  ["D-11", "Monte Real", 312, 198_500, "María Fernández", "CT-2026-003", "reservation", 147_300],
+/**
+ * The inventory, and what has happened to each lot.
+ *
+ * `sale` is null for a lot nobody has taken. Where it is present it carries the
+ * TERMS that were agreed — price, prima, plazo, cuota, día de pago — and never
+ * a balance: what is owed is worked out from these plus the payments below,
+ * every time the list is read. See src/lib/contracts.ts.
+ *
+ * `group` names a purchase. Ana Lucía Paz bought three lots in Valle Verde on
+ * one contract and pays for all three with a single receipt, which is the case
+ * the split in src/lib/allocation.ts exists for.
+ */
+interface SaleSpec {
+  code: string;
+  kind: "reservation" | "contract";
+  saleType: "financed" | "cash" | "donation";
+  price: number;
+  down: number;
+  months: number | null;
+  monthly: number | null;
+  dueDay: number | null;
+  signedOn: string;
+  expiresOn?: string;
+  group?: string;
+  /** Payments already posted, as [date, lempiras, type]. */
+  paid: Array<[string, number, "down_payment" | "installment" | "full_payment"]>;
+  notes?: string;
+}
+
+interface LotSpec {
+  code: string;
+  project: string;
+  areaM2: number;
+  basePrice: number;
+  holder: string | null;
+  sale: SaleSpec | null;
+}
+
+const lotSpecs: LotSpec[] = [
+  {
+    code: "A-07", project: "Proyecto Santiago Etapa 1", areaM2: 320, basePrice: 185_000,
+    holder: "José Rodríguez",
+    sale: {
+      code: "CT-2026-014", kind: "contract", saleType: "financed",
+      price: 185_000, down: 25_000, months: 24, monthly: 6_700, dueDay: 5,
+      signedOn: "2026-01-15",
+      paid: [
+        ["2026-01-15", 25_000, "down_payment"],
+        ["2026-02-05", 6_700, "installment"],
+        ["2026-03-05", 6_700, "installment"],
+        ["2026-04-04", 6_700, "installment"],
+        ["2026-05-06", 6_700, "installment"],
+        ["2026-06-05", 6_700, "installment"],
+        ["2026-07-03", 6_700, "installment"],
+      ],
+      notes: "Paga puntual por transferencia.",
+    },
+  },
+  { code: "A-12", project: "Proyecto Santiago Etapa 1", areaM2: 298, basePrice: 172_000, holder: null, sale: null },
+  {
+    code: "B-03", project: "Proyecto Santiago Etapa 2", areaM2: 310, basePrice: 178_500,
+    holder: "Roberto Cruz",
+    sale: {
+      // A hold, not a sale: it has an end date, and when it passes the lot has
+      // to go back on the market rather than sitting quietly off it forever.
+      code: "CT-2026-021", kind: "reservation", saleType: "financed",
+      price: 178_500, down: 20_000, months: 18, monthly: 8_800, dueDay: 10,
+      signedOn: "2026-07-01", expiresOn: "2026-10-01",
+      paid: [["2026-07-01", 20_000, "down_payment"]],
+      notes: "Reserva mientras vende su carro. Confirmar antes del vencimiento.",
+    },
+  },
+  {
+    code: "B-14", project: "Proyecto Santiago Etapa 2", areaM2: 340, basePrice: 196_000,
+    holder: "Carlos Mendoza",
+    sale: {
+      // Two months behind: the contract the Contratos screen exists to surface.
+      code: "CT-2025-088", kind: "contract", saleType: "financed",
+      price: 196_000, down: 30_000, months: 36, monthly: 4_600, dueDay: 15,
+      signedOn: "2025-06-15",
+      paid: [
+        ["2025-06-15", 30_000, "down_payment"],
+        ...Array.from({ length: 11 }, (_, index) => {
+          const month = index + 7;
+          const year = month > 12 ? 2026 : 2025;
+          const label = String(month > 12 ? month - 12 : month).padStart(2, "0");
+          return [`${year}-${label}-15`, 4_600, "installment"] as [string, number, "installment"];
+        }),
+      ],
+      notes: "Dejó de pagar en julio. Llamar al hijo si no contesta.",
+    },
+  },
+  {
+    code: "C-02", project: "Valle Verde", areaM2: 285, basePrice: 164_000,
+    holder: "Ana Lucía Paz",
+    sale: {
+      code: "CT-2025-052", kind: "contract", saleType: "financed", group: "paz",
+      price: 164_000, down: 20_000, months: 24, monthly: 6_000, dueDay: 5,
+      signedOn: "2025-09-05",
+      paid: [
+        ["2025-09-05", 20_000, "down_payment"],
+        ...Array.from({ length: 11 }, (_, index) => {
+          const month = index + 10;
+          const year = month > 12 ? 2026 : 2025;
+          const label = String(month > 12 ? month - 12 : month).padStart(2, "0");
+          // The uneven thirds of one L 18,000 receipt: 6,000 / 6,000 / 6,000
+          // here, and the odd hundreds land on her other two lots.
+          return [`${year}-${label}-05`, 6_000, "installment"] as [string, number, "installment"];
+        }),
+      ],
+      notes: "Compró tres lotes juntos; paga los tres con un solo recibo.",
+    },
+  },
+  {
+    code: "C-08", project: "Valle Verde", areaM2: 305, basePrice: 176_000,
+    holder: "Ana Lucía Paz",
+    sale: {
+      code: "CT-2025-053", kind: "contract", saleType: "financed", group: "paz",
+      price: 176_000, down: 20_000, months: 24, monthly: 6_500, dueDay: 5,
+      signedOn: "2025-09-05",
+      paid: [
+        ["2025-09-05", 20_000, "down_payment"],
+        ...Array.from({ length: 11 }, (_, index) => {
+          const month = index + 10;
+          const year = month > 12 ? 2026 : 2025;
+          const label = String(month > 12 ? month - 12 : month).padStart(2, "0");
+          return [`${year}-${label}-05`, 6_500, "installment"] as [string, number, "installment"];
+        }),
+      ],
+    },
+  },
+  {
+    code: "C-15", project: "Valle Verde", areaM2: 290, basePrice: 168_000,
+    holder: "Ana Lucía Paz",
+    sale: {
+      code: "CT-2025-054", kind: "contract", saleType: "financed", group: "paz",
+      price: 168_000, down: 20_000, months: 24, monthly: 6_200, dueDay: 5,
+      signedOn: "2025-09-05",
+      paid: [
+        ["2025-09-05", 20_000, "down_payment"],
+        ...Array.from({ length: 11 }, (_, index) => {
+          const month = index + 10;
+          const year = month > 12 ? 2026 : 2025;
+          const label = String(month > 12 ? month - 12 : month).padStart(2, "0");
+          return [`${year}-${label}-05`, 6_200, "installment"] as [string, number, "installment"];
+        }),
+      ],
+    },
+  },
+  {
+    code: "D-04", project: "Monte Real", areaM2: 330, basePrice: 210_000,
+    holder: "Elena Castillo",
+    sale: {
+      // Paid off. Its lifecycle says so; its payment health is a separate
+      // question, and the answer to that one is "nothing is owed".
+      code: "CT-2024-007", kind: "contract", saleType: "financed",
+      price: 210_000, down: 50_000, months: 12, monthly: 13_400, dueDay: 1,
+      signedOn: "2024-11-01",
+      paid: [
+        ["2024-11-01", 50_000, "down_payment"],
+        ...Array.from({ length: 11 }, (_, index) => {
+          const month = index + 12;
+          const year = month > 12 ? 2025 : 2024;
+          const label = String(month > 12 ? month - 12 : month).padStart(2, "0");
+          return [`${year}-${label}-01`, 13_400, "installment"] as [string, number, "installment"];
+        }),
+        ["2025-11-01", 12_600, "installment"],
+      ],
+    },
+  },
+  {
+    code: "D-11", project: "Monte Real", areaM2: 312, basePrice: 198_500,
+    holder: "María Fernández",
+    sale: {
+      // A cash sale: settled at signing, so it carries no plazo, cuota or día.
+      code: "CT-2026-003", kind: "contract", saleType: "cash",
+      price: 198_500, down: 0, months: null, monthly: null, dueDay: null,
+      signedOn: "2026-02-20",
+      paid: [["2026-02-20", 198_500, "full_payment"]],
+      notes: "Pagó de contado al firmar.",
+    },
+  },
 ];
 
 const ownerPassword = await hashPassword("lindero123");
@@ -98,52 +270,70 @@ db.transaction((tx) => {
   tx.insert(projects).values(projectRows).run();
   tx.insert(customers).values(customerRows).run();
 
-  for (const [code, project, areaM2, basePrice, holder, contractCode, kind, paid] of lotSpecs) {
+  // One id per named purchase, so the lots Ana Lucía bought together really do
+  // share a sale group rather than only looking as though they do.
+  const saleGroupIds = new Map<string, string>();
+
+  for (const spec of lotSpecs) {
     const lotId = randomUUID();
 
     tx.insert(lots)
       .values({
         id: lotId,
-        projectId: projectId(project),
-        code,
-        areaM2,
-        basePriceCents: lempiras(basePrice),
+        projectId: projectId(spec.project),
+        code: spec.code,
+        areaM2: spec.areaM2,
+        basePriceCents: lempiras(spec.basePrice),
       })
       .run();
 
-    if (!holder) {
+    if (!spec.holder || !spec.sale) {
       continue;
     }
 
+    const sale = spec.sale;
     const contractId = randomUUID();
+
+    if (sale.group && !saleGroupIds.has(sale.group)) {
+      saleGroupIds.set(sale.group, randomUUID());
+    }
 
     tx.insert(contracts)
       .values({
         id: contractId,
-        code: contractCode,
+        code: sale.code,
         lotId,
-        customerId: customerId(holder),
-        kind,
+        customerId: customerId(spec.holder),
+        saleGroupId: sale.group ? saleGroupIds.get(sale.group)! : null,
+        kind: sale.kind,
+        saleType: sale.saleType,
         status: "active",
-        salePriceCents: lempiras(basePrice),
+        salePriceCents: lempiras(sale.price),
+        downPaymentCents: lempiras(sale.down),
+        termMonths: sale.months,
+        monthlyPaymentCents: sale.monthly === null ? null : lempiras(sale.monthly),
+        dueDay: sale.dueDay,
+        signedOn: sale.signedOn,
+        expiresOn: sale.expiresOn ?? null,
+        notes: sale.notes ?? null,
       })
       .run();
 
-    // One payment standing in for the history so far. The real schedule and
-    // individual installments arrive with the payments feature; what matters
-    // now is that paid-to-date is SUMMED from this table, never stored.
-    if (paid > 0) {
+    // Each installment as its own row, dated when it was actually received.
+    // Paid-to-date, the balance and the payment health are all summed and
+    // computed from these — none of them is stored anywhere.
+    for (const [paidOn, amount, type] of sale.paid) {
       tx.insert(payments)
         .values({
           id: randomUUID(),
           contractId,
-          amountCents: lempiras(paid),
-          originalAmountCents: lempiras(paid),
+          amountCents: lempiras(amount),
+          originalAmountCents: lempiras(amount),
           originalCurrency: "HNL",
           exchangeRate: "1",
-          paidOn: "2026-08-01",
-          method: "transfer",
-          type: "installment",
+          paidOn,
+          method: type === "down_payment" ? "cash" : "transfer",
+          type,
           recordedBy: ownerId,
         })
         .run();

@@ -4,7 +4,10 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "types": ["node"],
+    /* `vite/client` is what types the asset imports — `import logo from
+       "./x.png"` is a string URL Vite resolves at build time, and without this
+       TypeScript only sees a module that does not exist. */
+    "types": ["node", "vite/client"],
     "jsx": "react-jsx",
 
     /* Type-safety settings. These are strict on purpose: they are what makes

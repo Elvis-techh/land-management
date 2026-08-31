@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
-import { integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import type { AnySQLiteColumn } from "drizzle-orm/sqlite-core";
+import { index, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 /**
  * Lindero's database schema.
@@ -232,18 +233,35 @@ export const customers = sqliteTable(
 /* -------------------------------------------------------------------------- */
 
 /**
- * A contract joins one customer to one lot.
+ * A contract joins one customer to ONE lot.
  *
- * `kind` separates a temporary hold from a signed sale; `status` is the
- * contract's own lifecycle. Payment health (current / overdue / at risk) is a
- * THIRD, separate concept computed from the payment schedule — it is
- * deliberately not a column here.
+ * That grain is deliberate even though a customer usually buys several lots at
+ * once and thinks of it as a single purchase. Lots are released, titled,
+ * cancelled and repossessed one at a time, so each one needs a balance of its
+ * own: paying off two of three lots has to leave two lots transferable and one
+ * outstanding, which a merged row cannot express.
+ *
+ * The "one purchase" the customer experiences is `saleGroupId`, and the single
+ * receipt they get for it is a payment split across the group's contracts —
+ * see src/lib/allocation.ts.
+ *
+ * Three separate concepts, none of which is allowed to stand in for another:
+ *
+ * - `kind`   — a temporary hold vs a signed sale.
+ * - `status` — the contract's own lifecycle.
+ * - payment health (al día / atrasado / en riesgo) — computed from the terms
+ *   below and the posted payments, in src/lib/contracts.ts. Deliberately NOT a
+ *   column: a stored alert status is stale the morning after it is written.
+ *
+ * Everything about how much is owed is likewise derived, never stored:
+ * `financed` is salePrice − downPayment, and the balance is salePrice minus
+ * the non-reversed payments. There is no balance column anywhere in Lindero.
  */
 export const contracts = sqliteTable(
   "contracts",
   {
     id: text("id").primaryKey(),
-    /** Human-facing number, e.g. "CT-2026-014". */
+    /** Human-facing number, e.g. "CT-2026-014". Assigned by the server. */
     code: text("code").notNull(),
     lotId: text("lot_id")
       .notNull()
@@ -251,55 +269,337 @@ export const contracts = sqliteTable(
     customerId: text("customer_id")
       .notNull()
       .references(() => customers.id),
+    /**
+     * The purchase this contract belongs to, or null when the lot was bought on
+     * its own.
+     *
+     * Lots bought together are one legal document and one payment: the customer
+     * hands over a single amount and gets a single receipt, which is then split
+     * across the group. Grouping implicitly by customer instead would be wrong
+     * for the common case of somebody who bought two lots in 2024 and a third
+     * this year — a payment for the new lot must not be spread over the old
+     * ones. So the group is recorded rather than guessed at.
+     *
+     * A plain shared id, with no table of its own. A group is always one
+     * customer's, it carries nothing a contract does not already know, and it
+     * cannot exist before the contracts that define it.
+     */
+    saleGroupId: text("sale_group_id"),
     /** "reservation" | "contract" */
     kind: text("kind").notNull(),
+    /**
+     * How the lot is being paid for: "financed" | "cash" | "donation".
+     *
+     * The Crédito / Comprado / Donación distinction, and it decides which of
+     * the terms below apply at all. A financed sale has a term, a monthly
+     * amount and a due day; a cash sale is settled at signing and has none of
+     * them; a donation is a transfer of land for no money, recorded at a sale
+     * price of zero so the lot's history says what became of it instead of the
+     * lot simply going quiet.
+     */
+    saleType: text("sale_type").notNull().default("financed"),
     /** "draft" | "active" | "paid_off" | "cancelled" | "defaulted" */
     status: text("status").notNull().default("active"),
     /**
      * The agreed price for THIS sale, which is independent of the lot's current
      * base price. Changing a lot's list price must never alter what a customer
      * already owes.
+     *
+     * Always lempira centavos. A payment made in dollars keeps its own dollar
+     * amount and the rate it was actually settled at, in `payments`, so the
+     * bank's real rate on the day is what enters the accounts — never today's
+     * display rate applied after the fact.
      */
     salePriceCents: integer("sale_price_cents").notNull(),
+    /**
+     * The prima as AGREED, which is not the same question as whether it has
+     * been paid. Whether it arrived is summed from the payments of type
+     * `down_payment`; keeping one column for both is how a spreadsheet ends up
+     * insisting on a prima nobody ever handed over.
+     */
+    downPaymentCents: integer("down_payment_cents").notNull().default(0),
+    /** How many installments were agreed. Null for a cash sale or a donation. */
+    termMonths: integer("term_months"),
+    /**
+     * The agreed installment, stored rather than computed.
+     *
+     * It is tempting to derive it as financed ÷ months, but the real figure is
+     * negotiated and rounded: L 47,000 over 13 months is L 3,615.38, which
+     * nobody pays. A round number is agreed and the last installment absorbs
+     * the difference. Computing it would quietly overwrite what was signed.
+     */
+    monthlyPaymentCents: integer("monthly_payment_cents"),
+    /** Day of the month the installment falls due, 1–31. See src/lib/contracts.ts. */
+    dueDay: integer("due_day"),
+    /**
+     * The date the contract was signed — the date the schedule counts from.
+     * Distinct from `created_at`, which is when the row was typed in, often
+     * days or years later.
+     */
+    signedOn: text("signed_on"),
+    /**
+     * When the first installment falls due, if it was negotiated rather than
+     * following from the signing date. Usually null: see `firstDueDate` in
+     * src/lib/contracts.ts for what is used instead.
+     */
+    firstDueOn: text("first_due_on"),
+    /**
+     * When a reservation lapses. Only meaningful for `kind = "reservation"`: a
+     * hold with no expiry keeps a lot off the market forever and nobody ever
+     * notices.
+     */
+    expiresOn: text("expires_on"),
+    /**
+     * When and why the contract stopped being active.
+     *
+     * The audit log records who did it, but the date belongs on the row: a
+     * status of "cancelled" with no date cannot answer when the lot came back,
+     * which is the first thing asked of a cancelled sale.
+     */
+    closedAt: text("closed_at"),
+    closedReason: text("closed_reason"),
+    /** What was agreed verbally, and anything the columns above cannot hold. */
+    notes: text("notes"),
     createdAt: timestamp("created_at"),
+    /**
+     * Nullable and written by the application, for the same reason as
+     * `projects.updated_at`: SQLite cannot add a NOT NULL column defaulting to
+     * CURRENT_TIMESTAMP to a table that already holds rows.
+     */
+    updatedAt: text("updated_at"),
   },
   (table) => [uniqueIndex("contracts_code_unique").on(table.code)],
 );
 
 /**
- * Posted payments.
+ * A receipt: the DOCUMENT, not the money.
+ *
+ * This is the table that replaces the frozen "previous balance / new balance /
+ * cumulative paid" columns and the Lock Receipt checkbox a spreadsheet needs.
+ * None of those figures live here, because none of them are facts about the
+ * receipt — they are facts about the ledger at the moment the receipt was
+ * issued, and src/lib/ledger.ts works them out by replaying the payments in
+ * order every time somebody looks.
+ *
+ * Why that matters, and it is the whole point of this feature: a rollup that
+ * always shows TODAY's balance rewrites last month's receipt behind your back,
+ * so the numbers are frozen into columns to stop it — and then a frozen number
+ * is stale the moment an old payment is corrected, with nothing to say so. Both
+ * halves of that trap disappear when the figures are derived. Correct a payment
+ * from two months ago, or the prima from last year, and every receipt after it
+ * re-derives to numbers that still add up.
+ *
+ * What DOES have to be pinned down is the paper. A receipt handed to a customer
+ * is a claim made on a date, so when a retroactive correction changes what it
+ * would say, the receipt is marked superseded and reissued rather than quietly
+ * showing different figures under a number somebody already has on paper.
+ */
+export const receipts = sqliteTable(
+  "receipts",
+  {
+    id: text("id").primaryKey(),
+    /**
+     * The sequence, as an integer, assigned by the server inside the same
+     * transaction that writes the receipt.
+     *
+     * Gaps and reuse are both read as fraud by anyone auditing a book of
+     * receipts, so this is allocated as MAX(number) + 1 under the write lock —
+     * never from a row count, which repeats a number the first time one is
+     * voided.
+     */
+    number: integer("number").notNull(),
+    /** The same sequence as people say it: "REC-2026-00042". */
+    code: text("code").notNull(),
+    /**
+     * A short, RANDOM, unguessable code for looking a receipt up — the "secure
+     * receipt id".
+     *
+     * Deliberately not the sequence. `code` is the accountant's handle and has
+     * to be predictable; this one goes in a link sent over WhatsApp, and a
+     * predictable one would let anybody who received a single receipt walk the
+     * numbers and read every other customer's. Two jobs, two columns.
+     */
+    lookupCode: text("lookup_code").notNull(),
+    customerId: text("customer_id")
+      .notNull()
+      .references(() => customers.id),
+    /** Calendar date shown on the document, not the row's insert time. */
+    issuedOn: text("issued_on").notNull(),
+    issuedBy: text("issued_by")
+      .notNull()
+      .references(() => users.id),
+    /**
+     * The client's own key for this submission, so a double-tap at the payment
+     * window cannot post the money twice.
+     *
+     * Unique where present. The second arrival of the same key is answered with
+     * the receipt the first one created, rather than a second receipt — the
+     * failure this prevents is somebody on a phone with one bar of signal
+     * tapping "Guardar" again because nothing appeared to happen.
+     */
+    idempotencyKey: text("idempotency_key"),
+    /** What this receipt is for, in the issuer's words. Printed on the document. */
+    note: text("note"),
+    /**
+     * Set when the receipt is voided. The row is never deleted and the number is
+     * never reused: a missing receipt number cannot be told apart from a hidden
+     * one, so a void has to be visible as a void.
+     */
+    voidedAt: text("voided_at"),
+    voidReason: text("void_reason"),
+    voidedBy: text("voided_by").references(() => users.id),
+    /**
+     * The receipt issued in this one's place, when it was voided in order to be
+     * corrected rather than simply cancelled.
+     *
+     * This is what makes a correction explainable to the customer holding the
+     * old paper: both documents exist, each says what it said, and the chain
+     * between them is recorded rather than remembered.
+     */
+    supersededById: text("superseded_by_id").references((): AnySQLiteColumn => receipts.id),
+    createdAt: timestamp("created_at"),
+  },
+  (table) => [
+    uniqueIndex("receipts_number_unique").on(table.number),
+    uniqueIndex("receipts_code_unique").on(table.code),
+    uniqueIndex("receipts_lookup_code_unique").on(table.lookupCode),
+    uniqueIndex("receipts_idempotency_key_unique").on(table.idempotencyKey),
+  ],
+);
+
+/**
+ * A file attached to a receipt — in practice, the customer's proof of transfer.
+ *
+ * The single most requested thing in a land office: somebody sends a photo of
+ * their deposit slip on WhatsApp, and until now it lived in WhatsApp. Six
+ * months later, when the payment is disputed, the phone has been replaced and
+ * the chat is gone. Storing it beside the receipt is the whole feature.
+ *
+ * The BYTES are not in the database. SQLite can hold a blob perfectly well, but
+ * every backup, every copy and every read of the file would then drag the
+ * images along with the ledger, and a database that is 40 MB of text and 4 GB
+ * of screenshots is one nobody can move. The row records where the file is; the
+ * file sits on disk under `storageKey`.
+ */
+export const attachments = sqliteTable(
+  "attachments",
+  {
+    id: text("id").primaryKey(),
+    receiptId: text("receipt_id")
+      .notNull()
+      .references(() => receipts.id),
+    /**
+     * The file's name on disk, relative to the uploads directory.
+     *
+     * Generated, never the name the browser sent. A user-supplied filename is
+     * attacker-controlled text: "../../etc/passwd" is a real thing to receive,
+     * and so is a name that differs from another only by case on a filesystem
+     * that does not care. The original is kept in `fileName` for display only.
+     */
+    storageKey: text("storage_key").notNull(),
+    /** What the file was called when it arrived. Shown, never used as a path. */
+    fileName: text("file_name").notNull(),
+    /** Checked against an allow-list on upload — see src/lib/attachments.ts. */
+    contentType: text("content_type").notNull(),
+    byteSize: integer("byte_size").notNull(),
+    uploadedBy: text("uploaded_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: timestamp("created_at"),
+  },
+  (table) => [index("attachments_receipt_idx").on(table.receiptId)],
+);
+
+/**
+ * Posted payments — the TRANSACTIONS half of the Recibos screen.
  *
  * A contract's paid-to-date is SUM(amount_cents) over its non-reversed
  * payments — computed, never stored on the contract. A mistake is corrected by
  * writing a reversal, not by editing or deleting the original row.
+ *
+ * There is deliberately NO running-balance column here, and there never will
+ * be. "What did this customer owe before this payment, and after it" is
+ * answered by replaying the ordered payments in src/lib/ledger.ts. That is the
+ * whole reason a payment corrected months later re-adjusts every figure that
+ * follows it instead of leaving a trail of frozen numbers that no longer add
+ * up — see the note on `receipts` below.
  */
-export const payments = sqliteTable("payments", {
-  id: text("id").primaryKey(),
-  contractId: text("contract_id")
-    .notNull()
-    .references(() => contracts.id),
-  /** Amount in the CONTRACT's currency, in centavos. This is what counts. */
-  amountCents: integer("amount_cents").notNull(),
-  /** What the customer actually handed over, before conversion. */
-  originalAmountCents: integer("original_amount_cents").notNull(),
-  originalCurrency: text("original_currency").notNull(),
-  /**
-   * Rate used for this specific payment, stored as text to keep full decimal
-   * precision. Balances are never recomputed from today's rate.
-   */
-  exchangeRate: text("exchange_rate").notNull(),
-  /** Calendar date of the payment (YYYY-MM-DD), not the row's insert time. */
-  paidOn: text("paid_on").notNull(),
-  /** "cash" | "transfer" | "card" */
-  method: text("method").notNull(),
-  /** "down_payment" | "installment" | "full_payment" | "adjustment" | "reversal" */
-  type: text("type").notNull(),
-  recordedBy: text("recorded_by")
-    .notNull()
-    .references(() => users.id),
-  reversedAt: text("reversed_at"),
-  createdAt: timestamp("created_at"),
-});
+export const payments = sqliteTable(
+  "payments",
+  {
+    id: text("id").primaryKey(),
+    contractId: text("contract_id")
+      .notNull()
+      .references(() => contracts.id),
+    /**
+     * The receipt this payment was printed on, or null for a payment that has
+     * not been receipted.
+     *
+     * One receipt, many payments: a customer holding three lots hands over a
+     * single amount and gets a single piece of paper, while the money lands on
+     * three contracts. This column is that relationship — see
+     * src/lib/allocation.ts for how the amount is divided.
+     */
+    receiptId: text("receipt_id").references(() => receipts.id),
+    /** Amount in the CONTRACT's currency, in centavos. This is what counts. */
+    amountCents: integer("amount_cents").notNull(),
+    /** What the customer actually handed over, before conversion. */
+    originalAmountCents: integer("original_amount_cents").notNull(),
+    originalCurrency: text("original_currency").notNull(),
+    /**
+     * Rate used for this specific payment, stored as text to keep full decimal
+     * precision. Balances are never recomputed from today's rate.
+     */
+    exchangeRate: text("exchange_rate").notNull(),
+    /** Calendar date of the payment (YYYY-MM-DD), not the row's insert time. */
+    paidOn: text("paid_on").notNull(),
+    /** "cash" | "transfer" | "card" */
+    method: text("method").notNull(),
+    /**
+     * The bank's confirmation number for a transfer, or the deposit slip number.
+     *
+     * The single most useful field on a disputed payment: it is what lets a
+     * figure on this screen be matched against a line on a bank statement
+     * months later, without which "he says he paid" has no answer.
+     */
+    reference: text("reference"),
+    /** "down_payment" | "installment" | "full_payment" | "adjustment" | "reversal" */
+    type: text("type").notNull(),
+    /** Anything about this specific transaction the columns above cannot hold. */
+    notes: text("notes"),
+    recordedBy: text("recorded_by")
+      .notNull()
+      .references(() => users.id),
+    /*
+     * A reversal is recorded ON the payment being reversed, not as a second row
+     * carrying the negative.
+     *
+     * That is not the only defensible model, but it is the one this database
+     * already assumes: every balance in the app is a SUM filtered by
+     * `reversed_at IS NULL`, in routes/lots.ts, routes/customers.ts and
+     * routes/contracts.ts alike. Introducing a negative row would double-count
+     * on every one of those queries unless all of them were changed on the same
+     * day, and a balance that is wrong between two deploys is exactly the class
+     * of bug this app exists to prevent.
+     *
+     * The money is untouched either way: the original row keeps its amount, its
+     * date and its rate, and simply stops counting. Who reversed it and why sit
+     * beside it, because "reversed" with no reason is the kind of entry that
+     * cannot be explained to the customer it belongs to.
+     */
+    reversedAt: text("reversed_at"),
+    reversedBy: text("reversed_by").references(() => users.id),
+    reversalReason: text("reversal_reason"),
+    createdAt: timestamp("created_at"),
+  },
+  (table) => [
+    // Every balance in the app is a SUM over one contract's payments, and the
+    // ledger replays them in date order — so both of those are asked of this
+    // table constantly and neither should ever become a full scan.
+    index("payments_contract_idx").on(table.contractId, table.paidOn),
+    index("payments_receipt_idx").on(table.receiptId),
+  ],
+);
 
 /* -------------------------------------------------------------------------- */
 /* Audit                                                                       */

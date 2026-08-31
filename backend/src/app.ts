@@ -9,12 +9,15 @@ import type { AppConfig } from "./config/env.js";
 import type { Db } from "./db/client.js";
 import { auditRoutes } from "./routes/audit.js";
 import { authRoutes } from "./routes/auth.js";
+import { contractRoutes } from "./routes/contracts.js";
 import { customerRoutes } from "./routes/customers.js";
 import { healthRoutes } from "./routes/health.js";
 import { exchangeRateRoutes } from "./routes/exchangeRate.js";
 import { lotRoutes } from "./routes/lots.js";
 import { permissionRoutes } from "./routes/permissions.js";
 import { projectRoutes } from "./routes/projects.js";
+import { receiptRoutes } from "./routes/receipts.js";
+import { transactionRoutes } from "./routes/transactions.js";
 
 export async function buildApp(config: AppConfig, db: Db) {
   const app = Fastify({
@@ -89,6 +92,9 @@ export async function buildApp(config: AppConfig, db: Db) {
       await api.register(lotRoutes);
       await api.register(projectRoutes);
       await api.register(customerRoutes);
+      await api.register(contractRoutes);
+      await api.register(receiptRoutes, { uploadsPath: config.uploadsPath });
+      await api.register(transactionRoutes);
       await api.register(permissionRoutes);
       await api.register(exchangeRateRoutes);
       await api.register(auditRoutes);

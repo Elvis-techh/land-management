@@ -1,0 +1,365 @@
+import { useEffect, useMemo, useState } from "react";
+
+import { IconChevronDown, IconEdit } from "../../components/Icons";
+import type { MoneyView } from "../../lib/money";
+import { cents, formatMoney } from "../../lib/money";
+import type { User } from "../../lib/permissions";
+import { can } from "../../lib/permissions";
+import type { Receipt, Transaction } from "../../types";
+import { ReceiptPaper } from "./ReceiptPaper";
+import { TransactionToolbar } from "./TransactionToolbar";
+import type { TransactionView } from "./TransactionToolbar";
+import { fetchReceipt } from "./api";
+import type { TransactionFilters } from "./transactionFilters";
+import {
+  NO_TRANSACTION_FILTERS,
+  filterTransactions,
+  searchTransactions,
+} from "./transactionFilters";
+import { DEFAULT_SORT, groupByCustomer, sortTransactions } from "./transactionSort";
+import type { TransactionSort } from "./transactionSort";
+
+interface ReceiptsPageProps {
+  transactions: Transaction[];
+  money: MoneyView;
+  user: User;
+  onVoidReceipt: (receipt: Receipt) => void;
+  onEditTransaction: (transaction: Transaction) => void;
+}
+
+const METHOD_LABELS: Record<string, string> = {
+  cash: "Efectivo",
+  transfer: "Transferencia",
+  card: "Tarjeta",
+};
+
+/** "15 mar 2026" — compact, for a list rather than a document. */
+function shortDate(isoDate: string): string {
+  const [year, month, day] = isoDate.split("-").map(Number);
+
+  return new Intl.DateTimeFormat("es-HN", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(Date.UTC(year!, month! - 1, day!)));
+}
+
+interface RowProps {
+  transaction: Transaction;
+  money: MoneyView;
+  isSelected: boolean;
+  canEdit: boolean;
+  onSelect: () => void;
+  onEdit: () => void;
+  /** Hidden inside a customer group, where the name is already the heading. */
+  showCustomer: boolean;
+}
+
+/**
+ * One transaction.
+ *
+ * The row is a button so the whole thing is one keyboard-reachable target, with
+ * the edit control beside it rather than inside it — a button inside a button
+ * is invalid HTML and behaves unpredictably when clicked.
+ */
+function TransactionRow({
+  transaction,
+  money,
+  isSelected,
+  canEdit,
+  onSelect,
+  onEdit,
+  showCustomer,
+}: RowProps) {
+  const isReversed = transaction.reversedAt !== null;
+
+  return (
+    <div
+      className={`txn-row${isSelected ? " is-selected" : ""}${isReversed ? " is-void" : ""}`}
+    >
+      <button type="button" className="txn-main" onClick={onSelect}>
+        <span className="txn-date">{shortDate(transaction.paidOn)}</span>
+
+        <span className="txn-who">
+          {showCustomer && <span className="txn-name">{transaction.customerName}</span>}
+          <span className="txn-detail">
+            {transaction.lotCode} · {transaction.projectName}
+          </span>
+        </span>
+
+        <span className="txn-tags">
+          {transaction.receiptCode ? (
+            <span className="txn-receipt">{transaction.receiptCode}</span>
+          ) : (
+            <span className="txn-receipt is-missing" title="Este pago nunca se imprimió">
+              sin recibo
+            </span>
+          )}
+          <span className="txn-method">
+            {METHOD_LABELS[transaction.method] ?? transaction.method}
+          </span>
+          {isReversed && <span className="txn-method is-void">anulada</span>}
+        </span>
+
+        <span className="txn-amount">{formatMoney(transaction.amount, money)}</span>
+      </button>
+
+      {canEdit && !isReversed && (
+        <button
+          type="button"
+          className="icon-btn txn-edit"
+          onClick={onEdit}
+          aria-label={`Corregir la transacción de ${transaction.customerName} del ${transaction.paidOn}`}
+          title="Corregir esta transacción"
+        >
+          <IconEdit />
+        </button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The Recibos screen: the transactions on the left, the receipt on the right.
+ *
+ * Two arrangements of the same list, because the tab is opened for two
+ * different questions. "¿Cuánto entró esta semana?" wants everything in date
+ * order. "¿Qué ha pagado Ana?" wants one row per person that opens into their
+ * history — which is also the only way to find a specific old payment without
+ * scrolling through everybody else's.
+ *
+ * Both are built from ONE array of transactions, so they cannot disagree about
+ * what exists. The receipt preview is fetched separately, on demand, because a
+ * receipt's figures are derived from the whole ledger and the freshest answer
+ * is always the one the server just computed.
+ */
+export function ReceiptsPage({
+  transactions,
+  money,
+  user,
+  onVoidReceipt,
+  onEditTransaction,
+}: ReceiptsPageProps) {
+  const [view, setView] = useState<TransactionView>("date");
+  const [search, setSearch] = useState("");
+  const [sort, setSort] = useState<TransactionSort>(DEFAULT_SORT);
+  const [filters, setFilters] = useState<TransactionFilters>(NO_TRANSACTION_FILTERS);
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  const [selectedReceiptId, setSelectedReceiptId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<Receipt | null>(null);
+  const [isLoadingDetail, setLoadingDetail] = useState(false);
+
+  const canEdit = can(user, "payment:reverse");
+  const canVoid = can(user, "payment:reverse");
+
+  const projectNames = useMemo(
+    () => [...new Set(transactions.map((t) => t.projectName))].sort((a, b) => a.localeCompare(b, "es")),
+    [transactions],
+  );
+
+  const visible = useMemo(
+    () => sortTransactions(filterTransactions(searchTransactions(transactions, search), filters), sort),
+    [transactions, search, filters, sort],
+  );
+
+  const groups = useMemo(() => groupByCustomer(visible, sort), [visible, sort]);
+
+  // Selecting a transaction shows its receipt. One without a receipt clears the
+  // panel rather than leaving the previous customer's document on screen beside
+  // a row it has nothing to do with.
+  useEffect(() => {
+    if (selectedReceiptId === null) {
+      setDetail(null);
+      return;
+    }
+
+    // A newer request can resolve before an older one; `cancelled` makes the
+    // outdated response drop itself instead of overwriting the current sheet.
+    let cancelled = false;
+    setLoadingDetail(true);
+
+    fetchReceipt(selectedReceiptId)
+      .then((receipt) => {
+        if (!cancelled) {
+          setDetail(receipt);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDetail(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoadingDetail(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedReceiptId, transactions]);
+
+  const toggleCustomer = (customerId: string) => {
+    setExpanded((current) => {
+      const next = new Set(current);
+
+      if (next.has(customerId)) {
+        next.delete(customerId);
+      } else {
+        next.add(customerId);
+      }
+
+      return next;
+    });
+  };
+
+  const select = (transaction: Transaction) => setSelectedReceiptId(transaction.receiptId);
+
+  const receivedTotal = visible
+    .filter((transaction) => transaction.reversedAt === null)
+    .reduce((sum, transaction) => sum + transaction.amount, 0);
+
+  return (
+    <div className="receipts-layout">
+      <div className="card">
+        <div className="card-head">
+          <div>
+            <h2>Transacciones</h2>
+            <p className="cell-sub">
+              {formatMoney(cents(receivedTotal), money)} en {visible.length} transacci
+              {visible.length === 1 ? "ón" : "ones"}
+            </p>
+          </div>
+        </div>
+
+        <TransactionToolbar
+          view={view}
+          onViewChange={setView}
+          projectNames={projectNames}
+          filters={filters}
+          onFiltersChange={setFilters}
+          sort={sort}
+          onSortChange={setSort}
+          search={search}
+          onSearchChange={setSearch}
+          shownCount={visible.length}
+          totalCount={transactions.length}
+        />
+
+        {visible.length === 0 && (
+          <p className="state-message">
+            {transactions.length === 0
+              ? "Todavía no se ha registrado ninguna transacción."
+              : "Ninguna transacción coincide con la búsqueda."}
+          </p>
+        )}
+
+        {view === "date" &&
+          visible.map((transaction) => (
+            <TransactionRow
+              key={transaction.id}
+              transaction={transaction}
+              money={money}
+              isSelected={
+                transaction.receiptId !== null && transaction.receiptId === selectedReceiptId
+              }
+              canEdit={canEdit}
+              onSelect={() => select(transaction)}
+              onEdit={() => onEditTransaction(transaction)}
+              showCustomer
+            />
+          ))}
+
+        {view === "customer" &&
+          groups.map((group) => {
+            const isOpen = expanded.has(group.customerId);
+
+            return (
+              <div key={group.customerId} className="txn-group">
+                <button
+                  type="button"
+                  className={`txn-group-head${isOpen ? " is-open" : ""}`}
+                  aria-expanded={isOpen}
+                  onClick={() => toggleCustomer(group.customerId)}
+                >
+                  <span className={`txn-caret${isOpen ? " is-open" : ""}`}>
+                    <IconChevronDown />
+                  </span>
+
+                  <span className="txn-who">
+                    <span className="txn-name">{group.customerName}</span>
+                    <span className="txn-detail">
+                      {group.transactions.length} transacci
+                      {group.transactions.length === 1 ? "ón" : "ones"} · última{" "}
+                      {shortDate(group.lastPaidOn)}
+                    </span>
+                  </span>
+
+                  <span className="txn-amount">{formatMoney(cents(group.totalCents), money)}</span>
+                </button>
+
+                {isOpen && (
+                  <div className="txn-group-body">
+                    {group.transactions.map((transaction) => (
+                      <TransactionRow
+                        key={transaction.id}
+                        transaction={transaction}
+                        money={money}
+                        isSelected={
+                          transaction.receiptId !== null &&
+                          transaction.receiptId === selectedReceiptId
+                        }
+                        canEdit={canEdit}
+                        onSelect={() => select(transaction)}
+                        onEdit={() => onEditTransaction(transaction)}
+                        showCustomer={false}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+      </div>
+
+      <div className="receipt-preview-wrap">
+        <p className="receipt-preview-label">Vista del recibo</p>
+
+        {detail === null && !isLoadingDetail && (
+          <p className="state-message">
+            {selectedReceiptId === null
+              ? "Selecciona una transacción para ver su recibo. Las marcadas «sin recibo» nunca se imprimieron."
+              : "No se pudo cargar el recibo."}
+          </p>
+        )}
+
+        {isLoadingDetail && detail === null && <p className="state-message">Cargando…</p>}
+
+        {detail && (
+          <>
+            <ReceiptPaper receipt={detail} money={money} />
+            <div className="receipt-tear" />
+
+            <div className="receipt-actions">
+              <button type="button" className="btn-secondary" onClick={() => window.print()}>
+                Imprimir
+              </button>
+
+              {canVoid && detail.voidedAt === null && (
+                <button
+                  type="button"
+                  className="link-btn is-danger"
+                  onClick={() => onVoidReceipt(detail)}
+                >
+                  Anular
+                </button>
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}

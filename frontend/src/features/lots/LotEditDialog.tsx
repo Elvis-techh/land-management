@@ -19,6 +19,15 @@ interface LotEditDialogProps {
   lots: Lot[];
   /** The area unit each project is captured in — see lib/area.ts. */
   unitByProject: Map<string, AreaUnit>;
+  /**
+   * Whether this user may reprice a lot that is under contract.
+   *
+   * The server has always enforced this, but nothing asked here — so a user
+   * without it could retype the price, write a justification, press Guardar and
+   * only then be told no. Locking the field turns a refused save into a
+   * sentence read before any typing starts.
+   */
+  canChangePrice: boolean;
   onCancel: () => void;
   /** Rejects when the server refuses; the message is shown in the dialog. */
   onSave: (changes: {
@@ -34,6 +43,7 @@ export function LotEditDialog({
   lot,
   lots,
   unitByProject,
+  canChangePrice,
   onCancel,
   onSave,
 }: LotEditDialogProps) {
@@ -58,6 +68,10 @@ export function LotEditDialog({
   // history under its own action.
   const priceChanged = fromCurrencyUnits(parseMoneyInput(basePrice) || 0) !== lot.basePrice;
   const needsJustification = lot.holding !== null && priceChanged;
+  // The capability only bites on a lot that is under contract — an available
+  // lot's list price is ordinary inventory upkeep, not a change to what
+  // anybody owes, and the server draws the line in the same place.
+  const priceLocked = lot.holding !== null && !canChangePrice;
 
   // Lot numbers are unique WITHIN a project, so moving a lot to another project
   // can collide exactly as renaming it can. Both are measured against whichever
@@ -187,10 +201,18 @@ export function LotEditDialog({
 
           <div className="form-field full-width">
             <label htmlFor="lot-price">Precio base</label>
-            <MoneyInput id="lot-price" value={basePrice} onChange={setBasePrice} />
+            <MoneyInput
+              id="lot-price"
+              value={basePrice}
+              onChange={setBasePrice}
+              readOnly={priceLocked}
+            />
             <span className="field-hint">
-              Siempre en lempiras. Cambiar el precio base no altera lo que ya deben los
-              clientes: cada contrato conserva su propio precio de venta.
+              {priceLocked
+                ? `Este lote tiene el contrato ${lot.holding?.contractCode} vigente y tu usuario ` +
+                  "no puede cambiar el precio de un lote con contrato. El resto sí se edita."
+                : "Siempre en lempiras. Cambiar el precio base no altera lo que ya deben los " +
+                  "clientes: cada contrato conserva su propio precio de venta."}
             </span>
           </div>
 

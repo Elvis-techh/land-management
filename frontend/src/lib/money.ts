@@ -87,6 +87,33 @@ export function formatMoney(amount: Cents, view: MoneyView): string {
   return `L. ${hnlFormat.format(lempiras)}`;
 }
 
+const documentFormat = new Intl.NumberFormat("es-HN", {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+/**
+ * Money as a DOCUMENT states it: always two decimals.
+ *
+ * `formatMoney` above drops trailing zeros, which is right on a screen full of
+ * figures and wrong on a receipt. "L. 5,000" sitting above "L. 5,000.50" reads
+ * as two different kinds of number, and a printed amount with no centavos looks
+ * like one somebody forgot to finish. Two decimals is also what the official
+ * receipt has always printed, so this is what matches the paper already in
+ * customers' hands.
+ *
+ * Dollars are left to `formatMoney`, which deliberately shows no cents: that
+ * figure is a conversion at today's rate, not an amount anybody handed over,
+ * and decimals on it would claim a precision it does not have.
+ */
+export function formatDocumentMoney(amount: Cents, view: MoneyView): string {
+  if (view.currency === "USD") {
+    return formatMoney(amount, view);
+  }
+
+  return `L. ${documentFormat.format(amount / 100)}`;
+}
+
 /**
  * Same as `formatMoney`, but returns the currency symbol and the number
  * separately so the UI can style them differently — Lindero tints the symbol
