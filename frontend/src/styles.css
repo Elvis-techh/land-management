@@ -2123,6 +2123,16 @@ body.modal-open {
   gap: 8px;
 }
 
+/*
+ * A grid item's default `min-width: auto` floors it at its own min-content
+ * width, so a field wider than its share does not shrink — it pushes the whole
+ * grid past the popover and out of the panel. Every range in the app is a pair
+ * of fields in a fixed-width popover, so this has to hold for all of them.
+ */
+.filter-range > * {
+  min-width: 0;
+}
+
 .filter-range input {
   width: 100%;
   padding: 8px 10px;
@@ -2132,6 +2142,38 @@ body.modal-open {
   color: var(--ink);
   font-family: var(--font-mono);
   font-size: 0.8125rem;
+}
+
+/*
+ * The two DATE fields stack; the number pairs stay side by side.
+ *
+ * `input[type="date"]` is not an ordinary text box. The browser draws
+ * "dd/mm/aaaa" as three fixed segments plus a calendar button, and that
+ * assembly has a hard minimum width it will not go below — asked for less, it
+ * clips its own contents rather than reflowing them, and the picker button is
+ * the part on the end that disappears. Two of them side by side need more than
+ * the 266px this popover leaves inside its padding, which is why the "hasta"
+ * date came out cut off and could not be opened.
+ *
+ * The exact minimum differs by browser and by locale, so this does not try to
+ * buy a few more pixels and hope. One field per row has the whole width to
+ * itself under any of them, and the room left over pays for a visible label —
+ * "Desde" and "Hasta" were an `aria-label` each, which told a screen reader
+ * which end was which and told everybody else nothing.
+ */
+.filter-range-dates {
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.filter-range-dates label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text-muted);
+  font-size: 0.6875rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .filter-range .input-with-prefix input {

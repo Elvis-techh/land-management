@@ -226,21 +226,30 @@ export function TransactionToolbar({
 
       <div className="filter-section">
         <p className="menu-title">Fecha del pago</p>
-        <div className="filter-range">
-          <input
-            type="date"
-            aria-label="Desde"
-            value={filters.fromDate ?? ""}
-            onChange={(event) =>
-              onFiltersChange({ ...filters, fromDate: event.target.value || null })
-            }
-          />
-          <input
-            type="date"
-            aria-label="Hasta"
-            value={filters.toDate ?? ""}
-            onChange={(event) => onFiltersChange({ ...filters, toDate: event.target.value || null })}
-          />
+        {/* One field per row, each with its own label — a date input cannot be
+            squeezed into half of this popover without the browser clipping the
+            end of it, picker button included. See `.filter-range-dates`. */}
+        <div className="filter-range filter-range-dates">
+          <label>
+            <span>Desde</span>
+            <input
+              type="date"
+              value={filters.fromDate ?? ""}
+              onChange={(event) =>
+                onFiltersChange({ ...filters, fromDate: event.target.value || null })
+              }
+            />
+          </label>
+          <label>
+            <span>Hasta</span>
+            <input
+              type="date"
+              value={filters.toDate ?? ""}
+              onChange={(event) =>
+                onFiltersChange({ ...filters, toDate: event.target.value || null })
+              }
+            />
+          </label>
         </div>
         <span className="field-hint">El día que entró el dinero, no el día que se registró.</span>
       </div>

@@ -6,6 +6,7 @@ import { MoneyInput } from "../../components/MoneyInput";
 import { ApiError } from "../../lib/api";
 import type { MoneyView } from "../../lib/money";
 import { cents, formatMoney, parseMoneyInput, toMoneyInput } from "../../lib/money";
+import { parseTimestamp } from "../../lib/time";
 import type { Transaction } from "../../types";
 import type { TransactionEdit } from "./api";
 import { updateTransaction } from "./api";
@@ -101,11 +102,22 @@ export function TransactionEditDialog({
     targetRef.current?.scrollIntoView({ block: "center" });
   }, []);
 
-  /** Ordered oldest-first here, because this is a history rather than a feed. */
+  /**
+   * Ordered oldest-first here, because this is a history rather than a feed.
+   *
+   * Two payments on one day are separated by when they were ENTERED, which is
+   * the order `backend/src/lib/ledger.ts` replays them in — so the sequence
+   * read here is the sequence the balances either side of this edit were
+   * derived from. The id only settles a dead heat; it is a random UUID, and
+   * ordering a history by it would be ordering it by nothing.
+   */
   const history = useMemo(
     () =>
       [...customerTransactions].sort(
-        (a, b) => a.paidOn.localeCompare(b.paidOn) || a.id.localeCompare(b.id),
+        (a, b) =>
+          a.paidOn.localeCompare(b.paidOn) ||
+          parseTimestamp(a.createdAt) - parseTimestamp(b.createdAt) ||
+          a.id.localeCompare(b.id),
       ),
     [customerTransactions],
   );

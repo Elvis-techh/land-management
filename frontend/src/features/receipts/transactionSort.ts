@@ -1,3 +1,4 @@
+import { parseTimestamp } from "../../lib/time";
 import type { Transaction } from "../../types";
 
 /** The columns worth ordering by. Each maps to something visible in the list. */
@@ -42,21 +43,45 @@ export const SORT_OPTIONS: Array<{
 ];
 
 /**
+ * When a transaction happened, to the finest resolution the data has.
+ *
+ * `paidOn` is a calendar DATE, so three payments taken on 30 August all tie on
+ * it — and a tie is not a detail here, it is most of the screen: a busy day is
+ * exactly when several payments share a date. `createdAt` breaks the tie with
+ * the order they were entered.
+ *
+ * This is the first two parts of the three-part key `backend/src/lib/ledger.ts`
+ * orders a contract's ledger by, and it is deliberately the same one. A list
+ * that disagrees with the ledger about which of two payments came first is a
+ * list that disagrees with the receipts printed from it.
+ */
+function compareWhen(a: Transaction, b: Transaction): number {
+  return (
+    a.paidOn.localeCompare(b.paidOn) ||
+    parseTimestamp(a.createdAt) - parseTimestamp(b.createdAt)
+  );
+}
+
+/**
  * Order the transactions.
  *
- * Every comparison falls back to the date and then the id, so rows that tie —
- * two payments from the same customer on the same day — keep a stable order
- * instead of shuffling between renders. The fallback is NOT flipped by
- * direction: reversing the sort should not also reverse groups of equal rows
- * for no visible reason.
+ * Rows the chosen field cannot separate fall back to WHEN they happened, newest
+ * first, and then to the id. That fallback is not flipped by direction: asking
+ * for "menor a mayor" should not also reverse the two payments that tie at
+ * L 5,000, for no visible reason.
+ *
+ * The id is last and only ever settles a genuine dead heat — two rows with the
+ * same `paidOn` and the same `createdAt` to the millisecond. It is NOT a
+ * stand-in for `createdAt`: ids are `randomUUID()`, so ordering by one is
+ * ordering by a random string that merely happens never to change between
+ * renders. Sorting the ties by it is how three payments from one customer on
+ * one day ended up with somebody else's payment shuffled into the middle of
+ * them — an order that looked like it meant something and meant nothing.
  */
 export function sortTransactions(
   transactions: Transaction[],
   sort: TransactionSort,
 ): Transaction[] {
-  const stable = (a: Transaction, b: Transaction) =>
-    b.paidOn.localeCompare(a.paidOn) || a.id.localeCompare(b.id);
-
   const compare = (a: Transaction, b: Transaction): number => {
     switch (sort.field) {
       case "customer":
@@ -68,7 +93,10 @@ export function sortTransactions(
       case "date":
       default:
         // Ascending means oldest first, so the raw comparison is a plain one.
-        return a.paidOn.localeCompare(b.paidOn);
+        // `createdAt` is part of it rather than a fallback, because it is the
+        // same axis at a finer grain: "más recientes primero" has to mean the
+        // newest of the day first too, or the top of a day reads backwards.
+        return compareWhen(a, b);
     }
   };
 
@@ -78,7 +106,9 @@ export function sortTransactions(
   return [...transactions].sort((a, b) => {
     const result = compare(a, b);
 
-    return result !== 0 ? result * factor : stable(a, b);
+    return (
+      (result !== 0 ? result * factor : -compareWhen(a, b)) || a.id.localeCompare(b.id)
+    );
   });
 }
 
@@ -146,16 +176,28 @@ export function groupByCustomer(
   const factor = sort.direction === "asc" ? 1 : -1;
 
   ordered.sort((a, b) => {
-    switch (sort.field) {
-      case "customer":
-        return a.customerName.localeCompare(b.customerName, "es") * factor;
-      case "amount":
-        return (a.totalCents - b.totalCents) * factor;
-      case "date":
-      case "lot":
-      default:
-        return a.lastPaidOn.localeCompare(b.lastPaidOn) * factor;
-    }
+    const result = (() => {
+      switch (sort.field) {
+        case "customer":
+          return a.customerName.localeCompare(b.customerName, "es") * factor;
+        case "amount":
+          return (a.totalCents - b.totalCents) * factor;
+        case "date":
+        case "lot":
+        default:
+          return a.lastPaidOn.localeCompare(b.lastPaidOn) * factor;
+      }
+    })();
+
+    // Two people whose last payment fell on the same day, or who have paid the
+    // same total, are separated by name rather than by whichever the server
+    // listed first. Same reason as the flat list: an order nobody can explain
+    // reads as an order that means something.
+    return (
+      result ||
+      a.customerName.localeCompare(b.customerName, "es") ||
+      a.customerId.localeCompare(b.customerId)
+    );
   });
 
   return ordered;
