@@ -301,6 +301,10 @@ export interface ReceiptLine {
   projectName: string | null;
   amount: Cents;
   type: string;
+  /** The sale price of this lot's contract — "Valor Total del Contrato". */
+  contractTotal: Cents;
+  /** How many cuotas the contract has in all. Zero for a cash sale. */
+  installmentCount: number;
   /** Derived by replaying the ledger, never stored. */
   previousBalance: Cents;
   newBalance: Cents;

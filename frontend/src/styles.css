@@ -913,6 +913,17 @@ tbody tr:hover {
   background: var(--paper);
   border-radius: 12px;
   padding: 18px 0 0;
+  /*
+   * A backstop, not the fix. The document is laid out to fit this column and
+   * measured at its real 320px, so nothing should reach here — but this pane is
+   * a PREVIEW, and the printed sheet is the thing that has to be complete. If
+   * some future project name or reference arrives as one 60-character word,
+   * clipping it here is right and dragging the whole page sideways is not.
+   *
+   * `clip` rather than `hidden`: hidden on one axis makes the other a scroll
+   * container, which would hand this pane a stray vertical scrollbar.
+   */
+  overflow-x: clip;
 }
 
 .receipt-preview-label {
@@ -924,13 +935,47 @@ tbody tr:hover {
   padding: 0 20px 12px;
 }
 
+/*
+ * The official receipt, ported from inversion_pdf_service/server.js.
+ *
+ * Its palette and its font stack are written out here rather than taken from
+ * the app's tokens, because this is a DOCUMENT and not a screen. It has already
+ * been handed to customers looking exactly like this; it should not change
+ * because somebody retints the app, and it must print the same from any
+ * machine. The one app token left on it is the border, which is the preview
+ * card's edge rather than part of the document — printing drops it.
+ *
+ * Every size is in `em`, against the base set right here. That base is the only
+ * number that changes between the on-screen preview, which lives in a narrow
+ * column beside the receipt list, and the printed page, which is A4 — so the
+ * document scales as one piece instead of being laid out twice.
+ */
 .receipt-paper {
-  background: var(--card);
+  --r-primary: #1A253A;
+  --r-text: #111111;
+  --r-muted: #4A5568;
+  --r-border: #CBD5E1;
+  --r-red: #D32F2F;
+  --r-highlight: #F8FAFC;
+
+  display: flex;
+  flex-direction: column;
+  /* Queried below. The receipt lives in a narrow preview column beside the
+     list, and how much room it has has nothing to do with the window's width —
+     a viewport media query would be answering the wrong question. */
+  container-type: inline-size;
   margin: 0 16px;
-  padding: 20px 20px 16px;
+  padding: 2em 1.75em 1.5em;
+  /* Preview chrome, not the document: the card edge that meets `.receipt-tear`
+     below it on screen. Removed in `@media print`. */
   border: 1px solid var(--line);
   border-bottom: none;
   border-radius: 10px 10px 0 0;
+  background: #FFFFFF;
+  color: var(--r-text);
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-size: 10px;
+  line-height: 1.4;
 }
 
 .receipt-tear {
@@ -944,57 +989,325 @@ tbody tr:hover {
   background-repeat: repeat-x;
 }
 
-.receipt-brand {
+/* ---- the document's own header ---- */
+.receipt-header {
   display: flex;
-  align-items: center;
   justify-content: space-between;
-  margin-bottom: 14px;
+  align-items: flex-start;
+  gap: 1.5em;
+  margin-bottom: 2em;
 }
 
-.receipt-brand .name {
-  font-family: var(--font-display);
+.receipt-logo img {
+  display: block;
+  width: 17.5em;
+  max-width: 100%;
+  height: auto;
+}
+
+.receipt-logo h2 {
+  margin: 0.75em 0 0;
+  font-size: 1.5em;
+  font-weight: 800;
+  color: var(--r-primary);
+}
+
+.receipt-meta {
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.receipt-meta h1 {
+  margin: 0 0 0.385em;
+  font-size: 1.625em;
+  color: var(--r-primary);
+  text-transform: uppercase;
+}
+
+.receipt-meta p {
+  margin: 0.3125em 0;
+}
+
+/* The small grey caps used for every field name on the document. */
+.receipt-label {
+  margin-right: 0.385em;
+  color: var(--r-muted);
+  font-size: 0.8125em;
+  font-weight: bold;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+/* ---- who paid ---- */
+.receipt-client {
+  margin-bottom: 2em;
+  padding: 1.25em;
+  border: 1px solid var(--r-border);
+  border-radius: 8px;
+}
+
+.receipt-client .receipt-label {
+  display: block;
+  margin-bottom: 0.5em;
+}
+
+.receipt-client-name {
+  font-size: 1.125em;
   font-weight: 600;
-  font-size: 0.9375rem;
+  line-height: 1.4;
 }
 
-.receipt-brand .id {
-  font-family: var(--font-mono);
-  font-size: 0.6562rem;
-  color: var(--text-muted);
+/* Ours, not the original's. Kept quiet so it supports the name above rather
+   than competing with it. */
+.receipt-client-detail {
+  margin-top: 0.35em;
+  color: var(--r-muted);
+  font-size: 0.8125em;
 }
 
-.receipt-line {
+/* ---- what the money was for ---- */
+.receipt-items {
+  width: 100%;
+  margin-bottom: 1.875em;
+  border-collapse: collapse;
+}
+
+/*
+ * Undo the app's table furniture, which reaches in here through the element
+ * selectors in the tables section: `tbody td` sets `white-space: nowrap`, and
+ * `table` sets a font-size in `rem`.
+ *
+ * Both were doing real damage. The nowrap meant the "cuota 7 de 24 · saldo …"
+ * line could not wrap, so it ran straight out of the preview column — the
+ * horizontal overflow. And a `rem` is measured from the ROOT, so the one part
+ * of the document that would not scale with the rest of it was the table in the
+ * middle: too large on paper, and immune to the shrink-to-fit below.
+ */
+.receipt-items,
+.receipt-items thead th,
+.receipt-items tbody td {
+  font-size: inherit;
+  white-space: normal;
+}
+
+/* Nor should a row of a printed document light up under the cursor. */
+.receipt-items tbody tr:hover {
+  background: none;
+}
+
+.receipt-items thead th {
+  padding: 0 0 0.75em;
+  border-bottom: 2px solid var(--r-border);
+  color: var(--r-muted);
+  font-size: 0.8125em;
+  font-weight: bold;
+  letter-spacing: 0.5px;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.receipt-items tbody td {
+  padding: 0.75em 0;
+  border-bottom: 1px solid var(--r-border);
+  font-weight: 600;
+  vertical-align: top;
+}
+
+/* Specific enough to beat `.receipt-items th`, which sets `text-align: left`
+   for the row and would otherwise leave MONTO PAGADO adrift from the column of
+   figures underneath it. */
+/* Specific enough to beat the resets above, which would otherwise let an
+   amount wrap after its "L." and leave MONTO PAGADO adrift from the column of
+   figures under it. */
+.receipt-items th.receipt-right,
+.receipt-items td.receipt-right {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.receipt-item-lot {
+  display: block;
+}
+
+/* "cuota 7 de 24", and the per-lot balances on a multi-lot receipt. Neither
+   was on the original, which had a single free-text description. */
+.receipt-item-detail {
+  display: block;
+  margin-top: 0.25em;
+  color: var(--r-muted);
+  font-size: 0.8125em;
+  font-weight: 400;
+}
+
+/* ---- the four figures ---- */
+.receipt-summary {
   display: flex;
   justify-content: space-between;
-  font-size: 0.7812rem;
-  padding: 5px 0;
-  border-bottom: 1px dashed var(--line-strong);
+  gap: 1.25em;
+  margin-bottom: 1.875em;
 }
 
-.receipt-line span:first-child {
-  color: var(--text-secondary);
+.receipt-summary-col {
+  width: 48%;
 }
 
-.receipt-line span:last-child {
-  font-family: var(--font-mono);
-}
-
-.receipt-total {
+.receipt-summary-row {
   display: flex;
   justify-content: space-between;
-  padding-top: 10px;
-  margin-top: 4px;
-  font-size: 0.875rem;
-  font-weight: 500;
+  gap: 1em;
+  margin-bottom: 0.75em;
 }
 
-.receipt-total span:last-child {
-  font-family: var(--font-mono);
+.receipt-summary-value {
+  font-weight: 600;
 }
 
-.receipt-stamp {
-  margin-top: 14px;
+/* "L. 225,000.00" is one thing to read, and wrapping it after the "L." makes it
+   two. Every figure in the summary is held on one line. */
+.receipt-summary-row > span:last-child {
+  white-space: nowrap;
+}
+
+.receipt-summary-row.is-bold {
+  padding-bottom: 0.3125em;
+  border-bottom: 1px solid var(--r-border);
+  color: var(--r-primary);
+  font-size: 1.125em;
+  font-weight: 700;
+}
+
+/* The answer, boxed. The three rows above it are the working. */
+.receipt-highlight {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 0.9375em;
+  padding: 0.9375em;
+  border: 1px solid var(--r-border);
+  border-radius: 8px;
+  background: var(--r-highlight);
+  font-size: 1.125em;
+  font-weight: 700;
+}
+
+.receipt-highlight-label {
+  padding-right: 0.8em;
+  line-height: 1.2;
+}
+
+.receipt-highlight-value {
+  flex-shrink: 0;
+  color: var(--r-red);
+  text-align: right;
+  white-space: nowrap;
+}
+
+/*
+ * One column instead of two when there is not room for two.
+ *
+ * The threshold sits well below the ~700px the document gets on A4, so the
+ * printed receipt always keeps the official two-column summary; this only ever
+ * fires in the on-screen preview.
+ */
+@container (max-width: 600px) {
+  /*
+   * A fixed table, because an automatic one cannot be made narrower than the
+   * sum of its columns' min-content — and with "MONTO PAGADO" held on one line
+   * that sum is wider than the preview column, so the amounts were pushed off
+   * the right edge with the header cut in half. Fixed layout gives the amount
+   * column a stated width and hands the rest to the description, which wraps.
+   */
+  .receipt-items {
+    table-layout: fixed;
+  }
+
+  .receipt-items th.receipt-right {
+    width: 8.5em;
+    white-space: normal;
+  }
+
+  /* A lot code or a project name with no spaces in it must still not poke out
+     of its cell. */
+  .receipt-item-lot,
+  .receipt-item-detail {
+    overflow-wrap: anywhere;
+  }
+
+  .receipt-summary {
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .receipt-summary-col {
+    width: 100%;
+  }
+
+  .receipt-header {
+    flex-direction: column;
+    gap: 1em;
+  }
+
+  .receipt-meta {
+    text-align: left;
+  }
+}
+
+/* ---- signature, thanks, barcode ---- */
+.receipt-footer {
+  margin-top: auto;
+  padding-top: 1.25em;
   text-align: center;
+}
+
+.receipt-signature {
+  width: 25em;
+  max-width: 100%;
+  margin: 0 auto 1.25em;
+}
+
+.receipt-signature-name {
+  margin: 0;
+  color: var(--r-primary);
+  font-family: 'Dancing Script', 'Segoe Script', cursive;
+  font-size: 3em;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.receipt-signature hr {
+  margin: 0.3125em 0;
+  border: none;
+  border-top: 1px solid var(--r-muted);
+}
+
+.receipt-signature-label {
+  margin: 0.3125em 0 0;
+  color: var(--r-muted);
+  font-size: 1em;
+  font-weight: 600;
+}
+
+.receipt-thanks {
+  margin: 0 0 0.625em;
+  font-size: 1em;
+  font-weight: 600;
+}
+
+.receipt-contact {
+  margin: 0 0 1.25em;
+  color: var(--r-muted);
+  font-size: 0.875em;
+  /* "edrosfamily@gmail.com" is one unbreakable token, and in a narrow preview
+     it is most of the line. */
+  overflow-wrap: anywhere;
+}
+
+.receipt-barcode {
+  display: block;
+  width: 18.75em;
+  max-width: 100%;
+  height: 3.75em;
+  margin: 0 auto;
 }
 
 /* ---------- transactions: the two views of the Recibos screen ---------- */
@@ -1544,55 +1857,49 @@ tbody tr:hover {
   border-color: var(--red);
 }
 
+/*
+ * Loud on purpose, and above everything including the letterhead.
+ *
+ * This sheet gets printed, photographed and forwarded. A voided receipt that
+ * reaches somebody looking like a valid one is the only defect on this page
+ * that costs real money, so the notice is the first thing on it rather than a
+ * footnote under the total.
+ */
 .receipt-void-banner {
-  margin: 0 0 12px;
-  padding: 6px 10px;
+  margin: 0 0 1.5em;
+  padding: 0.75em 1em;
+  border: 2px solid var(--r-red);
   border-radius: 6px;
-  background: var(--red-bg);
-  color: var(--red-dark);
-  font-size: 0.7188rem;
-  font-weight: 600;
-  letter-spacing: 0.03em;
+  color: var(--r-red);
+  font-size: 1em;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-align: center;
+  text-transform: uppercase;
 }
 
 .receipt-section-label {
-  margin: 14px 0 4px;
-  font-size: 0.6562rem;
+  margin: 1.5em 0 0.5em;
+  color: var(--r-muted);
+  font-size: 0.8125em;
+  font-weight: bold;
+  letter-spacing: 0.5px;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-}
-
-.receipt-lot + .receipt-lot {
-  margin-top: 6px;
-}
-
-.receipt-applied {
-  margin: 3px 0 0;
-  font-size: 0.6875rem;
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-}
-
-/* The three figures the customer actually reads. Set apart from the lot lines
-   so the subtraction — anterior − recibido = nuevo — is visible on the page. */
-.receipt-balances {
-  margin-top: 10px;
-  padding-top: 6px;
-  border-top: 1px solid var(--line-strong);
 }
 
 .receipt-note {
-  margin: 10px 0 0;
-  font-size: 0.75rem;
-  color: var(--text-secondary);
+  margin: 0 0 1.5em;
+  color: var(--r-muted);
+  font-size: 0.875em;
   font-style: italic;
 }
 
+/* Who issued it, and the code for looking it up. Ours — the original had
+   neither. Last on the page because it is for the office, not the customer. */
 .receipt-stamp {
-  font-size: 0.6875rem;
-  color: var(--text-muted);
+  margin: 1.25em 0 0;
+  color: var(--r-muted);
+  font-size: 0.8125em;
 }
 
 .receipt-actions {
@@ -1657,13 +1964,83 @@ tbody tr:hover {
     display: none;
   }
 
-  .receipt-preview-wrap,
-  .receipt-paper {
+  .receipt-preview-wrap {
     margin: 0;
     padding: 0;
     border: none;
     background: #FFFFFF;
+    /* The screen backstop must not follow the document onto paper. */
+    overflow-x: visible;
   }
+
+  /*
+   * The whole document scales off this one number.
+   *
+   * On screen the receipt renders at a 10px base so it fits the preview column
+   * beside the list; on paper it goes back to the size the original template
+   * was drawn at. 11pt is the print equivalent of that template's 16px once A4
+   * margins are taken out — everything else is in `em` and follows.
+   */
+  .receipt-paper {
+    /* The page box has no margin (see `@page` below), so the document carries
+       its own. In `em`, like everything else, so shrinking the base shrinks the
+       margins with it rather than leaving a fat white border round tiny text. */
+    /*
+     * No minimum height, deliberately.
+     *
+     * This used to be `296mm` — one millimetre under A4 — so that the signature
+     * sat at the foot of the page the way the original template drew it. That
+     * cosmetic gained a millimetre of tolerance for the entire document, and a
+     * millimetre is nothing: whatever margin, scale or paper size the print
+     * dialog is actually set to, a sheet padded to 296mm has no room left, and
+     * a one-lot receipt whose real content is 900px tall was still spilling its
+     * footer onto a second page.
+     *
+     * Natural height instead. The footer follows the content, and the page has
+     * ~200px of slack to absorb whatever the dialog does. A receipt is one
+     * page first and a nicely balanced one second.
+     */
+    margin: 0;
+    padding: 3.2em 3em;
+    border: none;
+    background: #FFFFFF;
+    /* Set per receipt by ReceiptPaper: the more lots, the smaller the base, so
+       that everything still lands on one sheet. 10pt is the ceiling. */
+    font-size: var(--receipt-print-size, 10pt);
+    /* The red balance and the navy letterhead are the document, not decoration
+       — browsers drop colour from printed backgrounds unless told otherwise. */
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  /* A void notice must never be the thing that lands on the second page. */
+  .receipt-void-banner,
+  .receipt-header,
+  .receipt-client,
+  .receipt-summary,
+  .receipt-footer {
+    break-inside: avoid;
+  }
+
+  .receipt-items tr {
+    break-inside: avoid;
+  }
+}
+
+/*
+ * A4, edge to edge.
+ *
+ * The zero margin is doing two jobs. It pins the page box, so the same receipt
+ * comes out of two offices at the same size instead of inheriting whatever the
+ * print dialog was last set to. And it removes the browser's own header and
+ * footer — the date, the page title ("Lindero") and the URL that Chrome draws
+ * into the page margin, over the top of the document. There is no margin left
+ * to draw them in, so they do not appear; `.receipt-paper` supplies the real
+ * margin as its own padding instead.
+ */
+@page {
+  size: A4;
+  margin: 0;
 }
 
 /* ---------- mobile overlay ---------- */

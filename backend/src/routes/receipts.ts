@@ -29,7 +29,7 @@ import {
 } from "../lib/attachments.js";
 import { recordAudit } from "../lib/audit.js";
 import type { ContractTerms, SaleType } from "../lib/contracts.js";
-import { appliedInstallments } from "../lib/contracts.js";
+import { appliedInstallments, buildSchedule } from "../lib/contracts.js";
 import { orderLedger, receiptFigures, replayContract } from "../lib/ledger.js";
 import {
   formatReceiptCode,
@@ -359,6 +359,17 @@ function presentReceipts(db: Db, rows: readonly ReceiptRow[], includeLines: bool
                 projectName: detail?.projectName ?? null,
                 amount: credit.amountCents,
                 type: credit.type,
+                /**
+                 * The sale price this lot was contracted at — "Valor Total del
+                 * Contrato" on the printed receipt.
+                 *
+                 * Sent per line rather than as one figure on the receipt
+                 * because a receipt can cover several lots at several prices,
+                 * and the document sums them itself. A single pre-summed total
+                 * would be the one number on the page that could not be
+                 * checked against the lines above it.
+                 */
+                contractTotal: detail?.salePriceCents ?? 0,
                 previousBalance: line?.balanceBeforeCents ?? 0,
                 newBalance: line?.balanceAfterCents ?? 0,
                 /**
@@ -366,6 +377,13 @@ function presentReceipts(db: Db, rows: readonly ReceiptRow[], includeLines: bool
                  * line on the document — "recibí L 5,000" is a number, "cuota 7
                  * de 24" is an answer.
                  */
+                /**
+                 * How many cuotas the contract has in total, so the receipt can
+                 * say "cuota 7 de 24" rather than "cuota 7". The number on its
+                 * own tells a customer where they are without telling them how
+                 * far they have to go. Zero for a cash sale, which has none.
+                 */
+                installmentCount: detail ? buildSchedule(termsOf(detail)).length : 0,
                 appliedTo:
                   detail && line
                     ? appliedInstallments(
