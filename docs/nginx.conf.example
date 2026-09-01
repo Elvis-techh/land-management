@@ -1,0 +1,114 @@
+# Reference Nginx config for Lindero: one server serving the built frontend
+# as static files, reverse-proxying everything under /api/ to the Fastify
+# backend. Matches how the Vite dev server already proxies /api/ in
+# development (see frontend/vite.config.ts) — the frontend only ever calls
+# relative "/api/..." paths, in dev or in production, and never needs to know
+# the backend's address.
+#
+# This is a starting point, not a drop-in file: replace every <PLACEHOLDER>,
+# then read it once end to end before using it.
+#
+# Pairs with backend/.env.example's TRUST_PROXY setting. Whatever you set
+# `proxy_set_header X-Forwarded-For` to here is only as trustworthy as what
+# TRUST_PROXY is told to believe on the backend — see the comment there. This
+# file assumes Nginx and the Node process run on the same host and talk over
+# loopback, which is what TRUST_PROXY=127.0.0.1 expects.
+#
+# Also set backend/.env's FRONTEND_ORIGIN to https://<YOUR_DOMAIN> — same
+# domain here means most requests are same-origin and skip CORS entirely, but
+# the backend still checks Origin on any request that does send one.
+
+# Redirect all plain HTTP to HTTPS. Left listening on 80 (rather than closed)
+# so an ACME HTTP-01 challenge (certbot) can still complete here.
+server {
+    listen 80;
+    listen [::]:80;
+    server_name <YOUR_DOMAIN>;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    # Separate `http2 on;` directive needs Nginx 1.25.1+ (`nginx -v` to check).
+    # Older Nginx — this is what Ubuntu 22.04's packaged version is — instead
+    # takes it as a flag on `listen`: replace the two lines above with
+    # `listen 443 ssl http2;` and `listen [::]:443 ssl http2;`.
+    http2 on;
+    server_name <YOUR_DOMAIN>;
+
+    ssl_certificate     /etc/letsencrypt/live/<YOUR_DOMAIN>/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/<YOUR_DOMAIN>/privkey.pem;
+
+    # A generic modern baseline — regenerate for your actual Nginx/OpenSSL
+    # version at https://ssl-config.mozilla.org/ rather than trusting this
+    # blindly for years.
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:LinderoSSL:10m;
+    ssl_session_tickets off;
+
+    # Tells browsers to only ever use HTTPS with this host from now on.
+    # Leave this OUT until you've confirmed HTTPS actually works — it is
+    # sticky in the browser and not something a bad deploy lets you undo
+    # quickly.
+    # add_header Strict-Transport-Security "max-age=63072000" always;
+
+    # The built frontend. `npm run build --workspace @lindero/frontend`
+    # (or the root `npm run build`, which builds both workspaces) produces
+    # this directory — copy it here as part of your deploy, it is not
+    # generated on the server.
+    root /var/www/lindero/frontend/dist;
+    index index.html;
+
+    # Client-side routing: any path Nginx can't find as a real file falls
+    # back to index.html so the React router handles it, instead of Nginx
+    # answering a deep link like /contracts/123 with its own 404.
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # Everything the API needs — including downloading a receipt's proof of
+    # payment — goes through this one block. There is deliberately no
+    # separate `location` serving UPLOADS_PATH as static files: attachments
+    # are permission-gated (see routes/receipts.ts), and serving them
+    # directly from disk here would skip that check entirely.
+    location /api/ {
+        # No path after the port here — on purpose. That makes Nginx forward
+        # the ORIGINAL request path, "/api/lots" and all, to the backend,
+        # which is registered under that same "/api" prefix (see app.ts).
+        # Adding a trailing "/" here would strip "/api/" before forwarding
+        # and every route would 404.
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host $host;
+        # $proxy_add_x_forwarded_for APPENDS $remote_addr — the address Nginx
+        # itself observed — to whatever X-Forwarded-For a client already
+        # sent, rather than trusting the client's value outright. Fastify
+        # then only takes the entry TRUST_PROXY says to trust (the one this
+        # hop actually added), so a value someone hands Nginx themselves
+        # can't reach request.ip. Using $remote_addr here instead would
+        # DISCARD any earlier hops, which is wrong the moment there's a CDN
+        # or load balancer in front of Nginx too.
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Large receipt photos/PDFs: the backend's own ceiling is exactly 12MB
+        # (MAX_ATTACHMENT_BYTES in lib/attachments.ts). Set a little above
+        # that, not equal to it — multipart boundaries and the other form
+        # fields in the same request add a few KB on top of the file itself,
+        # and a request right at the backend's limit would otherwise be cut
+        # off here first, with Nginx's own generic error instead of the
+        # backend's "El archivo supera el máximo de 12 MB."
+        client_max_body_size 13m;
+    }
+}

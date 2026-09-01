@@ -25,6 +25,14 @@ export type AppConfig = {
    * supervisor types one, and no outbound request is ever made.
    */
   exchangeRateRefreshHours: number;
+  /**
+   * How Fastify derives `request.ip` — see `parseTrustProxy` below. This is
+   * what the global and per-login rate limits key on, so getting it wrong
+   * either merges every visitor into one bucket (unset, behind a proxy) or
+   * lets a visitor pick their own bucket by forging a header (`true`,
+   * without a proxy actually enforcing what reaches this process).
+   */
+  trustProxy: boolean | number | string;
 };
 
 const allowedEnvironments = new Set<AppConfig["nodeEnv"]>([
@@ -37,6 +45,35 @@ const allowedEnvironments = new Set<AppConfig["nodeEnv"]>([
 const MINIMUM_SECRET_LENGTH = 32;
 
 const DEVELOPMENT_COOKIE_SECRET = "lindero-development-cookie-secret-change-me";
+
+/**
+ * `false` (unset) trusts nothing: `request.ip` is the direct TCP peer, which
+ * is correct with no proxy in front — local development, or a server reached
+ * directly. A bare number is how many proxy hops to trust, counted back from
+ * that peer; one Nginx or Caddy on the same host in front of this process is
+ * `1`. A string (or `"ip,ip/cidr"`) pins trust to that proxy's own address
+ * instead of merely counting hops, which still protects `request.ip` if this
+ * process is ever reachable directly — Fastify's own deployment guide
+ * recommends this over a bare count. `true` trusts every hop in whatever
+ * `X-Forwarded-For` chain arrives, including a prefix an attacker attached
+ * themselves; only use it if nothing can reach this process except through
+ * one proxy you control.
+ */
+function parseTrustProxy(raw: string | undefined): AppConfig["trustProxy"] {
+  if (raw === undefined || raw.trim() === "") {
+    return false;
+  }
+
+  if (raw === "true") {
+    return true;
+  }
+
+  if (raw === "false") {
+    return false;
+  }
+
+  return /^\d+$/.test(raw) ? Number(raw) : raw;
+}
 
 export function loadConfig(environment = process.env): AppConfig {
   const rawNodeEnv = environment.NODE_ENV ?? "development";
@@ -94,5 +131,6 @@ export function loadConfig(environment = process.env): AppConfig {
     sessionDays,
     loginAttemptsPerMinute,
     exchangeRateRefreshHours,
+    trustProxy: parseTrustProxy(environment.TRUST_PROXY),
   };
 }

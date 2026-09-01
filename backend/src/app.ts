@@ -22,6 +22,11 @@ import { transactionRoutes } from "./routes/transactions.js";
 export async function buildApp(config: AppConfig, db: Db) {
   const app = Fastify({
     logger: config.nodeEnv !== "test",
+    // Off (false) by default so a direct connection — local dev, or this
+    // process reachable with no proxy in front — is never spoofable via a
+    // self-supplied X-Forwarded-For. See parseTrustProxy in config/env.ts for
+    // what to set behind a real reverse proxy.
+    trustProxy: config.trustProxy,
   });
 
   await app.register(cors, {
@@ -76,17 +81,15 @@ export async function buildApp(config: AppConfig, db: Db) {
     async (api) => {
       await api.register(healthRoutes);
 
-      // Login is the one route worth attacking with a script, so it gets its
-      // own tight limit — by default ten attempts per minute from one address.
-      await api.register(async (scoped) => {
-        await scoped.register(rateLimit, {
-          max: config.loginAttemptsPerMinute,
-          timeWindow: "1 minute",
-        });
-        await scoped.register(authRoutes, {
-          sessionDays: config.sessionDays,
-          isProduction: config.nodeEnv === "production",
-        });
+      // /auth/login gets its own tight limit — see routes/auth.ts, which
+      // applies it to that one route only. /auth/me and /auth/logout stay on
+      // the app-wide default above: /auth/me runs on every page load, and
+      // sharing login's budget with it would let a few reloads lock out a
+      // login that hasn't even been attempted yet.
+      await api.register(authRoutes, {
+        sessionDays: config.sessionDays,
+        isProduction: config.nodeEnv === "production",
+        loginAttemptsPerMinute: config.loginAttemptsPerMinute,
       });
 
       await api.register(lotRoutes);
