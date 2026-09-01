@@ -34,6 +34,19 @@ export const users = sqliteTable(
     role: text("role").notNull(),
     /** scrypt hash. The plain password is never stored or logged. */
     passwordHash: text("password_hash").notNull(),
+    /**
+     * When this account stopped being able to sign in, or NULL while it can.
+     *
+     * An employee who leaves is deactivated, never deleted. Their id is written
+     * across `payments.recorded_by` and every row of `audit_events`, so
+     * removing them would either orphan those references or erase the answer to
+     * "who took this money" — and that answer is the reason the columns exist.
+     *
+     * The check is in `getSessionUser`, which runs on every request, so a
+     * deactivation takes hold on the account's very next click rather than
+     * whenever its session happened to expire.
+     */
+    deactivatedAt: text("deactivated_at"),
     createdAt: timestamp("created_at"),
   },
   (table) => [uniqueIndex("users_email_unique").on(table.email)],
@@ -81,6 +94,46 @@ export const roleCapabilities = sqliteTable(
     grantedAt: timestamp("granted_at"),
   },
   (table) => [uniqueIndex("role_capabilities_unique").on(table.role, table.capability)],
+);
+
+/**
+ * Per-user settings that are a matter of TASTE rather than of record.
+ *
+ * The first one is the order of the bands on the Panel General. Every land
+ * owner runs their business differently — one opens the app to see who has not
+ * paid, another to see what came in this month — and a dashboard is worth very
+ * little if the answer somebody needs is fourth from the top.
+ *
+ * A key/value table, rather than a column per preference and rather than a
+ * `dashboard_layout` column on `users`. A preference is not a fact about the
+ * account: nothing here belongs in the audit history, nothing here is a
+ * permission, and a missing row means "has not chosen" rather than "has no
+ * name". Keeping opinions out of the identity row also means the second
+ * preference costs a row instead of a migration. The shape is the one
+ * `roleCapabilities` already uses, for the same reason.
+ *
+ * `value` is JSON text and this table deliberately does not know what is in it.
+ * What a preference MEANS is the interface's business, so adding a band to the
+ * dashboard changes nothing here and nothing in SQL — the reconciliation lives
+ * in frontend/src/features/dashboard/dashboardSections.ts.
+ */
+export const userPreferences = sqliteTable(
+  "user_preferences",
+  {
+    userId: text("user_id")
+      .notNull()
+      // The one place a cascade is right in this database. Everything else a
+      // user touches is a financial record that has to outlive the account;
+      // nobody needs to know how a departed employee liked their screen laid
+      // out.
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** "dashboard-layout". Namespaced by hand; there is no registry. */
+    key: text("key").notNull(),
+    /** JSON, as the interface wrote it. Validated for SHAPE only on the way in. */
+    value: text("value").notNull(),
+    updatedAt: timestamp("updated_at"),
+  },
+  (table) => [uniqueIndex("user_preferences_unique").on(table.userId, table.key)],
 );
 
 /**
@@ -193,8 +246,21 @@ export const customers = sqliteTable(
   {
     id: text("id").primaryKey(),
     fullName: text("full_name").notNull(),
-    /** Número de identidad. */
-    identification: text("identification").notNull(),
+    /**
+     * Número de identidad, or NULL when the customer has not given one.
+     *
+     * Optional on purpose. An identidad is confidential, and plenty of sales
+     * are agreed before anybody has asked for it or the buyer is willing to
+     * hand it over. Requiring it did not produce the number — it produced a
+     * made-up one, or a customer who never got entered at all, and a person
+     * missing from the system is far worse than a person missing a field.
+     *
+     * NULL, never "". SQLite treats every NULL in a unique index as distinct,
+     * so any number of customers can be on file without one; two empty strings
+     * would collide and the second customer could not be saved. Everything that
+     * writes this column normalises blank to NULL for that reason.
+     */
+    identification: text("identification"),
     /**
      * E.164, e.g. "+50499824471" — see src/lib/phone.ts.
      *
@@ -223,8 +289,10 @@ export const customers = sqliteTable(
      */
     updatedAt: text("updated_at"),
   },
-  // One person, one identity number. This is what stops the same customer being
-  // entered twice and their contracts splitting across two records.
+  // One person, one identity number — for those who have given one. Customers
+  // without an identidad are all NULL, which SQLite counts as distinct, so the
+  // index still stops a real number being entered twice and splitting somebody's
+  // contracts across two records.
   (table) => [uniqueIndex("customers_identification_unique").on(table.identification)],
 );
 
@@ -399,25 +467,34 @@ export const receipts = sqliteTable(
   {
     id: text("id").primaryKey(),
     /**
-     * The sequence, as an integer, assigned by the server inside the same
-     * transaction that writes the receipt.
+     * The internal sequence, assigned by the server inside the same transaction
+     * that writes the receipt. Never printed and never shown.
      *
      * Gaps and reuse are both read as fraud by anyone auditing a book of
      * receipts, so this is allocated as MAX(number) + 1 under the write lock —
      * never from a row count, which repeats a number the first time one is
-     * voided.
+     * voided. It is also the order the receipt list is sorted by.
      */
     number: integer("number").notNull(),
-    /** The same sequence as people say it: "REC-2026-00042". */
+    /**
+     * What is printed on the paper: "IM-482739156034".
+     *
+     * Random, twelve digits, the same length on every receipt, under the
+     * business's initials. It used to be `number` formatted as
+     * "REC-2026-00042", which handed every customer a running count of how many
+     * receipts the business had ever issued and let anyone holding one guess
+     * its neighbours. The sequence still exists above, where it can be gapless
+     * without being public. See src/lib/receipts.ts.
+     */
     code: text("code").notNull(),
     /**
-     * A short, RANDOM, unguessable code for looking a receipt up — the "secure
+     * A short, random, unguessable code for looking a receipt up — the "secure
      * receipt id".
      *
-     * Deliberately not the sequence. `code` is the accountant's handle and has
-     * to be predictable; this one goes in a link sent over WhatsApp, and a
-     * predictable one would let anybody who received a single receipt walk the
-     * numbers and read every other customer's. Two jobs, two columns.
+     * Distinct from `code` because it is read aloud and typed: eight Crockford
+     * base32 characters, with the lookalikes folded together, rather than twelve
+     * digits nobody can keep in their head. This is what goes in a link sent
+     * over WhatsApp.
      */
     lookupCode: text("lookup_code").notNull(),
     customerId: text("customer_id")

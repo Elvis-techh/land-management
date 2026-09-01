@@ -11,9 +11,20 @@ import { recordAudit } from "../lib/audit.js";
 import type { ContractTerms, SaleType } from "../lib/contracts.js";
 import { assessContract, buildSchedule, financedCents, firstDueDate } from "../lib/contracts.js";
 import { roleCan } from "../lib/capabilities.js";
+import { businessToday } from "../lib/time.js";
 
-/** Today, as a calendar date. Every due date in the app is a date, not an instant. */
-const today = () => new Date().toISOString().slice(0, 10);
+/**
+ * What this plugin needs from the configuration.
+ *
+ * The timezone is passed in rather than read from the environment here, for the
+ * same reason `receiptRoutes` is handed its uploads path: a route that reaches
+ * for `process.env` is a route no test can put anywhere else, and "what day is
+ * it" is precisely the thing these tests need to control.
+ */
+interface ContractRoutesOptions {
+  /** IANA name — see `timeZone` in src/config/env.ts. */
+  timeZone: string;
+}
 
 /**
  * The contracts list, with every derived figure computed on read.
@@ -293,7 +304,13 @@ function nextContractCode(db: Db, year: string): string {
   return `${prefix}${String((Number.isFinite(sequence) ? sequence : 0) + 1).padStart(3, "0")}`;
 }
 
-export const contractRoutes: FastifyPluginAsync = async (app) => {
+export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
+  app,
+  options,
+) => {
+  /** Today in the office's calendar, not the server's and not UTC's. */
+  const today = () => businessToday(options.timeZone);
+
   app.get("/contracts", { onRequest: app.requireUser }, async (_request, reply) => {
     const asOf = today();
 

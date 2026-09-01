@@ -40,17 +40,29 @@ function longDate(isoDate: string): string {
  * "cuota 7 de 24", or "cuotas 7 y 8 de 24" when one payment covered two.
  *
  * The single most useful line on the document: "recibí L 5,000" is a number,
- * "cuota 7 de 24" is an answer. A partial cuota says so, because a customer who
- * reads "cuota 7" and has not finished paying it will believe they have.
+ * "cuota 7 de 24" is an answer.
+ *
+ * Deliberately just the position. `appliedTo` also carries `settled`, and this
+ * line used to mark an unfinished cuota "(parcial)" and print the lot's own
+ * `saldo antes → después` beside it — accurate, and more than the line could
+ * carry. What a customer wants from a receipt is how far through the schedule
+ * they are; how much is left is the boxed figure at the bottom, and the size of
+ * a cuota is that figure over the cuotas still to come. The extra clauses were
+ * qualifying an answer nobody had asked for yet.
+ *
+ * The consequence, stated because it is a real one: on a receipt covering
+ * several lots, the per-lot balances are no longer on the paper. The summary's
+ * "Balance Anterior" and "Nuevo Balance Pendiente" are the total across the
+ * lots on the receipt, so a three-lot customer reads one combined figure rather
+ * than three. Every per-lot balance is still derived and still on the screen —
+ * see the Contratos tab — it just is not printed here.
  */
 function appliedLabel(line: ReceiptLine): string | null {
   if (line.appliedTo.length === 0) {
     return null;
   }
 
-  const numbers = line.appliedTo.map(
-    (installment) => `${installment.number}${installment.settled ? "" : " (parcial)"}`,
-  );
+  const numbers = line.appliedTo.map((installment) => String(installment.number));
 
   const word = numbers.length === 1 ? "cuota" : "cuotas";
   const list =
@@ -66,6 +78,29 @@ function appliedLabel(line: ReceiptLine): string | null {
 }
 
 /**
+ * "Identidad 0801-1985-04412 · Tel 9982-4471", with whichever half is missing
+ * left out entirely — and `null` when neither is known.
+ *
+ * A label with nothing after it is worse than no label: "Identidad ·  Tel" on a
+ * printed document reads as a system that lost the data rather than a customer
+ * who never gave it, and it is the kind of thing somebody rings the office
+ * about. The identidad is optional — it is confidential, and plenty of buyers
+ * never hand it over — so this is the ordinary case rather than a repair for
+ * bad data.
+ */
+function clientDetail(customer: Receipt["customer"]): string | null {
+  const identification = customer.identification?.trim() ?? "";
+  const phone = customer.phone.trim();
+
+  const parts = [
+    identification ? `Identidad ${identification}` : null,
+    phone ? `Tel ${formatPhone(phone)}` : null,
+  ].filter((part): part is string => part !== null);
+
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+/**
  * The type size to print this particular receipt at, so that all of it lands on
  * one sheet of A4.
  *
@@ -77,29 +112,48 @@ function appliedLabel(line: ReceiptLine): string | null {
  * against that base, the whole document shrinks together — margins, logo,
  * signature and all.
  *
- * The constants are measured, not guessed. At a 10pt base the document is about
- * 844px of fixed furniture (letterhead, cliente box, summary, footer) plus 58px
- * per lot row, plus about 48px each for a note and for the ANULADO banner. If
- * the vertical rhythm in the stylesheet is ever changed, re-measure these three
- * numbers rather than nudging them.
+ * The constants below are MEASURED, in Chrome, by printing the real document to
+ * PDF and bisecting for the largest base that still comes back as one page.
+ * They are not guesses and they are not safe to nudge: the reading region
+ * (CLIENTE down to the summary) is set a step larger than the rest of the
+ * document, so a change to the vertical rhythm in the stylesheet moves them.
+ * Re-measure rather than adjust.
  *
- * `USABLE_PX` is deliberately well short of the page. A4 at 96dpi is 1122.5px,
- * and the stylesheet asks for a zero page margin — but the print dialog is the
- * one that decides, and it may hand back a smaller box than we asked for: its
- * own default margins, "fit to printable area", or simply Letter paper instead
- * of A4. An estimate aimed at the full sheet is correct right up until one of
- * those is true, and then every receipt prints on two pages. 1000px is about
- * 264mm, which survives roughly 33mm of margin the dialog never told us about.
+ *     content@10pt ≈ 940px fixed  (letterhead, cliente box, table head,
+ *                                  summary, signature, barcode, padding)
+ *                  + 68px per lot row
+ *                  + 36px for a note
+ *                  + 62px for the ANULADO banner
  *
- * The floor is a legibility limit, not a fitting one: past roughly a dozen lots
- * on a single receipt this returns 6.5pt and the document may spill onto a
- * second page, which is the better failure than print nobody can read.
+ * `USABLE_PX` is deliberately well short of the page, and it is the same budget
+ * `.receipt-paper`'s `min-height: 264mm` uses in the print stylesheet — the two
+ * have to agree, because the type is shrunk to fit that box and that box is
+ * what puts the footer at the foot of the page. A4 at 96dpi is 1122.5px and the
+ * stylesheet asks for a zero page margin, but the print dialog is the one that
+ * decides: its own default margins, "fit to printable area", or Letter paper
+ * (1056px, not 1122.5) all hand back a smaller box than we asked for. Aiming at
+ * the full sheet is correct right up until one of those is true, and then every
+ * receipt prints on two pages.
+ *
+ * What that buys, at these sizes: EIGHT lots is the most that fits inside the
+ * safe budget. Nine to eleven still land on one physical A4 sheet but spend the
+ * reserve doing it, and past eleven the document spills. The floor is a
+ * legibility limit rather than a fitting one — below 6.5pt the reading region
+ * stops being readable across a counter, and a second page is the better
+ * failure than print nobody can read.
+ *
+ * The 10pt ceiling is now only a guard. Even a one-lot receipt fills about
+ * 1008px at 10pt, so the budget binds first and this rarely comes into play.
  */
 const USABLE_PX = 1000;
 
 function printBaseFor(receipt: Receipt): string {
-  const extras = (receipt.note ? 1 : 0) + (receipt.voidedAt ? 1 : 0);
-  const estimatedPx = 844 + 58 * receipt.lines.length + 48 * extras;
+  const estimatedPx =
+    940 +
+    68 * receipt.lines.length +
+    (receipt.note ? 36 : 0) +
+    (receipt.voidedAt ? 62 : 0);
+
   const points = (10 * USABLE_PX) / estimatedPx;
 
   return `${Math.max(6.5, Math.min(10, points)).toFixed(2)}pt`;
@@ -128,8 +182,6 @@ function printBaseFor(receipt: Receipt): string {
  * this is rendered from.
  */
 export function ReceiptPaper({ receipt, money }: ReceiptPaperProps) {
-  const isMultiLot = receipt.lines.length > 1;
-
   /*
    * "Valor Total del Contrato" — summed across the lots ON THIS RECEIPT.
    *
@@ -142,6 +194,7 @@ export function ReceiptPaper({ receipt, money }: ReceiptPaperProps) {
     receipt.lines.reduce((total, line) => total + line.contractTotal, 0),
   );
 
+  const detail = clientDetail(receipt.customer);
   const barcode = code128Geometry(receipt.code);
 
   return (
@@ -187,11 +240,9 @@ export function ReceiptPaper({ receipt, money }: ReceiptPaperProps) {
         <div className="receipt-client-name">{receipt.customer.fullName}</div>
         {/* Not on the original, which took its names from Airtable and had
             nothing else. An identidad is how a receipt is matched to a person
-            when two customers share a name. */}
-        <div className="receipt-client-detail">
-          Identidad {receipt.customer.identification} · Tel{" "}
-          {formatPhone(receipt.customer.phone)}
-        </div>
+            when two customers share a name. Dropped, line and all, when there
+            is nothing to put in it — see `clientDetail`. */}
+        {detail && <div className="receipt-client-detail">{detail}</div>}
       </div>
 
       {/* One row per lot. A customer who bought three lots hands over one
@@ -216,20 +267,10 @@ export function ReceiptPaper({ receipt, money }: ReceiptPaperProps) {
                     {line.projectName ? ` · ${line.projectName}` : ""}
                   </span>
 
-                  {/* One line, not two. Each lot on a multi-lot receipt would
-                      otherwise cost three rows of vertical space, and three
-                      lots is enough to push the signature onto a second page. */}
-                  {(applied || isMultiLot) && (
-                    <span className="receipt-item-detail">
-                      {applied}
-                      {applied && isMultiLot ? " · " : ""}
-                      {isMultiLot &&
-                        // Only when there is more than one, because with a
-                        // single lot these are the same two figures as the
-                        // summary below.
-                        `saldo ${formatDocumentMoney(line.previousBalance, money)} → ${formatDocumentMoney(line.newBalance, money)}`}
-                    </span>
-                  )}
+                  {/* Where the lot sits in its schedule, and nothing else —
+                      see `appliedLabel`. A cash sale has no schedule, so the
+                      line is dropped entirely rather than left empty. */}
+                  {applied && <span className="receipt-item-detail">{applied}</span>}
                 </td>
                 <td className="receipt-right">{formatDocumentMoney(line.amount, money)}</td>
               </tr>

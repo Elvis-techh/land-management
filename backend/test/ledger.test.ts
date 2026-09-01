@@ -9,7 +9,8 @@ import {
   replayContract,
 } from "../src/lib/ledger.js";
 import {
-  formatReceiptCode,
+  allocateReceiptCode,
+  RECEIPT_CODE_PATTERN,
   generateLookupCode,
   nextReceiptNumber,
   normalizeLookupCode,
@@ -503,9 +504,45 @@ describe("receipt identifiers", () => {
     assert.equal(nextReceiptNumber(41), 42);
   });
 
-  it("writes the sequence the way people say it", () => {
-    assert.equal(formatReceiptCode(2026, 42), "REC-2026-00042");
-    assert.equal(formatReceiptCode(2026, 1), "REC-2026-00001");
+  it("prints a code that is always twelve digits and never the sequence", () => {
+    const seen = new Set<string>();
+
+    for (let index = 0; index < 2_000; index += 1) {
+      const code = allocateReceiptCode(() => false);
+
+      assert.match(code, RECEIPT_CODE_PATTERN);
+      // Fixed width: no receipt is ever "IM-42" or "IM-0000000000042".
+      assert.equal(code.length, 15);
+      seen.add(code);
+    }
+
+    // Random, not sequential. 2,000 draws from 10^12 repeating even once would
+    // be extraordinary; repeating often means the generator is not random.
+    assert.ok(seen.size > 1_995, `only ${seen.size} distinct codes in 2,000`);
+  });
+
+  it("draws again rather than issuing a receipt code that is already in the book", () => {
+    const taken = new Set<string>();
+    let draws = 0;
+
+    // Every code is taken for the first three draws, so the loop has to keep
+    // going: a collision must not become a failed payment at the window.
+    const code = allocateReceiptCode((candidate) => {
+      draws += 1;
+      if (draws <= 3) {
+        taken.add(candidate);
+        return true;
+      }
+      return false;
+    });
+
+    assert.equal(draws, 4);
+    assert.equal(taken.has(code), false);
+    assert.match(code, RECEIPT_CODE_PATTERN);
+  });
+
+  it("gives up rather than spinning when no code is ever free", () => {
+    assert.throws(() => allocateReceiptCode(() => true), /único/);
   });
 
   it("mints lookup codes that are unguessable and never repeat", () => {

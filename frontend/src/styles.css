@@ -1040,29 +1040,44 @@ tbody tr:hover {
 
 /* ---- who paid ---- */
 .receipt-client {
-  margin-bottom: 2em;
-  padding: 1.25em;
+  margin-bottom: 1.75em;
+  padding: 1.125em 1.25em;
   border: 1px solid var(--r-border);
   border-radius: 8px;
 }
 
+/*
+ * Everything from CLIENTE down to the summary is set a step larger than the
+ * rest of the document.
+ *
+ * These are the lines somebody actually reads off the paper — who it is for,
+ * what was paid, and what is left — and they are read across a counter, often
+ * by somebody not holding their glasses. The letterhead and the footer are
+ * furniture and can stay small; this region cannot.
+ *
+ * The step is in `em`, so it survives the shrink-to-fit below: an eight-lot
+ * receipt prints smaller than a one-lot receipt, but this region is still the
+ * largest thing on either of them.
+ */
 .receipt-client .receipt-label {
   display: block;
   margin-bottom: 0.5em;
+  font-size: 0.9375em;
 }
 
 .receipt-client-name {
-  font-size: 1.125em;
+  font-size: 1.5em;
   font-weight: 600;
-  line-height: 1.4;
+  line-height: 1.3;
 }
 
 /* Ours, not the original's. Kept quiet so it supports the name above rather
-   than competing with it. */
+   than competing with it — but still a full step up from the 0.8125em small
+   print it used to be, because an identidad is checked digit by digit. */
 .receipt-client-detail {
-  margin-top: 0.35em;
+  margin-top: 0.3em;
   color: var(--r-muted);
-  font-size: 0.8125em;
+  font-size: 1.0625em;
 }
 
 /* ---- what the money was for ---- */
@@ -1107,8 +1122,11 @@ tbody tr:hover {
 }
 
 .receipt-items tbody td {
-  padding: 0.75em 0;
+  padding: 0.6875em 0;
   border-bottom: 1px solid var(--r-border);
+  /* Part of the enlarged reading region — see `.receipt-client` above. The
+     lot code and the amount are the two things on this row anybody checks. */
+  font-size: 1.1875em;
   font-weight: 600;
   vertical-align: top;
 }
@@ -1133,9 +1151,11 @@ tbody tr:hover {
    was on the original, which had a single free-text description. */
 .receipt-item-detail {
   display: block;
-  margin-top: 0.25em;
+  margin-top: 0.2em;
   color: var(--r-muted);
-  font-size: 0.8125em;
+  /* Against the enlarged cell, not the document base, so it stays subordinate
+     to the lot code above it instead of competing with it. */
+  font-size: 0.7895em;
   font-weight: 400;
 }
 
@@ -1155,7 +1175,9 @@ tbody tr:hover {
   display: flex;
   justify-content: space-between;
   gap: 1em;
-  margin-bottom: 0.75em;
+  margin-bottom: 0.6875em;
+  /* The last of the enlarged reading region — see `.receipt-client` above. */
+  font-size: 1.1875em;
 }
 
 .receipt-summary-value {
@@ -1172,7 +1194,7 @@ tbody tr:hover {
   padding-bottom: 0.3125em;
   border-bottom: 1px solid var(--r-border);
   color: var(--r-primary);
-  font-size: 1.125em;
+  font-size: 1.3125em;
   font-weight: 700;
 }
 
@@ -1186,7 +1208,7 @@ tbody tr:hover {
   border: 1px solid var(--r-border);
   border-radius: 8px;
   background: var(--r-highlight);
-  font-size: 1.125em;
+  font-size: 1.3125em;
   font-weight: 700;
 }
 
@@ -1484,7 +1506,13 @@ tbody tr:hover {
 
 .txn-group-head {
   display: flex;
-  align-items: center;
+  /*
+   * Top, not centre, because the block beside the caret can be three lines —
+   * see `.txn-group-head .txn-detail`. The total belongs to the PERSON, so it
+   * sits on the name's line whatever the summary underneath costs; centred, it
+   * drifted down beside the summary and read as a figure about the summary.
+   */
+  align-items: flex-start;
   gap: 12px;
   width: 100%;
   padding: 12px 16px;
@@ -1494,6 +1522,30 @@ tbody tr:hover {
   color: inherit;
   text-align: left;
   cursor: pointer;
+}
+
+/*
+ * "39 transacciones · última 30 ago 2026" WRAPS, at every width.
+ *
+ * `.txn-detail` is clipped with an ellipsis everywhere else, and that is right
+ * for a transaction row: the text there is "C-02 · Los Naranjos", a code, and
+ * rows of one uniform height are what makes a long list scannable.
+ *
+ * Here the same class holds a sentence, and a sentence cut mid-word tells the
+ * reader nothing except that something is missing. On a phone there is simply
+ * not the room — the caret, the name and the total take it — so it came out as
+ * "39 transacciones · última 30…" with the one date it exists to show sheared
+ * off. It reads as a fault in the app; it was a fault in the layout.
+ *
+ * No media query. The line only wraps when there is genuinely no room for it,
+ * so a wide screen is untouched, and the awkward in-between widths — a tablet,
+ * a half-screen window, a customer with 112 transactions and a longer month
+ * name — are covered without guessing where to put the breakpoint.
+ */
+.txn-group-head .txn-detail {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
 }
 
 .txn-group-head:hover {
@@ -1686,9 +1738,25 @@ tbody tr:hover {
  * on its own — the same edit seen against the payments around it either makes
  * sense or obviously does not.
  */
+/*
+ * The history column is sized in `rem`, and that is the actual fix rather than
+ * a refinement of it.
+ *
+ * It was `240px`, flat — while every length INSIDE it is in `rem`, and this
+ * stylesheet grows the root from 16px to 19px between a laptop and a wide
+ * monitor (see the fluid-typography rule at the top). So the text grew by a
+ * fifth and its container did not, and the panel got tighter the bigger the
+ * screen: exactly backwards, and exactly where somebody has the most room to
+ * spare. A date, a lot code and an amount stopped fitting on one line, and the
+ * lot code — the flexible one — was the column that got eaten.
+ *
+ * `minmax` in `rem` tracks the type instead of fighting it: never below 15rem,
+ * never past 20rem, and the leftover width goes to the form rather than to a
+ * reference panel that does not need it.
+ */
 .edit-with-history {
   display: grid;
-  grid-template-columns: 1fr 240px;
+  grid-template-columns: minmax(0, 1fr) minmax(15rem, 20rem);
   gap: 18px;
   align-items: start;
 }
@@ -1708,7 +1776,10 @@ tbody tr:hover {
   margin: 10px 0 0;
   padding: 0;
   list-style: none;
-  max-height: 380px;
+  /* Never shorter than it was, and taller where the screen is. The form beside
+     it runs to roughly 500px, so on a desktop the two now end together instead
+     of the history stopping a third of the way down. */
+  max-height: clamp(380px, 46vh, 520px);
   overflow-y: auto;
 }
 
@@ -1734,8 +1805,10 @@ tbody tr:hover {
 .edit-history-date {
   flex: 0 0 auto;
   /* Wide enough for the longest month abbreviation ("5 sept 2025") so the lot
-     code beside it is never pushed onto a second line. */
-  min-width: 86px;
+     code beside it is never pushed onto a second line. In `rem` rather than px
+     for the same reason as the column itself: the text it has to hold is in
+     `rem`, so a fixed width is only ever correct at one root font size. */
+  min-width: 5.5rem;
   font-family: var(--font-mono);
   font-size: 0.6875rem;
   color: var(--text-muted);
@@ -1795,16 +1868,31 @@ tbody tr:hover {
     gap: 6px 12px;
   }
 
-  .txn-who {
+  /*
+   * Scoped to `.txn-main`, and that is a fix rather than tidying.
+   *
+   * These three were written for the transaction row above and left unscoped,
+   * so they also landed on `.txn-group-head` — a different element, in a flex
+   * row that does NOT wrap. There, `flex-basis: 100%` asked for the whole row
+   * inside a line that cannot break, so flexbox shrank the block as far as it
+   * would go and the customer's summary was squeezed until "última 31 ago 2026"
+   * was cut off mid-word. `order: 3` put the total ahead of the name it belongs
+   * to, so a phone read "L 270,800  Ana Lucía Paz".
+   *
+   * One leak, both symptoms. The group head now keeps its own layout: caret,
+   * name and summary, total — and the summary wraps when it must, which is what
+   * `.txn-group-head .txn-detail` is for.
+   */
+  .txn-main .txn-who {
     order: 3;
     flex-basis: 100%;
   }
 
-  .txn-tags {
+  .txn-main .txn-tags {
     order: 4;
   }
 
-  .txn-amount {
+  .txn-main .txn-amount {
     margin-left: auto;
   }
 
@@ -1908,6 +1996,94 @@ tbody tr:hover {
   justify-content: space-between;
   gap: 10px;
   padding: 14px 16px 18px;
+  flex-wrap: wrap;
+}
+
+/* Imprimir and Enviar are the two ways the document leaves this screen, so they
+   travel together and Anular stays on the far side of the row. */
+.receipt-actions-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.receipt-send {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.receipt-send svg {
+  width: 15px;
+  height: 15px;
+  /* The glyph sits optically low against a capital E without this. */
+  margin-top: -1px;
+}
+
+.receipt-send:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/*
+ * What happened after Enviar, and what is left for the user to do.
+ *
+ * Usually not an error. On a phone the share sheet speaks for itself, but on a
+ * desktop the image goes to the clipboard and a chat opens in a new tab — and
+ * an unexplained new tab reads as a bug rather than as a step. So the ordinary
+ * tone is neutral, and only a genuine failure is red.
+ */
+.receipt-share-note {
+  margin: 0;
+  padding: 0 16px 14px;
+  color: var(--text-secondary);
+  font-size: 0.7188rem;
+  line-height: 1.5;
+}
+
+.receipt-share-note.is-error {
+  color: var(--red-dark);
+}
+
+.receipt-share-note a {
+  color: var(--clay-dark);
+  font-weight: 500;
+}
+
+/*
+ * The offscreen copy that gets rasterised — see receiptImage.ts.
+ *
+ * It has to be LAID OUT, which rules out `display: none`, `visibility: hidden`
+ * and a zero height: the renderer reads the resolved geometry and computed
+ * styles of a real box, and a hidden one measures zero and comes back blank.
+ * So it is pushed off the left edge instead, where it is painted and measurable
+ * and nobody can see or reach it.
+ *
+ * The width is A4 at 96dpi. That is what makes the sent image the DOCUMENT
+ * rather than the sidebar: at 794px the `@container` rules that fold the
+ * receipt into its narrow preview form do not apply, so the two-column summary
+ * and the full-width items table come back.
+ */
+.receipt-share-stage {
+  position: fixed;
+  top: 0;
+  left: -10000px;
+  width: 794px;
+  pointer-events: none;
+}
+
+.receipt-share-stage .receipt-paper {
+  width: 794px;
+  /* A4 at 96dpi. `printBaseFor` sizes the type to fill about 1000px of this, so
+     the footer lands near the foot of the sheet exactly as it does on paper. */
+  min-height: 1123px;
+  margin: 0;
+  padding: 3.2em 3em;
+  border: none;
+  border-radius: 0;
+  /* The same per-receipt size the printer gets: more lots, smaller type, one
+     page. Set as an inline custom property by ReceiptPaper. */
+  font-size: var(--receipt-print-size, 10pt);
 }
 
 .receipt-running-total {
@@ -1941,14 +2117,25 @@ tbody tr:hover {
   .card-head,
   .receipt-actions,
   .receipt-preview-label,
+  .receipt-sheet-head,
   .receipt-tear,
   .receipt-proofs,
+  .receipt-share-note,
+  /* Not merely invisible clutter: the stage holds a SECOND `.receipt-paper`,
+     which the rules below would size to a sheet and print as a duplicate. Every
+     receipt would come out of the printer twice. */
+  .receipt-share-stage,
   .txn-edit,
   .active-filters,
   .sidebar-overlay {
     display: none !important;
   }
 
+  /* `html` and `body` included: the document is 264mm of a 297mm sheet, and
+     without these the page's own colour prints in the band underneath it for
+     anybody who has "Gráficos de fondo" switched on. */
+  html,
+  body,
   .app,
   .main,
   .content,
@@ -1965,6 +2152,14 @@ tbody tr:hover {
   }
 
   .receipt-preview-wrap {
+    /*
+     * Undo the phone's full-screen sheet. Printing happens FROM that sheet —
+     * its Imprimir button is what calls `window.print()` — and a `position:
+     * fixed` element with its own scroller prints as whatever happened to be
+     * scrolled into view, which is to say a fragment of the receipt.
+     */
+    position: static;
+    overflow-y: visible;
     margin: 0;
     padding: 0;
     border: none;
@@ -1974,38 +2169,47 @@ tbody tr:hover {
   }
 
   /*
-   * The whole document scales off this one number.
+   * The whole document scales off one number, and that number is not here.
    *
    * On screen the receipt renders at a 10px base so it fits the preview column
-   * beside the list; on paper it goes back to the size the original template
-   * was drawn at. 11pt is the print equivalent of that template's 16px once A4
-   * margins are taken out — everything else is in `em` and follows.
+   * beside the list. On paper `printBaseFor` in ReceiptPaper.tsx picks the base
+   * per receipt — the more lots there are to fit, the smaller it goes — and
+   * every length below is in `em`, so the whole document scales as one piece.
    */
   .receipt-paper {
+    /*
+     * The sheet, as tall as we are willing to bet the printer will give us.
+     *
+     * This is the same budget `printBaseFor` in ReceiptPaper.tsx sizes the type
+     * against — 264mm is 998px at 96dpi, and that function's USABLE_PX is 1000.
+     * The two numbers have to agree: the type is shrunk so the content fits
+     * this box, and the box is what makes the footer sit at the bottom of it.
+     * Change one and change the other.
+     *
+     * It is a MINIMUM, not a height, and it is deliberately well short of A4.
+     * An earlier version of this rule asked for 296mm — one millimetre under
+     * the sheet — and every receipt printed on two pages, because the print
+     * dialog is the one that decides: its own default margins, "fit to
+     * printable area", or Letter paper instead of A4 all hand back a smaller
+     * box than we asked for. 264mm leaves ~33mm of slack for whatever the
+     * dialog did without telling us, and still fills the page.
+     *
+     * With a height to fill, `margin-top: auto` on `.receipt-footer` finally
+     * does something: the signature, the thanks and "Recibido por …" drop to
+     * the foot of the sheet the way the original template drew them, instead of
+     * trailing whatever the last lot row left behind.
+     */
+    min-height: 264mm;
     /* The page box has no margin (see `@page` below), so the document carries
        its own. In `em`, like everything else, so shrinking the base shrinks the
        margins with it rather than leaving a fat white border round tiny text. */
-    /*
-     * No minimum height, deliberately.
-     *
-     * This used to be `296mm` — one millimetre under A4 — so that the signature
-     * sat at the foot of the page the way the original template drew it. That
-     * cosmetic gained a millimetre of tolerance for the entire document, and a
-     * millimetre is nothing: whatever margin, scale or paper size the print
-     * dialog is actually set to, a sheet padded to 296mm has no room left, and
-     * a one-lot receipt whose real content is 900px tall was still spilling its
-     * footer onto a second page.
-     *
-     * Natural height instead. The footer follows the content, and the page has
-     * ~200px of slack to absorb whatever the dialog does. A receipt is one
-     * page first and a nicely balanced one second.
-     */
     margin: 0;
     padding: 3.2em 3em;
     border: none;
     background: #FFFFFF;
     /* Set per receipt by ReceiptPaper: the more lots, the smaller the base, so
-       that everything still lands on one sheet. 10pt is the ceiling. */
+       that everything still lands on one sheet. 6.5pt to 10pt; the fallback is
+       only reached if the inline style is missing. */
     font-size: var(--receipt-print-size, 10pt);
     /* The red balance and the navy letterhead are the document, not decoration
        — browsers drop colour from printed backgrounds unless told otherwise. */
@@ -2128,6 +2332,23 @@ body.modal-open {
   box-shadow: 0 24px 70px rgba(61, 49, 42, 0.22);
   transform: translateY(12px) scale(.98);
   transition: transform .2s ease;
+}
+
+/*
+ * The dialogs that put a form NEXT TO a table — see `size` in Dialog.tsx.
+ *
+ * 620px is the right ceiling for a column of form fields and the wrong one for
+ * a form plus a reference panel: the panel gets whatever is left, and what was
+ * left was not enough to print a date, a lot and an amount on one line.
+ *
+ * `min()` is the whole responsive story. There is no breakpoint here and none
+ * is wanted: the dialog takes 1000px where 1000px exists and the viewport's
+ * width where it does not, so it widens on a desktop and is unchanged on a
+ * laptop that never had the room. What happens when it runs out is decided
+ * further down by the layout inside it, which stacks at 900px.
+ */
+.entity-modal.is-wide {
+  width: min(1000px, 100%);
 }
 
 .modal-backdrop.show .entity-modal {
@@ -2886,6 +3107,7 @@ body.modal-open {
 /* ---------- permisos ---------- */
 
 .permissions-intro h3,
+.users-intro h3,
 .permission-group-head h3,
 .permission-locked h3 {
   margin: 0 0 6px;
@@ -2893,17 +3115,23 @@ body.modal-open {
 }
 
 .permissions-intro,
+.users-intro,
 .permission-group,
 .permission-locked {
   margin-bottom: 14px;
   padding: 20px 22px;
 }
 
-.permissions-intro p {
+.permissions-intro p,
+.users-intro p {
   margin: 0;
   color: var(--text-secondary);
   font-size: 0.8125rem;
   line-height: 1.55;
+}
+
+.users-intro p + p {
+  margin-top: 8px;
 }
 
 .permission-group-head {
@@ -3238,6 +3466,91 @@ body.modal-open {
 
   .receipts-layout {
     grid-template-columns: 1fr;
+  }
+}
+
+/*
+ * The receipt as a full screen, on a phone.
+ *
+ * Below this width the two panes stack, which puts the document and its
+ * Imprimir / Anular buttons under the whole transaction list — see the note in
+ * ReceiptsPage.tsx. Tapping a row lifts the receipt over the list instead.
+ *
+ * `fixed`, deliberately, rather than hiding the list. A hidden list is a
+ * collapsed page, and a collapsed page loses its scroll position: going back
+ * would land on row one instead of the row that was tapped. Covering it keeps
+ * the list exactly where it was, and gives the sheet a scroll container of its
+ * own that always opens at the top of the document.
+ *
+ * z-index 12 sits above the sticky topbar (5) and below the sidebar overlay
+ * (15) and the modals (50), so Anular still opens over the top of this.
+ */
+@media (max-width: 760px) {
+  .receipt-preview-wrap.is-sheet {
+    position: fixed;
+    inset: 0;
+    z-index: 12;
+    padding: 0 0 4px;
+    border-radius: 0;
+    background: var(--paper);
+    overflow-y: auto;
+    /* Scrolling to the end of the receipt must not start scrolling the list
+       underneath it. */
+    overscroll-behavior: contain;
+  }
+
+  .receipt-sheet-head {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    /* Opaque: the receipt scrolls under this, not through it. */
+    background: var(--paper);
+    border-bottom: 1px solid var(--line);
+  }
+
+  .receipt-sheet-back {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    /* A comfortable thumb target, not a text link with a hitbox the size of
+       the words. */
+    padding: 14px 16px;
+    border: 0;
+    background: none;
+    font: inherit;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--text-primary);
+    cursor: pointer;
+  }
+
+  .receipt-sheet-back-icon {
+    display: flex;
+  }
+
+  /* A chevron pointing down becomes one pointing back, the same trick the
+     transaction group carets use rather than carrying a second icon. */
+  .receipt-sheet-back-icon svg {
+    width: 18px;
+    height: 18px;
+    transform: rotate(90deg);
+  }
+
+  /*
+   * Pinned to the bottom of the sheet.
+   *
+   * The receipt is taller than a phone, so actions that simply follow it are
+   * actions you have to scroll the whole document to reach — the same problem
+   * one level down, and the reason this screen exists at all. Sticky rather
+   * than fixed so it sits inside the sheet's own scroller.
+   */
+  .receipt-preview-wrap.is-sheet .receipt-actions {
+    position: sticky;
+    bottom: 0;
+    background: var(--paper);
+    border-top: 1px solid var(--line);
   }
 }
 
@@ -4254,18 +4567,50 @@ input:disabled {
   color: var(--text-secondary);
 }
 
-/* Notes are free text of any length. Clipped to keep row heights even; the full
-   text is on the cell's tooltip and always in the edit form. */
+/* Notes are free text of any length, and reading them is the whole point of the
+   column — so nothing here clips.
+
+   `white-space: normal` is the line that makes it work, and its absence is why
+   the note used to arrive cut mid-word. Every cell inherits `white-space:
+   nowrap` from `tbody td`, which is right for a phone number or an identity
+   card and wrong for a sentence: under it the note ran as one long line that
+   `overflow: hidden` sliced off at 260px, and the two-line clamp that used to
+   be here never had a second line to allow. With wrapping back on a long note
+   stacks onto as many lines as it needs and the row grows to hold it.
+
+   The cap is a reading measure, not a box: the column is what spreads (see
+   .col-notes), and this only stops a line running past the width an eye can
+   track back on a very large monitor. */
 .cell-notes {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  max-width: 260px;
+  display: block;
+  white-space: normal;
+  /* A pasted URL or a long run of digits has no space to break at, and would
+     otherwise push the column past the cap above. */
+  overflow-wrap: break-word;
+  max-width: 72ch;
   font-size: 0.7812rem;
   color: var(--text-secondary);
   line-height: 1.45;
+}
+
+/* An auto-layout table hands its slack to whichever column asks for it, and
+   `width: 100%` is how a column asks for all of it — the mirror of the
+   `width: 1%` that keeps Acciones down to its two buttons. So the notes reach
+   across to meet Acciones on a wide screen instead of stopping short at 260px
+   with the leftover room spread thinly over columns that hold a phone number,
+   and give it all back on a narrow one. */
+.col-notes {
+  width: 100%;
+}
+
+/* A note that wraps onto five lines makes its row five lines tall, and
+   `tbody td` centres its content — which floated the name, the phone and the
+   identity into the middle of the row while the note they belong to started at
+   the top. Top-aligning lines every cell up with the note's first line, the
+   same as the Contratos table does for the same reason. Rows that are one line
+   tall look no different: there is nothing to centre. */
+.customers-table tbody td {
+  vertical-align: top;
 }
 
 @media (max-width: 760px) {
@@ -4498,6 +4843,101 @@ input:disabled {
   padding-right: 0;
 }
 
+/*
+ * The table fills the dialog rather than deciding how wide the dialog is.
+ *
+ * Without this it is `width: auto`, so the sum of its columns IS its width —
+ * and the amount field brings a text input's default intrinsic width of about
+ * twenty characters with it. That is 225px of the 294px available on a phone,
+ * before the lot code and the balance have asked for anything, so the table
+ * came out at 415px inside a 296px dialog and pushed the whole thing sideways.
+ */
+.split-table {
+  width: 100%;
+}
+
+/* Take the width of the column, not of an imaginary twenty characters. */
+.split-table .input-with-prefix,
+.split-table .input-with-prefix input {
+  width: 100%;
+  min-width: 0;
+}
+
+/*
+ * On a phone the three columns stop being three columns.
+ *
+ * 264px cannot hold a lot code, "L. 164,000.00" and an editable amount side by
+ * side — not by shrinking the input, which was the first instinct: the balance
+ * alone wants about 100px in the mono face, and squeezing all three only moves
+ * which one gets cut. So the row becomes two lines instead: the lot names
+ * itself across the top, and the balance and the field it feeds sit together
+ * underneath, where the eye compares them anyway.
+ *
+ * A grid on the `tr` rather than a media query full of widths. The header row
+ * goes with it — "Lote / Saldo actual / Recibe" over columns that no longer
+ * exist would be worse than nothing — and each row keeps a rule under it so
+ * three lots still read as three things.
+ *
+ * MUST stay after the base rules above: same specificity, and the earlier
+ * `@media (max-width: 640px)` block in this file sits above them, where these
+ * would silently lose.
+ */
+@media (max-width: 640px) {
+  .split-preview {
+    padding: 0 16px 18px;
+  }
+
+  .split-table thead {
+    display: none;
+  }
+
+  .split-table,
+  .split-table tbody {
+    display: block;
+  }
+
+  .split-table tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 4px 10px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .split-table tr:last-child {
+    border-bottom: none;
+  }
+
+  .split-table td,
+  .split-table td:first-child,
+  .split-table td:last-child {
+    display: block;
+    padding: 0;
+    /* The global `tbody td` rule draws a line under every cell. Across a normal
+       table row those three lines meet and read as one rule under the row; once
+       the cells are blocks they stack, and each lot grew a stray underline
+       beneath its project name and another under "próxima". The `tr` above
+       carries the real rule now. */
+    border-bottom: none;
+  }
+
+  /* The lot takes the whole top line; the other two share the one below. */
+  .split-table td:first-child {
+    grid-column: 1 / -1;
+  }
+
+  .split-table td:nth-child(2) {
+    text-align: left;
+  }
+
+  /* Wide enough for "125,000.00" and no wider — the balance beside it needs
+     the rest of the line. */
+  .split-table td:last-child {
+    width: 8.5rem;
+  }
+}
+
 /* Sits at the left of the footer, opposite the close button, so the row reads
    as "here is what happens next" rather than as a disabled action. */
 .modal-foot-note {
@@ -4629,9 +5069,7 @@ input:disabled {
    cell in the table inherits `white-space: nowrap` from `tbody td`, which is
    right for a code, a date or an amount and wrong for a sentence. Under it the
    note could not wrap at all, so it ran as one long line that `overflow:
-   hidden` sliced off at the edge of the box, and the two-line clamp below it
-   never had a second line to allow. Turning wrapping back on is what lets the
-   clamp do the job it was written for.
+   hidden` sliced off at the edge of the box.
 
    The width is fluid rather than a fixed 34ch, so the note spreads out to meet
    the Lote column on a wide screen and gives the space back on a narrow one.
@@ -4639,26 +5077,21 @@ input:disabled {
    collapsing to a ribbon on a small laptop or running to an unreadable line
    length on a very large monitor.
 
-   Three lines rather than two, since the row is allowed to be a little taller:
-   at this width that holds around 120 characters, which is every note anybody
-   actually writes. The clamp stays because it is the only thing stopping a
-   pasted paragraph from making one row four times the height of its
-   neighbours — and past it the full text is still in the tooltip and in the
-   detail panel. */
+   No line clamp: a note that runs long keeps stacking lines rather than ending
+   in a silent "…", the same as the Notas column on Clientes. A row with a
+   four-line note stands taller than its neighbours, which is the honest
+   trade — the rows are top-aligned below so the amounts still line up with the
+   first line of the name. */
 .contract-note {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  line-clamp: 3;
-  overflow: hidden;
+  display: block;
   margin-top: 3px;
   /* Undoes the nowrap inherited from `tbody td`. Without it nothing else here
      has any effect. */
   white-space: normal;
   /* A pasted URL or a run of digits has no space to break at, and would
-     otherwise push the column wider than the clamp above can contain. */
+     otherwise push the column past the cap below. */
   overflow-wrap: break-word;
-  max-width: clamp(20ch, 19vw, 46ch);
+  max-width: clamp(20ch, 22vw, 60ch);
   font-size: 0.6875rem;
   line-height: 1.4;
   color: var(--text-muted);
@@ -4988,5 +5421,939 @@ input:disabled {
      dialog visible. */
   .picker-list {
     max-height: 208px;
+  }
+}
+
+
+/* ==========================================================================
+   Panel general
+
+   The only screen that asks about the whole book rather than about one row,
+   so it is the only one laid out as bands of cards rather than as a table.
+   The order is the order the questions get asked in: how did the month go,
+   who is not paying, which project is carrying us, what is coming.
+   ========================================================================== */
+
+.dash-toolbar {
+  flex-wrap: wrap;
+}
+
+.dash-month {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* The chevron is drawn pointing down, so each arrow is that same icon turned
+   a quarter. One icon, two directions, nothing new to draw. */
+.dash-step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  line-height: 0;
+}
+
+/* The icon turns, not the button: rotating the button would tip its focus ring
+   and its hit box over with it. */
+.dash-step svg {
+  width: 15px;
+  height: 15px;
+  transform: rotate(90deg);
+}
+
+.dash-step.is-next svg {
+  transform: rotate(-90deg);
+}
+
+.dash-step:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.dash-month-name {
+  min-width: 9.5ch;
+  font-size: 0.9062rem;
+  font-weight: 600;
+  text-align: center;
+  /* First letter only: "septiembre 2026", not "Septiembre 2026" — Spanish does
+     not capitalise month names, and neither does the rest of the app. */
+  text-transform: none;
+}
+
+/* ---------- the month, at the top ---------- */
+
+/* The hero takes the room it needs and the three tiles share what is left. On
+   a narrow screen they stack instead of shrinking the headline figure, which
+   is the one thing on this page that must never be squeezed. */
+.dash-headline {
+  display: grid;
+  grid-template-columns: minmax(300px, 1.15fr) minmax(0, 2fr);
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.dash-hero {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 20px 22px;
+}
+
+.dash-hero-label {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+}
+
+/* The one number the screen leads with. Same sans as everything else — a
+   display face here would read as decoration rather than as the figure. */
+.dash-hero-value {
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 2rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.dash-hero-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.dash-delta {
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+.dash-delta.is-up {
+  color: var(--green-dark);
+}
+
+.dash-delta.is-down {
+  color: var(--clay-dark);
+}
+
+.dash-delta.is-flat {
+  color: var(--text-muted);
+}
+
+.dash-hero-rate {
+  margin-top: auto;
+  padding-top: 14px;
+}
+
+.dash-hero-rate p {
+  margin: 8px 0 0;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.dash-hero-rate strong {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+}
+
+.dash-hero-rate.is-quiet {
+  margin: auto 0 0;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+/* The track is a lighter step of the same ground the fill sits on, so the
+   state reads across the whole bar rather than only where it is filled. */
+.dash-meter {
+  height: 7px;
+  border-radius: 4px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.dash-meter-fill {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+  transition: width .3s ease;
+}
+
+.dash-meter-fill.is-good { background: var(--green); }
+.dash-meter-fill.is-warn { background: var(--amber); }
+.dash-meter-fill.is-bad  { background: var(--clay); }
+
+.dash-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 16px;
+}
+
+.dash-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px 18px;
+}
+
+.dash-tile-label {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+
+.dash-tile-value {
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 1.1875rem;
+  font-weight: 600;
+}
+
+.dash-tile-value.is-warn { color: var(--clay-dark); }
+.dash-tile-value.is-good { color: var(--green-dark); }
+
+.dash-tile-detail {
+  margin: auto 0 0;
+  padding-top: 6px;
+  color: var(--text-muted);
+  font-size: 0.6875rem;
+  line-height: 1.4;
+}
+
+/* ---------- the cards down the page ---------- */
+
+.dash-card {
+  margin-bottom: 16px;
+}
+
+.dash-card-body {
+  padding: 16px 18px 18px;
+}
+
+.dash-note {
+  margin: 12px 0 0;
+  color: var(--text-muted);
+  font-size: 0.6875rem;
+  line-height: 1.55;
+}
+
+/* A figure that is the whole content of a small card. */
+.dash-figure {
+  margin: 0;
+  color: var(--clay-dark);
+  font-family: var(--font-mono);
+  font-size: 1.375rem;
+  font-weight: 600;
+}
+
+.dash-figure-label {
+  margin: 4px 0 0;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+/* ---------- the chart ---------- */
+
+.chart-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+/* Identity comes from the mark beside the text, never from colouring the text:
+   a label in the bar's own clay would be a light hue used as type. */
+.chart-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 0.6875rem;
+}
+
+/* The legend mirrors the mark it names — a block for the bars, a rule for the
+   reference line — so the key is recognisable without reading it. */
+.chart-key-bar {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--clay-dark);
+}
+
+.chart-key-tick {
+  width: 14px;
+  height: 2px;
+  background: var(--text-secondary);
+}
+
+/*
+ * The readout for whichever column is hovered or focused.
+ *
+ * It keeps its height whether or not anything is being read, so the chart below
+ * never jumps up and down as the pointer crosses it.
+ */
+.chart-readout {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 1.4rem;
+  margin: 0;
+  text-align: right;
+}
+
+.chart-readout-month {
+  color: var(--text-muted);
+  font-size: 0.6875rem;
+}
+
+/* The value leads and the label follows: the reader already knows which month
+   they are pointing at and wants the number. */
+.chart-readout-value {
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.chart-readout-target {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+
+.chart-body {
+  position: relative;
+}
+
+/* Stops 22px short of the bottom, which is the strip the month labels occupy —
+   so a gridline at 0 % sits on the baseline the bars grow from rather than
+   through the middle of the word "sep". */
+.chart-grid {
+  position: absolute;
+  inset: 0 0 22px;
+  pointer-events: none;
+}
+
+.chart-gridline {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 0;
+  /* Hairline and solid. A dashed rule at this weight reads as data. */
+  border-top: 1px solid var(--line);
+}
+
+.chart-gridline i {
+  position: absolute;
+  right: 0;
+  bottom: 3px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  font-style: normal;
+}
+
+.chart-columns {
+  display: flex;
+  align-items: flex-end;
+  /* The 2px surface gap that separates neighbouring bars. White does the
+     separating; no bar carries a border. */
+  gap: 2px;
+  height: 190px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chart-column {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+}
+
+/* The whole column is the hit target, not just the painted bar — a 6px-tall
+   bar for a quiet month is otherwise impossible to point at. */
+.chart-slot {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.chart-track {
+  position: relative;
+  display: flex;
+  flex: 1;
+  align-items: flex-end;
+  justify-content: center;
+  min-height: 0;
+}
+
+/* Capped rather than filling the slot: the leftover width is air, which is what
+   keeps twelve columns from reading as one solid block. Rounded at the data
+   end, square where it meets the baseline. */
+.chart-bar {
+  width: min(24px, 100%);
+  min-height: 2px;
+  border-radius: 4px 4px 0 0;
+  background: var(--clay-dark);
+  transition: background .15s ease;
+}
+
+.chart-slot:hover .chart-bar,
+.chart-slot:focus-visible .chart-bar {
+  background: var(--clay);
+}
+
+.chart-slot.is-selected .chart-bar {
+  background: var(--ink);
+}
+
+/* What was scheduled, as a rule across the column. Wider than the bar so it
+   stays visible when the two nearly coincide, which is the good month. */
+.chart-target {
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--text-secondary);
+}
+
+.chart-axis {
+  padding-top: 6px;
+  height: 22px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.chart-slot.is-selected .chart-axis {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.chart-table {
+  margin-top: 14px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.chart-table summary {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.chart-table table {
+  margin-top: 10px;
+}
+
+.chart-table tbody td {
+  padding: 7px 10px;
+  font-size: 0.7812rem;
+}
+
+.chart-table thead th {
+  padding: 7px 10px;
+}
+
+/* Present for a screen reader, absent for everyone else. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ---------- where the money came from ---------- */
+
+.dash-splits {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 24px;
+}
+
+.dash-split-title {
+  margin: 0 0 10px;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.dash-split-list {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.dash-split-list li {
+  display: grid;
+  grid-template-columns: 5.5rem 1fr auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.dash-split-label {
+  color: var(--text-primary);
+  font-size: 0.75rem;
+}
+
+.dash-split-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.dash-split-fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--clay-dark);
+}
+
+.dash-split-value {
+  color: var(--text-secondary);
+  font-size: 0.7188rem;
+  white-space: nowrap;
+}
+
+/* ---------- cobranza ---------- */
+
+.dash-buckets {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.dash-bucket {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--paper);
+}
+
+.dash-bucket-count {
+  margin: 6px 0 0;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 1.5rem;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.dash-bucket-detail {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.6875rem;
+}
+
+.dash-bucket-money {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+}
+
+.dash-changes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 18px;
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.dash-change-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+
+.dash-change-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* An empty list here is normal — nobody has crossed the line yet this month —
+   so it says so rather than leaving a blank box to be read as a failure. */
+.dash-change-empty {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.dash-table tbody td {
+  vertical-align: top;
+}
+
+.dash-table .cell-sub {
+  display: block;
+  margin-top: 3px;
+  color: var(--text-muted);
+  font-size: 0.6875rem;
+  font-family: var(--font-body);
+  font-weight: 400;
+}
+
+.dash-table .cell-sub.warn {
+  color: var(--clay-dark);
+}
+
+/* The rule above turns a sub-line into a block, which is right for "1 mes"
+   under an amount and wrong for the project cell — that one is a dot beside a
+   name and has to stay a row, or the dot drops onto a line of its own. */
+.dash-table .cell-project.cell-sub {
+  display: flex;
+}
+
+/* ---------- lo que viene ---------- */
+
+.dash-attention {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+/* The cards in this band are already spaced by the grid's gap. */
+.dash-attention .dash-card {
+  margin-bottom: 0;
+}
+
+.dash-list {
+  margin: 0;
+  padding: 6px 8px;
+  list-style: none;
+}
+
+.dash-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 8px;
+}
+
+.dash-list li + li {
+  border-top: 1px solid var(--line);
+}
+
+.dash-list-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.dash-list-title {
+  color: var(--text-primary);
+  font-size: 0.8125rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dash-list .cell-sub {
+  color: var(--text-muted);
+  font-size: 0.6875rem;
+}
+
+.dash-list-note {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* Already lapsed, rather than about to. */
+.dash-list-note.is-urgent {
+  color: var(--red-dark);
+  font-weight: 600;
+}
+
+/* ---------- control ---------- */
+
+.dash-flags {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 18px;
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.dash-flag-label {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+
+.dash-flag-value {
+  margin: 4px 0 0;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 1.0625rem;
+  font-weight: 600;
+}
+
+.dash-flag-note {
+  margin: 6px 0 0;
+  color: var(--text-muted);
+  font-size: 0.6875rem;
+  line-height: 1.5;
+}
+
+.dash-flag-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.dash-flag-list li {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.dash-flag-list-name {
+  font-size: 0.7812rem;
+}
+
+/* ---------- narrow screens ---------- */
+
+@media (max-width: 900px) {
+  /* The headline figure keeps its own row rather than being squeezed beside
+     three tiles that have nowhere left to go. */
+  .dash-headline {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 620px) {
+  /* Twelve columns in 320px is 24px each, which is narrower than the month
+     label under it. The chart scrolls sideways instead, at a width where a
+     column is still a column. */
+  .chart-body {
+    overflow-x: auto;
+  }
+
+  .chart-columns {
+    min-width: 460px;
+  }
+
+  .chart-grid {
+    /* Absolute inside a scrolling box would leave the gridlines behind as the
+       columns move. They are a sense of scale, not data, so they go. */
+    display: none;
+  }
+
+  .dash-hero-value {
+    font-size: 1.625rem;
+  }
+}
+
+
+/* --------------------------------------------------------------------------
+   Arranging the Panel General
+
+   The rule that keeps this from breaking anything: the editor only ever adds a
+   FRAME around a band. It never touches the band's own layout, so every
+   possible order is a page that renders exactly as it always did — see
+   features/dashboard/dashboardSections.ts.
+   -------------------------------------------------------------------------- */
+
+.dash-layout-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+/* While the editor is open the bar follows the reader down a page that is
+   several screens tall, so Guardar is never scrolled away from the thing being
+   arranged. */
+.dash-layout-bar.is-editing {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  margin: 0 -4px 14px;
+  padding: 10px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--card);
+  box-shadow: var(--shadow-card);
+}
+
+.dash-layout-hint {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+
+.dash-layout-error {
+  color: var(--red-dark);
+  font-size: 0.75rem;
+}
+
+/* One band, wearing its handle. Only ever present in edit mode. */
+.dash-section {
+  margin-bottom: 16px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 14px;
+  background: var(--paper);
+}
+
+.dash-section-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px 8px 8px;
+  border-bottom: 1px dashed var(--line-strong);
+  /* The header is the drag handle, so it says so before anything is grabbed. */
+  cursor: grab;
+}
+
+.dash-section-bar:active {
+  cursor: grabbing;
+}
+
+.dash-section-grip {
+  display: flex;
+  color: var(--text-muted);
+}
+
+.dash-section-grip svg {
+  width: 16px;
+  height: 16px;
+}
+
+.dash-section-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-size: 0.7812rem;
+  font-weight: 500;
+}
+
+.dash-section-bar .row-action svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* The chevron points down for "bajar"; the same icon turned over is "subir". */
+.dash-section-up svg {
+  transform: rotate(180deg);
+}
+
+.dash-section-bar .row-action:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.dash-section-body {
+  padding: 14px 12px 0;
+}
+
+/* The band's own bottom margin already spaces it; inside the frame that would
+   leave a strip of empty paper under every card. */
+.dash-section-body > * {
+  margin-bottom: 14px;
+}
+
+/*
+ * Hidden, not gone.
+ *
+ * A folded-away band stays on screen while the editor is open — dimmed, with
+ * its eye struck through — so nothing can be put away and then be impossible to
+ * find again. It disappears only once Guardar is pressed and the editor closes.
+ */
+.dash-section.is-hidden {
+  border-style: solid;
+  border-color: var(--line);
+  background: transparent;
+}
+
+.dash-section.is-hidden .dash-section-body {
+  opacity: 0.4;
+  /* Not just faded: a chart inside a band being put away must not still answer
+     a click as though it were part of the page. */
+  pointer-events: none;
+}
+
+.dash-section.is-hidden .dash-section-name {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+/* The band being carried. Kept visible rather than hidden, so the reader can
+   see what they picked up. */
+.dash-section.is-dragging {
+  opacity: 0.5;
+  border-color: var(--clay);
+}
+
+@media (max-width: 620px) {
+  /* The hint is the first thing to go: the buttons are what the bar is for, and
+     three of them plus a sentence do not fit across a phone. */
+  .dash-layout-hint {
+    display: none;
+  }
+
+  .dash-section-body {
+    padding: 12px 6px 0;
   }
 }

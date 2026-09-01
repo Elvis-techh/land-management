@@ -3,6 +3,7 @@ import { useState } from "react";
 
 import { Dialog } from "../../components/Dialog";
 import { IconClose } from "../../components/Icons";
+import { businessYear } from "../../lib/businessTime";
 import {
   COUNTRY_CODES,
   DEFAULT_DIAL,
@@ -56,7 +57,7 @@ export function CustomerFormDialog({
   const [email, setEmail] = useState(customer?.email ?? "");
   const [address, setAddress] = useState(customer?.address ?? "");
   const [customerSince, setCustomerSince] = useState(
-    String(customer?.customerSince ?? new Date().getFullYear()),
+    String(customer?.customerSince ?? businessYear()),
   );
   const [notes, setNotes] = useState(customer?.notes ?? "");
   const [error, setError] = useState<string | null>(null);
@@ -71,11 +72,21 @@ export function CustomerFormDialog({
   // One person, one identity number. Entering somebody twice splits their
   // contracts across two records and quietly breaks both balances, so this is
   // caught before saving as well as by the server.
-  const duplicate = customers.find(
-    (other) =>
-      other.id !== customer?.id &&
-      other.identification.trim().toLowerCase() === identification.trim().toLowerCase(),
-  );
+  //
+  // Only once a number has actually been typed. The identidad is optional, and
+  // every customer who has not given one would otherwise match every other
+  // customer who has not given one — turning the commonest legitimate case into
+  // a duplicate warning.
+  const typedIdentification = identification.trim();
+
+  const duplicate =
+    typedIdentification === ""
+      ? undefined
+      : customers.find(
+          (other) =>
+            other.id !== customer?.id &&
+            other.identification?.trim().toLowerCase() === typedIdentification.toLowerCase(),
+        );
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -87,12 +98,8 @@ export function CustomerFormDialog({
       setError("El nombre del cliente es obligatorio.");
       return;
     }
-    if (!identification.trim()) {
-      setError("La identidad es obligatoria.");
-      return;
-    }
     if (duplicate) {
-      setError(`La identidad ${identification.trim()} ya está registrada a nombre de ${duplicate.fullName}.`);
+      setError(`La identidad ${typedIdentification} ya está registrada a nombre de ${duplicate.fullName}.`);
       return;
     }
     if (phoneProblem) {
@@ -109,7 +116,9 @@ export function CustomerFormDialog({
     try {
       await onSave({
         fullName: fullName.trim(),
-        identification: identification.trim(),
+        // Blank travels as blank; the server stores it as NULL. See the note on
+        // `identification` in backend/src/db/schema.ts for why not "".
+        identification: typedIdentification,
         // Sent with its country code already attached. The server normalises it
         // again and its answer is the stored one, so there is only ever one
         // implementation that counts.
@@ -158,7 +167,7 @@ export function CustomerFormDialog({
           </div>
 
           <div className="form-field">
-            <label htmlFor="customer-id">Identidad</label>
+            <label htmlFor="customer-id">Identidad (opcional)</label>
             <input
               id="customer-id"
               value={identification}
@@ -169,7 +178,11 @@ export function CustomerFormDialog({
             {duplicate ? (
               <span className="field-error">Ya registrada a nombre de {duplicate.fullName}.</span>
             ) : (
-              <span className="field-hint">Una persona, un número de identidad.</span>
+              /* Said out loud, because a blank field with no hint reads as one
+                 the user forgot rather than one they are allowed to leave. */
+              <span className="field-hint">
+                Déjala en blanco si el cliente no la ha dado. Una persona, un número.
+              </span>
             )}
           </div>
 

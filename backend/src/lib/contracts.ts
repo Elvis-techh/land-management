@@ -234,6 +234,47 @@ function expectedByCents(terms: ContractTerms, schedule: ScheduledInstallment[],
   return Math.min(expected, terms.salePriceCents);
 }
 
+/**
+ * The installments this contract still owes money on, in due-date order.
+ *
+ * The FIRST entry carries only what is left of it, so a part-paid installment
+ * asks for the difference rather than for the whole amount again. Every entry
+ * after it is untouched.
+ *
+ * The list is what makes "next due" mean the next installment MONEY IS STILL
+ * OWED ON rather than the next one on the calendar. A customer who pays three
+ * months at once has nothing to do in months two and three, and telling them a
+ * payment is due next week is how an app teaches people to ignore it.
+ *
+ * The prima is deducted before the walk begins because `buildSchedule` covers
+ * the FINANCED part only — the down payment is not installment one.
+ */
+export function outstandingInstallments(
+  terms: ContractTerms,
+  paidToDateCents: number,
+): ScheduledInstallment[] {
+  let uncovered = Math.max(0, paidToDateCents - terms.downPaymentCents);
+  const outstanding: ScheduledInstallment[] = [];
+
+  for (const installment of buildSchedule(terms)) {
+    // Only installments BEFORE the first uncovered one can be skipped. Once one
+    // has been kept, everything after it is owed in full whatever the arithmetic
+    // says, because the money ran out at that point.
+    if (outstanding.length === 0 && uncovered >= installment.amountCents) {
+      uncovered -= installment.amountCents;
+      continue;
+    }
+
+    outstanding.push(
+      outstanding.length === 0
+        ? { ...installment, amountCents: installment.amountCents - uncovered }
+        : installment,
+    );
+  }
+
+  return outstanding;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Payment health                                                              */
 /* -------------------------------------------------------------------------- */
@@ -289,26 +330,7 @@ export function assessContract(
     monthly > 0 ? Math.ceil(arrearsCents / monthly) : arrearsCents > 0 ? 1 : 0;
   const monthsAhead = monthly > 0 ? Math.floor(aheadCents / monthly) : 0;
 
-  // The next installment MONEY IS STILL OWED ON, which is not the same as the
-  // next one on the calendar. A customer who pays three months at once has
-  // nothing to do in months two and three, and telling them a payment is due
-  // next week is how an app teaches people to ignore it.
-  let uncovered = Math.max(0, paidToDateCents - terms.downPaymentCents);
-  let upcoming: ScheduledInstallment | undefined;
-
-  for (const installment of schedule) {
-    if (uncovered >= installment.amountCents) {
-      uncovered -= installment.amountCents;
-      continue;
-    }
-
-    upcoming = installment;
-    break;
-  }
-
-  // What is left of it, so a part-paid installment asks for the difference
-  // rather than for the whole amount again.
-  const nextDueAmountCents = upcoming ? upcoming.amountCents - uncovered : 0;
+  const upcoming = outstandingInstallments(terms, paidToDateCents)[0];
 
   let status: PaymentHealth = "current";
 
@@ -331,7 +353,7 @@ export function assessContract(
     monthsBehind,
     monthsAhead,
     nextDueOn: settled ? null : (upcoming?.dueOn ?? null),
-    nextDueAmountCents: settled ? 0 : nextDueAmountCents,
+    nextDueAmountCents: settled ? 0 : (upcoming?.amountCents ?? 0),
     settled,
   };
 }

@@ -18,3 +18,33 @@ export function parseTimestamp(value: string): number {
 
   return new Date(normalised).getTime();
 }
+
+/**
+ * Today's calendar date in the BUSINESS's timezone: "2026-08-31".
+ *
+ * `new Date().toISOString().slice(0, 10)` is the obvious spelling and it is
+ * wrong everywhere east of UTC and west of it alike. It reads the date in UTC,
+ * so in Tegucigalpa — six hours behind — every evening from 18:00 onwards it
+ * answers with tomorrow. A payment taken at half past nine at night was filed
+ * on the next day, an installment due today was already counted late, and the
+ * Panel General opened on a month that had not started.
+ *
+ * `Intl` is asked for the parts rather than handed a locale that happens to
+ * print ISO order. "en-CA" does produce YYYY-MM-DD today, but that is a
+ * property of a locale's formatting conventions, not a guarantee, and a
+ * date-ordering change in a future ICU release must not silently reorder the
+ * day and the month in a database column.
+ */
+export function businessToday(timeZone: string, now: Date = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now);
+
+  const find = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value ?? "";
+
+  return `${find("year")}-${find("month")}-${find("day")}`;
+}

@@ -1,5 +1,6 @@
 import { Dialog } from "../../components/Dialog";
 import { IconClose } from "../../components/Icons";
+import { hasIdentification, identificationLabel } from "../../lib/identification";
 import { getInitials } from "../../lib/initials";
 import { formatPhone } from "../../lib/phone";
 import type { MoneyView } from "../../lib/money";
@@ -55,7 +56,9 @@ export function CustomerPanel({
             <h3 className="cp-section-title">Contacto</h3>
             <div className="cp-row">
               <span>Identidad</span>
-              <span className="mono">{customer.identification}</span>
+              <span className={hasIdentification(customer.identification) ? "mono" : "holder-empty"}>
+                {identificationLabel(customer.identification)}
+              </span>
             </div>
             <div className="cp-row">
               <span>Teléfono</span>

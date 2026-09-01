@@ -1,15 +1,18 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-import { IconChevronDown, IconEdit } from "../../components/Icons";
+import { IconChevronDown, IconEdit, IconWhatsApp } from "../../components/Icons";
 import type { MoneyView } from "../../lib/money";
 import { cents, formatMoney } from "../../lib/money";
 import type { User } from "../../lib/permissions";
 import { can } from "../../lib/permissions";
+import { useIsMobile } from "../../lib/viewport";
 import type { Receipt, Transaction } from "../../types";
 import { ReceiptPaper } from "./ReceiptPaper";
 import { TransactionToolbar } from "./TransactionToolbar";
 import type { TransactionView } from "./TransactionToolbar";
 import { fetchReceipt } from "./api";
+import { receiptToPng } from "./receiptImage";
+import { copyGesture, pasteInstruction, receiptCaption, sendReceiptOnWhatsApp } from "./whatsapp";
 import type { TransactionFilters } from "./transactionFilters";
 import {
   NO_TRANSACTION_FILTERS,
@@ -150,7 +153,61 @@ export function ReceiptsPage({
   const [detail, setDetail] = useState<Receipt | null>(null);
   const [isLoadingDetail, setLoadingDetail] = useState(false);
 
-  const canEdit = can(user, "payment:reverse");
+  /*
+   * The receipt as a PNG, prepared as soon as one is opened.
+   *
+   * Rendered ahead of the button rather than on the press of it, and that is a
+   * correctness thing rather than a speed one. `navigator.share` only works
+   * while the browser still believes it is inside a user gesture, and Safari
+   * stops believing it across an await that takes a few hundred milliseconds —
+   * which rasterising an A4 document does. Rendering first means the click has
+   * a file in hand and shares immediately.
+   *
+   * The pleasant side effect is that Enviar is instant, which is the whole
+   * point of the feature: the customer is standing at the window.
+   */
+  const [shareImage, setShareImage] = useState<File | null>(null);
+  const [isSharing, setSharing] = useState(false);
+  /*
+   * What to tell the user after pressing Enviar.
+   *
+   * Not just errors. On a phone the share sheet appears and needs no words, but
+   * on a desktop what happens is that the image lands on the clipboard and a
+   * chat opens — and nobody guesses that unless it is said. `chatUrl` is set
+   * only when this screen could not open the chat itself, so the message can
+   * offer it as a link instead of opening a second tab a blocker would eat.
+   */
+  const [shareNote, setShareNote] = useState<
+    { tone: "info" | "error"; text: string; chatUrl?: string } | null
+  >(null);
+  const shareStageRef = useRef<HTMLDivElement>(null);
+
+  /*
+   * On a phone the receipt is a SCREEN, not a column.
+   *
+   * Side by side, the list and the document are two panes and picking a row
+   * fills the one next to it. Stacked, the same arrangement puts the receipt —
+   * and Imprimir and Anular with it — underneath every transaction in the list,
+   * so printing the receipt somebody just tapped means scrolling past a hundred
+   * rows to reach the button. The document is what the tab is FOR; it cannot be
+   * the part you have to go looking for.
+   *
+   * So on a phone, tapping a transaction opens the receipt over the list
+   * instead of below it. The list is covered rather than unmounted, which is
+   * what keeps its scroll position: going back puts the user on the row they
+   * tapped rather than at the top of the list.
+   *
+   * `useIsMobile` rather than a media query alone because the difference is
+   * structural — a back button that exists on one and not the other — and it is
+   * the one place the breakpoint is defined, so JavaScript and the stylesheet
+   * cannot disagree about where a phone ends.
+   */
+  const isMobile = useIsMobile();
+  const isSheetOpen = isMobile && selectedReceiptId !== null;
+
+  // Two permissions, not one. Reversing writes a visible counter-entry;
+  // correcting rewrites a posted figure in place. See routes/transactions.ts.
+  const canEdit = can(user, "payment:edit");
   const canVoid = can(user, "payment:reverse");
 
   const projectNames = useMemo(
@@ -200,6 +257,117 @@ export function ReceiptsPage({
       cancelled = true;
     };
   }, [selectedReceiptId, transactions]);
+
+  /*
+   * Rasterise the offscreen copy whenever the receipt on screen changes.
+   *
+   * Keyed on the receipt's id and its voided state rather than on the object,
+   * so re-reading the same receipt after somebody else's write — which
+   * lib/liveUpdates.ts now makes routine — does not throw away a perfectly good
+   * image and render it again. Voiding it must, because the document grows an
+   * ANULADO banner and the old picture no longer tells the truth.
+   *
+   * A failure here is deliberately silent. Nothing on screen is wrong; the one
+   * button that depends on it simply stays out of reach, and says so.
+   */
+  const shareKey = detail === null ? null : `${detail.id}:${detail.voidedAt ?? ""}`;
+
+  useEffect(() => {
+    setShareImage(null);
+    setShareNote(null);
+
+    if (detail === null) {
+      return;
+    }
+
+    let cancelled = false;
+
+    // One frame, so the stage below is laid out before it is measured. Reading
+    // `offsetHeight` off a node React has only just mounted gives zero.
+    const frame = requestAnimationFrame(() => {
+      const stage = shareStageRef.current;
+
+      if (stage === null) {
+        return;
+      }
+
+      receiptToPng(stage, detail.code)
+        .then((file) => {
+          if (!cancelled) {
+            setShareImage(file);
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setShareNote({
+              tone: "error",
+              text: "No se pudo preparar la imagen del recibo.",
+            });
+          }
+        });
+    });
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(frame);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shareKey]);
+
+  /*
+   * Hand the receipt to WhatsApp, and say what happened.
+   *
+   * Which of the three routes runs is decided by the device, not here — see
+   * whatsapp.ts. What this owns is the sentence afterwards, because two of the
+   * three leave a step for the person to finish and an unexplained new tab is
+   * indistinguishable from a bug.
+   */
+  const share = async () => {
+    if (detail === null || shareImage === null) {
+      return;
+    }
+
+    setSharing(true);
+    setShareNote(null);
+
+    try {
+      const outcome = await sendReceiptOnWhatsApp(
+        shareImage,
+        receiptCaption(detail),
+        detail.customer.phone,
+      );
+
+      if (outcome.status === "copied") {
+        setShareNote({
+          tone: "info",
+          text: `Se abrió el chat de ${detail.customer.fullName}. ${pasteInstruction()}`,
+        });
+      } else if (outcome.status === "manual") {
+        const gesture = copyGesture();
+
+        setShareNote({
+          tone: "info",
+          /*
+           * "insecure" is worth its own sentence. This device can almost
+           * certainly do better — an Android phone on HTTPS gets the share
+           * sheet — and without being told, the tab reads as the feature being
+           * broken rather than as the address bar being http://.
+           */
+          text:
+            outcome.reason === "insecure"
+              ? `Esta página está abierta por http://, y los navegadores solo permiten compartir por HTTPS. Ábrela por HTTPS y este botón enviará el recibo directamente. Por ahora se abrió en otra pestaña: ${gesture}.`
+              : `El recibo se abrió en otra pestaña. ${gesture[0]!.toUpperCase()}${gesture.slice(1)}.`,
+          chatUrl: outcome.chatUrl,
+        });
+      }
+      // "shared" and "cancelled" need no words: the share sheet either appeared
+      // and was used, or appeared and was dismissed. Both are self-evident.
+    } catch {
+      setShareNote({ tone: "error", text: "No se pudo abrir WhatsApp." });
+    } finally {
+      setSharing(false);
+    }
+  };
 
   const toggleCustomer = (customerId: string) => {
     setExpanded((current) => {
@@ -324,8 +492,27 @@ export function ReceiptsPage({
           })}
       </div>
 
-      <div className="receipt-preview-wrap">
-        <p className="receipt-preview-label">Vista del recibo</p>
+      <div className={`receipt-preview-wrap${isSheetOpen ? " is-sheet" : ""}`}>
+        {isSheetOpen ? (
+          /* Named for where it goes back TO, not for the act of going back:
+             "Transacciones" answers the question the arrow raises. Rendered
+             whatever the receipt does — while it loads and if it fails — so a
+             receipt that will not open can never trap somebody on this screen. */
+          <div className="receipt-sheet-head">
+            <button
+              type="button"
+              className="receipt-sheet-back"
+              onClick={() => setSelectedReceiptId(null)}
+            >
+              <span className="receipt-sheet-back-icon">
+                <IconChevronDown />
+              </span>
+              Transacciones
+            </button>
+          </div>
+        ) : (
+          <p className="receipt-preview-label">Vista del recibo</p>
+        )}
 
         {detail === null && !isLoadingDetail && (
           <p className="state-message">
@@ -343,9 +530,30 @@ export function ReceiptsPage({
             <div className="receipt-tear" />
 
             <div className="receipt-actions">
-              <button type="button" className="btn-secondary" onClick={() => window.print()}>
-                Imprimir
-              </button>
+              <div className="receipt-actions-main">
+                <button type="button" className="btn-secondary" onClick={() => window.print()}>
+                  Imprimir
+                </button>
+
+                {/* The document itself, not a description of it — see
+                    whatsapp.ts. Disabled rather than hidden while the image is
+                    being prepared, so the control does not appear a moment
+                    after somebody has looked for it and given up. */}
+                <button
+                  type="button"
+                  className="btn-secondary receipt-send"
+                  disabled={shareImage === null || isSharing}
+                  onClick={() => void share()}
+                  title={`Enviar el recibo a ${detail.customer.fullName} por WhatsApp`}
+                >
+                  <IconWhatsApp />
+                  {shareImage === null && shareNote?.tone !== "error"
+                    ? "Preparando…"
+                    : isSharing
+                      ? "Enviando…"
+                      : "Enviar"}
+                </button>
+              </div>
 
               {canVoid && detail.voidedAt === null && (
                 <button
@@ -356,6 +564,35 @@ export function ReceiptsPage({
                   Anular
                 </button>
               )}
+            </div>
+
+            {shareNote && (
+              <p className={`receipt-share-note${shareNote.tone === "error" ? " is-error" : ""}`}>
+                {shareNote.text}
+                {shareNote.chatUrl && (
+                  <>
+                    {" "}
+                    <a href={shareNote.chatUrl} target="_blank" rel="noreferrer">
+                      Abrir el chat de {detail.customer.fullName}
+                    </a>
+                  </>
+                )}
+              </p>
+            )}
+
+            {/*
+              The copy that actually gets photographed.
+
+              The receipt beside the list is 320px of a sidebar, and its own
+              container queries fold it into a narrow layout to fit — rendering
+              THAT would send the customer a tall thin strip. This one is laid
+              out offscreen at A4 proportions with the print type size, so what
+              arrives on their phone is the document they would have been handed
+              across the counter. Same component, same stylesheet; only the box
+              around it differs. See `.receipt-share-stage`.
+            */}
+            <div className="receipt-share-stage" ref={shareStageRef} aria-hidden="true">
+              <ReceiptPaper receipt={detail} money={money} />
             </div>
           </>
         )}

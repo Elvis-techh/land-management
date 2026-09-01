@@ -32,7 +32,7 @@ import type { ContractTerms, SaleType } from "../lib/contracts.js";
 import { appliedInstallments, buildSchedule } from "../lib/contracts.js";
 import { orderLedger, receiptFigures, replayContract } from "../lib/ledger.js";
 import {
-  formatReceiptCode,
+  allocateReceiptCode,
   generateLookupCode,
   nextReceiptNumber,
   toStoredLookupCode,
@@ -717,11 +717,25 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
 
           const number = nextReceiptNumber(highest?.value);
 
+          // The printed code is random and independent of `number`, so unlike
+          // the sequence it can collide. Checked here, inside the transaction
+          // that holds the write lock, so nothing can take the code between
+          // the check and the insert.
+          const code = allocateReceiptCode((candidate) => {
+            const clash = tx
+              .select({ id: receipts.id })
+              .from(receipts)
+              .where(eq(receipts.code, candidate))
+              .get();
+
+            return clash !== undefined;
+          });
+
           tx.insert(receipts)
             .values({
               id: receiptId,
               number,
-              code: formatReceiptCode(Number(body.paidOn.slice(0, 4)), number),
+              code,
               lookupCode: generateLookupCode(),
               customerId: body.customerId,
               issuedOn: body.paidOn,
@@ -760,6 +774,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
             action: "create",
             after: {
               receiptNumber: number,
+              receiptCode: code,
               customerId: body.customerId,
               paidOn: body.paidOn,
               method: body.method,

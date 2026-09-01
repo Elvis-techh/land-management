@@ -212,6 +212,18 @@ export function IconPermissions() {
   );
 }
 
+/** Two figures with a badge — the people who can sign in. */
+export function IconUsers() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="10" cy="8" r="3.4" />
+      <path d="M3.5 20C3.5 16.4 6.4 13.6 10 13.6C11.4 13.6 12.7 14 13.8 14.7" />
+      <circle cx="17.5" cy="17.5" r="3.5" />
+      <path d="M16 17.5L17.2 18.7L19.2 16.5" />
+    </svg>
+  );
+}
+
 /** Bars of decreasing length with arrows — sort order. */
 export function IconSort() {
   return (
@@ -239,6 +251,67 @@ export function IconChevronDown() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M7 10L12 15L17 10" />
+    </svg>
+  );
+}
+
+/**
+ * WhatsApp's handset-in-a-speech-bubble.
+ *
+ * Drawn as filled paths rather than the stroked outlines above, because this
+ * mark is recognised by its silhouette — traced as an outline at 16px it reads
+ * as a generic chat bubble, which is the one thing a button labelled "Enviar"
+ * must not look like. `currentColor` throughout so it takes the button's colour
+ * and stays legible in a disabled state, rather than carrying the brand green
+ * into a palette that has none.
+ */
+export function IconWhatsApp() {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.32 4.95L2 22l5.25-1.38a9.87 9.87 0 0 0 4.79 1.22h.01c5.46 0 9.91-4.45 9.91-9.91 0-2.65-1.03-5.14-2.9-7.01A9.82 9.82 0 0 0 12.04 2Zm0 1.67a8.2 8.2 0 0 1 5.83 2.42 8.18 8.18 0 0 1 2.41 5.82c0 4.54-3.7 8.24-8.24 8.24a8.23 8.23 0 0 1-4.19-1.15l-.3-.18-3.12.82.83-3.04-.2-.31a8.19 8.19 0 0 1-1.26-4.38c0-4.54 3.7-8.24 8.24-8.24Z" />
+      <path d="M9.06 7.1c-.19-.42-.38-.43-.56-.44h-.48c-.16 0-.43.06-.66.31-.23.25-.86.85-.86 2.06s.89 2.39 1.01 2.56c.12.16 1.71 2.75 4.22 3.74 2.09.82 2.51.66 2.97.62.46-.04 1.48-.6 1.69-1.19.21-.58.21-1.08.15-1.19-.06-.1-.23-.16-.48-.29-.25-.12-1.48-.73-1.71-.81-.23-.09-.4-.13-.56.12-.17.25-.64.81-.79.98-.14.16-.29.19-.54.06-.25-.12-1.06-.39-2.01-1.24-.74-.66-1.24-1.48-1.39-1.73-.14-.25-.01-.38.11-.51.11-.11.25-.29.37-.44.13-.14.17-.25.25-.41.08-.17.04-.31-.02-.44-.06-.12-.55-1.34-.76-1.83Z" />
+    </svg>
+  );
+}
+
+/**
+ * The grip on a band that can be dragged — six dots, the convention everywhere.
+ *
+ * Filled circles rather than the two stroked lines this is sometimes drawn as:
+ * at 16px a pair of lines reads as a hamburger menu, and a handle that looks
+ * like a menu is a handle nobody grabs.
+ */
+export function IconDrag() {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <circle cx="9" cy="6" r="1.6" />
+      <circle cx="15" cy="6" r="1.6" />
+      <circle cx="9" cy="12" r="1.6" />
+      <circle cx="15" cy="12" r="1.6" />
+      <circle cx="9" cy="18" r="1.6" />
+      <circle cx="15" cy="18" r="1.6" />
+    </svg>
+  );
+}
+
+/** Shown on screen. */
+export function IconEye() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12Z" />
+      <circle cx="12" cy="12" r="2.8" />
+    </svg>
+  );
+}
+
+/** Folded away. The stroke through it is what says so at a glance. */
+export function IconEyeOff() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4.5 7.2C2.9 8.9 2 12 2 12s3.6 6.5 10 6.5c1.6 0 3-.25 4.2-.68" />
+      <path d="M9.6 5.7A11.7 11.7 0 0 1 12 5.5c6.4 0 10 6.5 10 6.5s-1 1.8-2.8 3.5" />
+      <path d="M9.9 9.9a2.9 2.9 0 0 0 4.1 4.1" />
+      <path d="M3 3l18 18" />
     </svg>
   );
 }

@@ -3,7 +3,7 @@ import { useState } from "react";
 
 import { Dialog } from "../../components/Dialog";
 import { IconClose } from "../../components/Icons";
-import { formatPhone } from "../../lib/phone";
+import { customerLine } from "../../lib/identification";
 import type { CustomerRecord } from "../../types";
 
 const MINIMUM_REASON_LENGTH = 10;
@@ -70,9 +70,7 @@ export function CustomerDeleteDialog({
           <div>
             <p className="modal-eyebrow danger-eyebrow">Eliminar cliente</p>
             <h2>{customer.fullName}</h2>
-            <p className="modal-description">
-              {formatPhone(customer.phone)} · {customer.identification}
-            </p>
+            <p className="modal-description">{customerLine(customer)}</p>
           </div>
           <button type="button" className="modal-close" onClick={onCancel} aria-label="Cerrar">
             <IconClose />

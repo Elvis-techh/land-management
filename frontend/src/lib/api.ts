@@ -7,6 +7,8 @@
  * address, so nothing has to change between the two.
  */
 
+import { CLIENT_ID } from "./liveUpdates";
+
 /** An error the server sent us deliberately, with its HTTP status attached. */
 export class ApiError extends Error {
   constructor(
@@ -39,6 +41,10 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       credentials: "include",
       headers: {
         ...(init.body ? { "Content-Type": "application/json" } : {}),
+        // Which tab is asking. The server puts it on the change it announces so
+        // this tab's own stream can skip it — it re-reads when the response
+        // lands and does not need telling again. See lib/liveUpdates.ts.
+        "X-Client-Id": CLIENT_ID,
         ...init.headers,
       },
     });

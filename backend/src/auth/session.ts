@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
 
-import { and, eq, gt, lt } from "drizzle-orm";
+import { and, eq, gt, isNull, lt } from "drizzle-orm";
 
 import type { Db } from "../db/client.js";
 import { sessions, users } from "../db/schema.js";
@@ -33,9 +33,15 @@ export function createSession(db: Db, userId: string, sessionDays: number): stri
 }
 
 /**
- * Look up who a session belongs to, or `null` if it is unknown or expired.
+ * Look up who a session belongs to, or `null` if it is unknown, expired, or
+ * belongs to an account that has been deactivated.
+ *
  * Runs on every authenticated request, which is why role changes take effect
- * immediately rather than at the user's next login.
+ * immediately rather than at the user's next login — and why deactivating an
+ * account ends it on that account's very next click, rather than whenever its
+ * session happened to run out. The rows are deleted too, in
+ * `deleteSessionsForUser`, but that is housekeeping: this clause is what makes
+ * the answer safe even if a session is somehow missed.
  */
 export function getSessionUser(db: Db, sessionId: string): SessionUser | null {
   const now = new Date().toISOString();
@@ -49,7 +55,13 @@ export function getSessionUser(db: Db, sessionId: string): SessionUser | null {
     })
     .from(sessions)
     .innerJoin(users, eq(users.id, sessions.userId))
-    .where(and(eq(sessions.id, sessionId), gt(sessions.expiresAt, now)))
+    .where(
+      and(
+        eq(sessions.id, sessionId),
+        gt(sessions.expiresAt, now),
+        isNull(users.deactivatedAt),
+      ),
+    )
     .get();
 
   if (!row || !isRole(row.role)) {
@@ -61,6 +73,18 @@ export function getSessionUser(db: Db, sessionId: string): SessionUser | null {
 
 export function destroySession(db: Db, sessionId: string): void {
   db.delete(sessions).where(eq(sessions.id, sessionId)).run();
+}
+
+/**
+ * Sign one account out everywhere.
+ *
+ * Called when an account is deactivated and when its password is reset: in both
+ * cases the person holding the old session is exactly who must stop being
+ * trusted, and a password changed because it leaked is worth nothing while the
+ * session opened with it still works.
+ */
+export function deleteSessionsForUser(db: Db, userId: string): number {
+  return db.delete(sessions).where(eq(sessions.userId, userId)).run().changes;
 }
 
 /** Housekeeping: drop sessions that have already expired. */

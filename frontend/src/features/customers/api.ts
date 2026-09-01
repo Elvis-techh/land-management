@@ -7,7 +7,7 @@ interface CustomersResponse {
   customers: Array<{
     id: string;
     fullName: string;
-    identification: string;
+    identification: string | null;
     phone: string;
     email: string | null;
     address: string | null;
@@ -51,6 +51,7 @@ export async function fetchCustomers(): Promise<CustomerRecord[]> {
  */
 export interface CustomerDraft {
   fullName: string;
+  /** Empty when the customer has not given one; the server stores that as NULL. */
   identification: string;
   phone: string;
   email: string | null;

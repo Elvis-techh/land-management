@@ -248,9 +248,7 @@ export function ContractsPage({
                                 <span className="holder-btn is-static">
                                   <span className="holder-empty">↳</span>
                                   {contract.notes && (
-                                    <span className="contract-note" title={contract.notes}>
-                                      {contract.notes}
-                                    </span>
+                                    <span className="contract-note">{contract.notes}</span>
                                   )}
                                 </span>
                               ) : (
@@ -266,14 +264,12 @@ export function ContractsPage({
                                         of its own: notes run to a sentence, and
                                         a seventh column would push the payment
                                         health — the reason this screen exists —
-                                        off a 1440px screen. Clamped to two
-                                        lines so one long note cannot stretch
-                                        the row past its neighbours; the full
-                                        text is in the tooltip and the panel. */}
+                                        off a 1440px screen. It wraps onto as
+                                        many lines as it needs rather than
+                                        ending in a silent "…", so the row is
+                                        allowed to grow with a long note. */}
                                     {contract.notes && (
-                                      <span className="contract-note" title={contract.notes}>
-                                        {contract.notes}
-                                      </span>
+                                      <span className="contract-note">{contract.notes}</span>
                                     )}
                                   </span>
                                 </span>

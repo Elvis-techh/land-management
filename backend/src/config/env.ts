@@ -25,6 +25,27 @@ export type AppConfig = {
    * supervisor types one, and no outbound request is ever made.
    */
   exchangeRateRefreshHours: number;
+  /**
+   * The timezone the BUSINESS keeps its calendar in — an IANA name.
+   *
+   * Not the server's timezone, and deliberately not the browser's. Lindero is
+   * full of calendar DATES rather than instants: the day a payment was
+   * received, the day an installment falls due, the month a figure belongs to.
+   * Every one of those is a fact about a day in the office, so they all have to
+   * be decided in one place's calendar or they disagree with each other.
+   *
+   * The failure this fixes: the server derived "today" from UTC, so from six in
+   * the evening in Tegucigalpa onwards it had already rolled over. A payment
+   * taken at 21:38 on 31 August was filed under 1 September, the Panel General
+   * reported a month nobody had reached yet, and an installment due that day
+   * was five hours late by the app's reckoning while the office was still open.
+   *
+   * Honduras keeps UTC−6 all year and has observed no daylight saving since
+   * 2006, so this is a fixed offset in practice — but it is stored as an IANA
+   * zone rather than as "−6" so that a change in the rules, or a second office
+   * somewhere else, is a configuration change and not a rewrite.
+   */
+  timeZone: string;
 };
 
 const allowedEnvironments = new Set<AppConfig["nodeEnv"]>([
@@ -80,6 +101,17 @@ export function loadConfig(environment = process.env): AppConfig {
     throw new Error("EXCHANGE_RATE_REFRESH_HOURS must be zero or a positive number");
   }
 
+  const timeZone = environment.TIME_ZONE ?? "America/Tegucigalpa";
+
+  // Asked of the platform rather than checked against a list: an unknown zone
+  // name throws here, at boot, instead of silently falling back to UTC and
+  // moving every date in the app by six hours.
+  try {
+    new Intl.DateTimeFormat("en-CA", { timeZone });
+  } catch {
+    throw new Error(`TIME_ZONE is not a known IANA timezone: ${timeZone}`);
+  }
+
   return {
     nodeEnv,
     host: environment.HOST ?? "0.0.0.0",
@@ -94,5 +126,6 @@ export function loadConfig(environment = process.env): AppConfig {
     sessionDays,
     loginAttemptsPerMinute,
     exchangeRateRefreshHours,
+    timeZone,
   };
 }

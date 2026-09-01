@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { after, describe, it } from "node:test";
 
-import { eq } from "drizzle-orm";
+import { and, eq, isNull, like } from "drizzle-orm";
 
 import { auditEvents, customers } from "../src/db/schema.js";
 import { normalizePhone } from "../src/lib/phone.js";
@@ -130,6 +130,104 @@ describe("customers", async () => {
     });
 
     assert.equal(response.statusCode, 201);
+  });
+
+  it("accepts a customer who has not given an identidad", async () => {
+    // The number is confidential and often simply not available when somebody
+    // is first written down. Refusing the customer does not produce the number.
+    const response = await create(ownerCookie, {
+      fullName: "Sin Identidad",
+      phone: "9700-0002",
+      customerSince: 2026,
+    });
+
+    assert.equal(response.statusCode, 201);
+
+    const row = db
+      .select()
+      .from(customers)
+      .where(eq(customers.fullName, "Sin Identidad"))
+      .get();
+
+    // NULL, not "". An empty string collides in the unique index with the next
+    // customer who also has no identidad.
+    assert.equal(row?.identification, null);
+  });
+
+  it("stores a blank identidad as an absence rather than as an empty string", async () => {
+    // Every shape of "nothing" a form or an import can send.
+    const blanks = [
+      ["Blanco vacío", ""],
+      ["Blanco espacios", "   "],
+      ["Blanco nulo", null],
+    ] as const;
+
+    for (const [fullName, identification] of blanks) {
+      const response = await create(ownerCookie, {
+        fullName,
+        identification,
+        phone: "9700-0003",
+        customerSince: 2026,
+      });
+
+      assert.equal(response.statusCode, 201, `failed on ${JSON.stringify(identification)}`);
+    }
+
+    const rows = db
+      .select()
+      .from(customers)
+      .where(and(isNull(customers.identification), like(customers.fullName, "Blanco %")))
+      .all();
+
+    // Three customers, none of them a duplicate of the others. This is the case
+    // the old NOT NULL column could not express at all.
+    assert.equal(rows.length, 3);
+  });
+
+  it("still refuses a duplicate once an identidad IS given", async () => {
+    // Optional does not mean unchecked: a real number entered twice still
+    // splits somebody's contracts across two records.
+    const response = await create(ownerCookie, {
+      ...validCustomer,
+      fullName: "Otra Persona",
+      identification: "0801-1990-00001",
+    });
+
+    assert.equal(response.statusCode, 409);
+    assert.equal(response.json().error, "duplicate_identification");
+  });
+
+  it("lets a customer's identidad be removed again after it was entered", async () => {
+    const created = await create(ownerCookie, {
+      fullName: "Se Arrepintió",
+      identification: "0801-1991-99999",
+      phone: "9700-0004",
+      customerSince: 2026,
+    });
+
+    assert.equal(created.statusCode, 201);
+
+    const response = await app.inject({
+      method: "PATCH",
+      url: `/api/customers/${created.json().customer.id}`,
+      headers: { cookie: ownerCookie },
+      payload: {
+        fullName: "Se Arrepintió",
+        identification: "",
+        phone: "9700-0004",
+        customerSince: 2026,
+      },
+    });
+
+    assert.equal(response.statusCode, 200);
+
+    const row = db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, created.json().customer.id))
+      .get();
+
+    assert.equal(row?.identification, null);
   });
 
   describe("deleting", () => {

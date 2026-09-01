@@ -33,6 +33,7 @@ export const CAPABILITIES = [
   "contract:cancel",
   "payment:record",
   "payment:reverse",
+  "payment:edit",
   "price:change",
   "rate:edit",
   "audit:view",
@@ -66,7 +67,7 @@ export const EDITABLE_CAPABILITIES: readonly Capability[] = CAPABILITIES.filter(
  * `staff` starts able to record the day-to-day work: new customers, new
  * contracts, taking payments. What they cannot do out of the box is change
  * history or destroy records — edit a lot, change a price, cancel a contract,
- * reverse a payment, or manage users.
+ * reverse or rewrite a payment, or manage users.
  *
  * That split is not bureaucracy. It is the exact thing a landowner wants when
  * handing the app to an employee — and it is now a starting point rather than a

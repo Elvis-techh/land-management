@@ -4,6 +4,8 @@ import { Dialog } from "../../components/Dialog";
 import { IconClose } from "../../components/Icons";
 import { MoneyInput } from "../../components/MoneyInput";
 import { ApiError } from "../../lib/api";
+import { businessToday } from "../../lib/businessTime";
+import { hasIdentification } from "../../lib/identification";
 import type { MoneyView } from "../../lib/money";
 import { cents, formatMoney, parseMoneyInput, toMoneyInput } from "../../lib/money";
 import type { Contract, CustomerRecord, Receipt } from "../../types";
@@ -30,13 +32,6 @@ const METHODS: Array<{ value: Method; label: string }> = [
 
 /** Matches MAX_ATTACHMENTS_PER_RECEIPT on the server. */
 const MAX_PROOFS = 8;
-
-/** Today as a calendar date, in the user's own timezone rather than UTC. */
-function todayLocal(): string {
-  const now = new Date();
-  const offset = now.getTimezoneOffset() * 60_000;
-  return new Date(now.getTime() - offset).toISOString().slice(0, 10);
-}
 
 /**
  * A key unique to one open form.
@@ -87,7 +82,7 @@ export function NewReceiptDialog({
   onIssued,
 }: NewReceiptDialogProps) {
   const [customerId, setCustomerId] = useState("");
-  const [paidOn, setPaidOn] = useState(todayLocal);
+  const [paidOn, setPaidOn] = useState(businessToday);
   const [method, setMethod] = useState<Method>("cash");
   const [reference, setReference] = useState("");
   const [note, setNote] = useState("");
@@ -315,7 +310,10 @@ export function NewReceiptDialog({
             <option value="">Selecciona un cliente…</option>
             {customers.map((customer) => (
               <option key={customer.id} value={customer.id}>
-                {customer.fullName} · {customer.identification}
+                {customer.fullName}
+                {hasIdentification(customer.identification)
+                  ? ` · ${customer.identification}`
+                  : ""}
               </option>
             ))}
           </select>

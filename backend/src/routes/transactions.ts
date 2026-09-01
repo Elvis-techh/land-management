@@ -220,7 +220,21 @@ export const transactionRoutes: FastifyPluginAsync = async (app) => {
    */
   app.patch<{ Params: { id: string } }>(
     "/transactions/:id",
-    { onRequest: app.requireCapability("payment:reverse") },
+    /*
+     * `payment:edit`, NOT `payment:reverse`.
+     *
+     * The two used to share a permission, and the label on that permission —
+     * "Reversar pagos: corrige un pago escribiendo una reversa" — described only
+     * half of what it handed over. A reversal writes a second, visible entry and
+     * leaves the original standing; this route rewrites a posted figure in
+     * place. The old amount survives only in the audit history, which is a
+     * different and larger amount of trust.
+     *
+     * The app already draws this exact line between `contract:edit` and
+     * `contract:reprice`: moving a due date and moving a balance are not the
+     * same permission. Same reasoning, same split.
+     */
+    { onRequest: app.requireCapability("payment:edit") },
     async (request, reply) => {
       const parsed = editBody.safeParse(request.body);
 

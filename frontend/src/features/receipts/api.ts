@@ -1,4 +1,5 @@
 import { ApiError, api } from "../../lib/api";
+import { CLIENT_ID } from "../../lib/liveUpdates";
 import { cents } from "../../lib/money";
 import type { Receipt, ReceiptLine, Transaction } from "../../types";
 
@@ -18,7 +19,7 @@ interface ReceiptResponse {
   voidedAt: string | null;
   voidReason: string | null;
   supersededById: string | null;
-  customer: { id: string; fullName: string; identification: string; phone: string };
+  customer: { id: string; fullName: string; identification: string | null; phone: string };
   issuedBy: { id: string; name: string };
   totalPaid: number;
   previousBalance: number;
@@ -178,6 +179,10 @@ export async function uploadAttachment(
   const response = await fetch(`/api/receipts/${receiptId}/attachments`, {
     method: "POST",
     credentials: "include",
+    // `api.post` is bypassed here, so this header has to be repeated: without
+    // it the server cannot tell whose write this was, and the uploading tab
+    // refreshes itself for news it already has. See lib/liveUpdates.ts.
+    headers: { "X-Client-Id": CLIENT_ID },
     body,
   });
 

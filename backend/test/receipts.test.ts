@@ -63,8 +63,9 @@ describe("issuing a receipt", () => {
 
     const { receipt } = response.json() as { receipt: Record<string, any> };
 
-    assert.equal(receipt.code, "REC-2026-00001");
+    // The sequence is internal; the printed code is random and fixed-width.
     assert.equal(receipt.number, 1);
+    assert.match(receipt.code, /^IM-\d{12}$/);
     assert.match(receipt.lookupCode, /^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/);
     assert.equal(receipt.totalPaid, lempiras(6_700));
 
@@ -365,7 +366,11 @@ describe("receipt numbering", () => {
     // number is unrecoverable, so the sequence walks past the void.
     const third = await issue("2026-03-17");
     assert.equal(third.json().receipt.number, 3);
-    assert.equal(third.json().receipt.code, "REC-2026-00003");
+
+    // …and the printed code carries none of that: it is drawn fresh, so the
+    // paper does not tell the customer how many receipts have been issued.
+    assert.match(third.json().receipt.code, /^IM-\d{12}$/);
+    assert.notEqual(third.json().receipt.code, second.json().receipt.code);
 
     await app.close();
   });
@@ -437,7 +442,7 @@ describe("receipt numbering", () => {
 
     const response = await app.inject({
       method: "GET",
-      url: "/api/receipts/lookup/REC-2026-00001",
+      url: "/api/receipts/lookup/IM-482739156034",
       headers: { cookie },
     });
 

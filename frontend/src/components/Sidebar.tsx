@@ -16,6 +16,7 @@ import {
   IconPermissions,
   IconProjects,
   IconReceipts,
+  IconUsers,
 } from "./Icons";
 
 /**
@@ -60,6 +61,13 @@ function buildNavGroups(user: User): Array<{ label: string; items: NavItem[] }> 
 
   if (can(user, "permission:manage")) {
     control.push({ id: "permissions" as const, label: "Permisos", icon: IconPermissions });
+  }
+
+  // Who exists, as opposed to what the associate role may do. Both are locked
+  // to the supervisor and cannot be granted away — see LOCKED_CAPABILITIES in
+  // backend/src/lib/permissions.ts.
+  if (can(user, "user:manage")) {
+    control.push({ id: "users" as const, label: "Usuarios", icon: IconUsers });
   }
 
   if (control.length > 0) {
