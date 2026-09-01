@@ -123,22 +123,30 @@ agreed with the business before schema implementation.
 
 ### What is actually wired today
 
-- **Contract lifecycle**: only `active` and `cancelled` are written by the
-  application. `paid_off` is not stored — a contract that owes nothing is shown
-  as "Pagado" from the derived balance (`health.settled`), the same way payment
-  health is derived. `defaulted` and `draft` exist in the schema but nothing
-  sets them yet: a formal default action needs the grace-period and repossession
-  rules agreed with the business first.
+- **Contract lifecycle**: `active`, `paid_off`, `cancelled` and `defaulted` are
+  all reachable.
+  - `paid_off` is written by `syncContractLifecycle` — a contract settles when
+    its replayed balance reaches zero, and reopens to `active` if a later void
+    or correction brings the balance back. It still holds its lot (the lot is
+    sold), but drops out of "what is this customer paying on".
+  - `defaulted` is a deliberate owner-only action (`POST /contracts/:id/default`,
+    `contract:default` is in `LOCKED_CAPABILITIES`). It is distinct from a
+    cancellation: a cancellation is a sale unwound by agreement, a default is the
+    business writing off what it is owed. Both release the lot and both ask the
+    settlement question below.
+  - `draft` is still unwired — pending a decision on what a draft contract would
+    do that a `reservation` does not.
 - **Reservation expiry** *is* wired, as a derivation rather than a sweep: a
   reservation past its `expiresOn` stops holding its lot on read (see
-  `backend/src/lib/holding.ts`). The row is not rewritten — it shows as
-  "Vencida" and the lot returns to the available pool. Formally cancelling it is
-  still available for a clean history.
-- **Money on cancellation**: cancelling a contract releases the lot and records
-  how much had been paid in the audit entry. It does **not** decide refund vs.
-  forfeit vs. transfer — that decision, and any reversal it implies, is still a
-  manual ledger operation. Wiring it needs the business rule for what each
-  outcome means for the books.
+  `backend/src/lib/holding.ts` — `holdsLot` / `openContract`). The row is not
+  rewritten — it shows as "Vencida" and the lot returns to the available pool.
+- **Money on closing a contract**: cancelling or defaulting a contract asks,
+  whenever anything has been paid, what happens to that money — it stays as
+  income (`none`), is held while a decision is pending (`held`), or is refunded
+  (`refunded`, which reverses the payments and voids any receipt they covered,
+  and needs `payment:reverse`). The decision is stored on
+  `contracts.closed_settlement` and in the audit entry. "Transfer to another
+  contract" is not yet an option.
 
 ## API boundaries
 

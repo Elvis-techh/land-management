@@ -301,10 +301,11 @@ export const contracts = sqliteTable(
     /**
      * "draft" | "active" | "paid_off" | "cancelled" | "defaulted"
      *
-     * Only `active` and `cancelled` are written today. A contract that owes
-     * nothing is shown as paid from its derived balance rather than by storing
-     * `paid_off`; `defaulted` and `draft` are reserved for lifecycle rules that
-     * still need to be agreed with the business. See docs/architecture.md.
+     * `active`, `paid_off`, `cancelled` and `defaulted` are all reachable.
+     * `paid_off` is set and cleared by `syncContractLifecycle` as the replayed
+     * balance crosses zero; `cancelled` and `defaulted` are set by the close
+     * actions in routes/contracts.ts. `draft` is not written yet. See
+     * docs/architecture.md.
      */
     status: text("status").notNull().default("active"),
     /**
