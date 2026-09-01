@@ -1,18 +1,18 @@
-import { migrate } from "drizzle-orm/better-sqlite3/migrator";
-
 import { loadConfig } from "../config/env.js";
 import { createDb } from "./client.js";
+import { runMigrations } from "./migrations.js";
 
 /**
- * Applies any migration files in ./drizzle that this database has not seen.
+ * `npm run db:migrate` — apply pending migrations to the database and exit.
  *
- * Safe to run repeatedly — Drizzle records which migrations have run. This is
- * what you run on deploy, before starting the server.
+ * The server also runs migrations on boot (see server.ts), so a deploy does
+ * not depend on this script. It stays for development, and for the times you
+ * want to migrate a database without starting the server.
  */
 const config = loadConfig();
 const { db, sqlite } = createDb(config.databasePath);
 
-migrate(db, { migrationsFolder: "./drizzle" });
+runMigrations(db);
 sqlite.close();
 
 console.log(`Migrations applied to ${config.databasePath}`);
