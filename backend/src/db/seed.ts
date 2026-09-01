@@ -10,8 +10,16 @@ import { contracts, customers, lots, payments, projects, users } from "./schema.
  * something real to display before anyone types a record in.
  *
  * Refuses to run if users already exist, so it can never overwrite live data.
+ * Also refuses outright in production — this is fictional demo data, complete
+ * with a published password, and no real deployment should ever get it. See
+ * db:bootstrap for how a real deployment creates its first account instead.
  */
 const config = loadConfig();
+
+if (config.nodeEnv === "production") {
+  throw new Error("db:seed is disabled in production — use db:bootstrap to create the first account");
+}
+
 const { db, sqlite } = createDb(config.databasePath);
 
 const existing = db.select({ id: users.id }).from(users).all();
