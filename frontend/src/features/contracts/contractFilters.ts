@@ -73,8 +73,14 @@ export function matchesFilters(contract: Contract, filters: ContractFilters): bo
     return false;
   }
 
-  if (filters.health.length > 0 && !filters.health.includes(contract.health.status)) {
-    return false;
+  if (filters.health.length > 0) {
+    // Payment health only means something for a contract that is still being
+    // paid. A cancelled, defaulted or paid-off one carries a computed health
+    // the server never stopped deriving — filtering "en riesgo" must not drag
+    // a defaulted contract back into view.
+    if (contract.status !== "active" || !filters.health.includes(contract.health.status)) {
+      return false;
+    }
   }
 
   if (filters.saleTypes.length > 0 && !filters.saleTypes.includes(contract.saleType)) {

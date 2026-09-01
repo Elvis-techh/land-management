@@ -7,7 +7,8 @@ import { contracts, customers, lots, payments, projects, receipts, users } from 
 import { splitEvenly } from "../lib/allocation.js";
 import type { AllocationTarget } from "../lib/allocation.js";
 import { recordAudit } from "../lib/audit.js";
-import { activeHold } from "../lib/holding.js";
+import { syncContractLifecycle } from "../lib/contractLifecycle.js";
+import { openContract } from "../lib/holding.js";
 import { replayContract } from "../lib/ledger.js";
 
 /** Today as a YYYY-MM-DD calendar date. */
@@ -165,9 +166,9 @@ export const transactionRoutes: FastifyPluginAsync = async (app) => {
         .from(contracts)
         .innerJoin(lots, eq(lots.id, contracts.lotId))
         .innerJoin(projects, eq(projects.id, lots.projectId))
-        // Active contracts only, and an expired reservation does not count —
-        // the same "actively holding" rule the lots list derives.
-        .where(and(eq(contracts.customerId, request.params.id), activeHold(today())))
+        // Contracts still being serviced — a paid-off or lapsed one has
+        // nothing left to pay, so it is not a split target.
+        .where(and(eq(contracts.customerId, request.params.id), openContract(today())))
         .all();
 
       const targets: AllocationTarget[] = open.map((contract) => ({
@@ -350,6 +351,10 @@ export const transactionRoutes: FastifyPluginAsync = async (app) => {
           before,
           after,
         });
+
+        // A corrected amount can close a contract (down to zero) or reopen a
+        // paid-off one (corrected below the price again).
+        syncContractLifecycle(tx, existing.contractId, request.user!.id);
       });
 
       const updated = transactionsQuery(app.db).where(eq(payments.id, existing.id)).get();

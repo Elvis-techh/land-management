@@ -7,7 +7,7 @@ import { z } from "zod";
 import { contracts, customers, lots, payments, projects } from "../db/schema.js";
 import { recordAudit } from "../lib/audit.js";
 import { roleCan } from "../lib/capabilities.js";
-import { activeHold } from "../lib/holding.js";
+import { holdsLot } from "../lib/holding.js";
 
 /** Today as a YYYY-MM-DD calendar date — every "is it expired yet" question is a date. */
 const today = () => new Date().toISOString().slice(0, 10);
@@ -50,9 +50,10 @@ const lotsListQuery = (db: import("../db/client.js").Db, asOf: string) =>
     .from(lots)
     .innerJoin(projects, eq(projects.id, lots.projectId))
     // A lot has at most one contract that is holding it. Cancelled and
-    // defaulted contracts release the lot; so does a reservation that has
-    // passed its expiry date — see `activeHold`.
-    .leftJoin(contracts, and(eq(contracts.lotId, lots.id), activeHold(asOf)))
+    // defaulted contracts release the lot; so does a reservation past its
+    // expiry date. A paid-off contract still holds — the lot is sold. See
+    // `holdsLot`.
+    .leftJoin(contracts, and(eq(contracts.lotId, lots.id), holdsLot(asOf)))
     .leftJoin(customers, eq(customers.id, contracts.customerId));
 
 /**
@@ -396,11 +397,13 @@ export const lotRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(404).send({ error: "not_found", message: "Lote no encontrado." });
       }
 
-      // Archiving a lot that is under contract would orphan the contract.
+      // Archiving a lot that is still spoken for would orphan its contract —
+      // whether it is being paid or already paid off. A cancelled, defaulted or
+      // lapsed reservation does not count: the lot is free.
       const activeContract = app.db
         .select({ code: contracts.code })
         .from(contracts)
-        .where(and(eq(contracts.lotId, existing.id), eq(contracts.status, "active")))
+        .where(and(eq(contracts.lotId, existing.id), holdsLot(today())))
         .get();
 
       if (activeContract) {

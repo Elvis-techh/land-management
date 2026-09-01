@@ -67,11 +67,17 @@ describe("editing what the associate role may do", async () => {
       "payment:record",
     ]);
 
-    // Account control is never offered as a switch.
+    // Account control — and declaring a contract incumplido — is never offered
+    // as a switch.
     const offered = body.capabilities.map((row: { capability: string }) => row.capability);
     assert.equal(offered.includes("user:manage"), false);
     assert.equal(offered.includes("permission:manage"), false);
-    assert.deepEqual(body.locked.sort(), ["permission:manage", "user:manage"]);
+    assert.equal(offered.includes("contract:default"), false);
+    assert.deepEqual(body.locked.sort(), [
+      "contract:default",
+      "permission:manage",
+      "user:manage",
+    ]);
   });
 
   it("refuses to hand over account control, loudly", async () => {

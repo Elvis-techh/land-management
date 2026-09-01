@@ -2255,11 +2255,19 @@ body.modal-open {
   opacity: 0.55;
 }
 
-.settlement-option input {
-  margin-top: 2px;
-  width: 15px;
-  height: 15px;
-  accent-color: var(--ink);
+/* Beats `.form-field input` (same file, later, would otherwise make the radio a
+   full-width 42px box). */
+.settlement-option input[type="radio"] {
+  flex: 0 0 auto;
+  margin: 2px 0 0;
+  width: 16px;
+  min-height: 0;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  accent-color: var(--ink, var(--clay));
 }
 
 .settlement-title {

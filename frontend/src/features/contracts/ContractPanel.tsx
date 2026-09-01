@@ -28,6 +28,7 @@ interface ContractPanelProps {
   onClose: () => void;
   onEditContract: (contract: Contract) => void;
   onCancelContract: (contract: Contract) => void;
+  onDefaultContract: (contract: Contract) => void;
 }
 
 /**
@@ -43,13 +44,17 @@ export function ContractPanel({
   onClose,
   onEditContract,
   onCancelContract,
+  onDefaultContract,
 }: ContractPanelProps) {
   const stamp = primaryStamp(contract);
   const detail = healthDetail(contract);
   const percent = paidPercent(contract);
-  const isActive = contract.status === "active";
+  // Both `active` and `paid_off` contracts can still be closed — the lot is
+  // spoken for either way.
+  const isOpen = contract.status === "active" || contract.status === "paid_off";
   const canEdit = can(user, "contract:edit");
   const canCancel = can(user, "contract:cancel");
+  const canDefault = can(user, "contract:default");
 
   return (
     <Dialog ariaLabel={`Contrato ${contract.code}`} onClose={onClose}>
@@ -268,11 +273,12 @@ export function ContractPanel({
           Cerrar
         </button>
         {/* Shown only while there is something to act on. The server re-checks
-            both capabilities either way — hiding a button is convenience, not
-            security. Editing sits before cancelling because it is the far more
-            common of the two, and because the destructive one should not be
-            the button the hand goes to by default. */}
-        {isActive && canEdit && (
+            every capability either way — hiding a button is convenience, not
+            security. Editing sits first because it is by far the most common;
+            the destructive actions should not be where the hand goes by
+            default. "Editar términos" needs an active contract; closing one
+            works on a paid-off contract too. */}
+        {contract.status === "active" && canEdit && (
           <button
             type="button"
             className="btn-secondary"
@@ -281,7 +287,17 @@ export function ContractPanel({
             <span>Editar términos</span>
           </button>
         )}
-        {isActive && canCancel && (
+        {isOpen && canDefault && (
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => onDefaultContract(contract)}
+            title="El cliente ya no puede pagar: se libera el lote y se registra el incumplimiento."
+          >
+            <span>Marcar como incumplido</span>
+          </button>
+        )}
+        {isOpen && canCancel && (
           <button
             type="button"
             className="btn-danger"

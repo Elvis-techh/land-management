@@ -56,7 +56,7 @@ const projectsListQuery = (db: import("../db/client.js").Db, asOf: string) => {
       soldCount: sql<number>`
         (SELECT COUNT(*) FROM lots
          JOIN contracts ON contracts.lot_id = lots.id
-           AND contracts.status = 'active' AND contracts.kind = 'contract'
+           AND contracts.status IN ('active', 'paid_off') AND contracts.kind = 'contract'
          WHERE lots.project_id = projects.id AND lots.archived_at IS NULL)
       `,
     })

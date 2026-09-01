@@ -80,8 +80,8 @@ export const permissionRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(400).send({
           error: "locked_capability",
           message:
-            "Gestionar usuarios y editar permisos son exclusivos del supervisor y no se " +
-            "pueden ceder.",
+            "Gestionar usuarios, editar permisos y declarar un contrato incumplido son " +
+            "exclusivos del supervisor y no se pueden ceder.",
         });
       }
 

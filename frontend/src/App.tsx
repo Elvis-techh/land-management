@@ -18,7 +18,12 @@ import { ContractEditDialog } from "./features/contracts/ContractEditDialog";
 import { ContractPanel } from "./features/contracts/ContractPanel";
 import { ContractsPage } from "./features/contracts/ContractsPage";
 import { SplitPreviewDialog } from "./features/contracts/SplitPreviewDialog";
-import { cancelContract, createContract, updateContract } from "./features/contracts/api";
+import {
+  cancelContract,
+  createContract,
+  defaultContract,
+  updateContract,
+} from "./features/contracts/api";
 import type {
   CancelSettlement,
   ContractCreateDraft,
@@ -134,6 +139,7 @@ export default function App() {
   const [contractBeingViewed, setContractBeingViewed] = useState<Contract | null>(null);
   const [contractBeingEdited, setContractBeingEdited] = useState<Contract | null>(null);
   const [contractBeingCancelled, setContractBeingCancelled] = useState<Contract | null>(null);
+  const [contractBeingDefaulted, setContractBeingDefaulted] = useState<Contract | null>(null);
   // The lots of ONE purchase, while their split is being previewed.
   const [contractsBeingSplit, setContractsBeingSplit] = useState<Contract[] | null>(null);
 
@@ -346,23 +352,36 @@ export default function App() {
     setContractBeingViewed(null);
   };
 
+  // Cancelling or defaulting releases the lot, and the Lotes table derives
+  // availability from active contracts — so it is wrong on screen until it is
+  // re-read. A refund also reverses payments, which moves every balance and can
+  // void a receipt, so the money screens have to re-read too.
+  const reloadAfterClose = async () => {
+    await reloadContracts();
+    await reloadLots();
+    await reloadCustomers();
+    await reloadTransactions();
+    setContractBeingViewed(null);
+  };
+
   const handleCancelContract = async (reason: string, settlement?: CancelSettlement) => {
     if (!contractBeingCancelled) {
       return;
     }
 
     await cancelContract(contractBeingCancelled.id, reason, settlement).catch(handleApiError);
-
-    await reloadContracts();
-    // Cancelling releases the lot, and the Lotes table derives availability
-    // from active contracts — so it is wrong on screen until it is re-read. A
-    // refund also reverses payments, which moves every balance and can void a
-    // receipt, so the money screens have to re-read too.
-    await reloadLots();
-    await reloadCustomers();
-    await reloadTransactions();
+    await reloadAfterClose();
     setContractBeingCancelled(null);
-    setContractBeingViewed(null);
+  };
+
+  const handleDefaultContract = async (reason: string, settlement?: CancelSettlement) => {
+    if (!contractBeingDefaulted) {
+      return;
+    }
+
+    await defaultContract(contractBeingDefaulted.id, reason, settlement).catch(handleApiError);
+    await reloadAfterClose();
+    setContractBeingDefaulted(null);
   };
 
   const handleCreateContract = async (draft: ContractCreateDraft) => {
@@ -845,6 +864,7 @@ export default function App() {
           onClose={() => setContractBeingViewed(null)}
           onEditContract={setContractBeingEdited}
           onCancelContract={setContractBeingCancelled}
+          onDefaultContract={setContractBeingDefaulted}
         />
       )}
 
@@ -865,6 +885,17 @@ export default function App() {
           canRefund={can(user, "payment:reverse")}
           onCancel={() => setContractBeingCancelled(null)}
           onConfirm={handleCancelContract}
+        />
+      )}
+
+      {contractBeingDefaulted && (
+        <ContractCancelDialog
+          contract={contractBeingDefaulted}
+          money={money}
+          mode="default"
+          canRefund={can(user, "payment:reverse")}
+          onCancel={() => setContractBeingDefaulted(null)}
+          onConfirm={handleDefaultContract}
         />
       )}
 

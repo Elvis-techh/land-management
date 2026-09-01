@@ -6,7 +6,7 @@ import { z } from "zod";
 
 import { contracts, customers, lots, payments, projects } from "../db/schema.js";
 import { recordAudit } from "../lib/audit.js";
-import { activeHold } from "../lib/holding.js";
+import { openContract } from "../lib/holding.js";
 import { normalizePhone } from "../lib/phone.js";
 
 /** Today as a YYYY-MM-DD calendar date. */
@@ -20,10 +20,10 @@ const today = () => new Date().toISOString().slice(0, 10);
  * "2 contratos" written on the customer row is wrong the moment a contract is
  * cancelled, and nobody would ever find out.
  *
- * Cancelled and defaulted contracts are left out — they are the customer's
- * history. So is a reservation past its expiry date: the hold has lapsed and
- * the lot is free again, exactly as the lots list now derives it (see
- * `activeHold`).
+ * Cancelled, defaulted and paid-off contracts are left out — they are the
+ * customer's history, not what they are still paying on. So is a reservation
+ * past its expiry date: the hold has lapsed and the lot is free again. See
+ * `openContract`.
  */
 const activeContractsQuery = (db: import("../db/client.js").Db, asOf: string) =>
   db
@@ -49,7 +49,7 @@ const activeContractsQuery = (db: import("../db/client.js").Db, asOf: string) =>
     .from(contracts)
     .innerJoin(lots, eq(lots.id, contracts.lotId))
     .innerJoin(projects, eq(projects.id, lots.projectId))
-    .where(activeHold(asOf))
+    .where(openContract(asOf))
     .orderBy(asc(contracts.code));
 
 const customerBody = z.object({

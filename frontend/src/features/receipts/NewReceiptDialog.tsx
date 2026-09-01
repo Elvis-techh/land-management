@@ -111,16 +111,10 @@ export function NewReceiptDialog({
    */
   const [idempotencyKey] = useState(newIdempotencyKey);
 
-  // Only what this person is actually paying on. A cancelled contract does not
-  // take money, and a settled one has nothing left to take.
+  // Only what this person is actually paying on. A cancelled or defaulted
+  // contract does not take money, and a paid-off one has nothing left to take.
   const payable = useMemo(
-    () =>
-      contracts.filter(
-        (contract) =>
-          contract.customer.id === customerId &&
-          contract.status !== "cancelled" &&
-          contract.status !== "defaulted",
-      ),
+    () => contracts.filter((contract) => contract.customer.id === customerId && contract.status === "active"),
     [contracts, customerId],
   );
 

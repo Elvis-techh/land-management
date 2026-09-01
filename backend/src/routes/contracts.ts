@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { and, desc, eq, sql } from "drizzle-orm";
-import type { FastifyPluginAsync } from "fastify";
+import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 
 import type { Db } from "../db/client.js";
@@ -17,7 +17,8 @@ import {
   isReservationExpired,
 } from "../lib/contracts.js";
 import { roleCan } from "../lib/capabilities.js";
-import { activeHold } from "../lib/holding.js";
+import { syncContractLifecycle } from "../lib/contractLifecycle.js";
+import { holdsLot, openContract } from "../lib/holding.js";
 
 /** Today, as a calendar date. Every due date in the app is a date, not an instant. */
 const today = () => new Date().toISOString().slice(0, 10);
@@ -395,7 +396,7 @@ export const contractRoutes: FastifyPluginAsync = async (app) => {
       const asOf = today();
 
       const members = contractsListQuery(app.db)
-        .where(and(eq(contracts.saleGroupId, request.params.groupId), activeHold(asOf)))
+        .where(and(eq(contracts.saleGroupId, request.params.groupId), openContract(asOf)))
         .all()
         .map((row) => present(row, asOf));
 
@@ -481,12 +482,12 @@ export const contractRoutes: FastifyPluginAsync = async (app) => {
       // to two people, which no amount of care in the interface can prevent on
       // its own once two staff are entering contracts at the same time. A
       // reservation that has passed its expiry date is not a holder — the lot
-      // is free again — so a lapsed hold no longer blocks the sale it was
-      // meant to make room for.
+      // is free again — so a lapsed hold no longer blocks the sale it was meant
+      // to make room for. A paid-off contract still holds: the lot is sold.
       const holder = app.db
         .select({ code: contracts.code })
         .from(contracts)
-        .where(and(eq(contracts.lotId, lot.id), activeHold(today())))
+        .where(and(eq(contracts.lotId, lot.id), holdsLot(today())))
         .get();
 
       if (holder) {
@@ -638,12 +639,14 @@ export const contractRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(404).send({ error: "not_found", message: "Contrato no encontrado." });
       }
 
-      if (existing.status !== "active") {
-        // A cancelled or defaulted contract is history. Editing it would
-        // rewrite what the parties are recorded as having agreed.
+      if (existing.status === "cancelled" || existing.status === "defaulted") {
+        // A closed contract is history. Editing it would rewrite what the
+        // parties are recorded as having agreed. A `paid_off` contract, on the
+        // other hand, can still be corrected — a reprice upward reopens it (see
+        // the lifecycle sync below).
         return reply.code(409).send({
           error: "not_active",
-          message: "Solo se editan contratos vigentes. Este ya está cerrado.",
+          message: "Este contrato está cerrado y ya no admite cambios.",
         });
       }
 
@@ -745,6 +748,10 @@ export const contractRoutes: FastifyPluginAsync = async (app) => {
           },
         });
 
+        // A new price can push the balance to zero (settling the contract) or,
+        // on a paid-off contract repriced upward, reopen it.
+        syncContractLifecycle(tx, existing.id, actor.id);
+
         return next;
       });
 
@@ -753,175 +760,203 @@ export const contractRoutes: FastifyPluginAsync = async (app) => {
   );
 
   /**
-   * Cancel a contract and give the lot back.
+   * Close a contract — either a cancellation (a sale unwound) or a default (the
+   * customer declared unable to keep paying). The two share everything: the lot
+   * comes back on its own because availability is derived, nothing is deleted,
+   * and the same question is asked about money already paid — refund it, hold
+   * it, or keep it as income.
    *
-   * Nothing is deleted. The row stays, its payments stay, and the lot becomes
-   * available again by itself — availability is derived from active contracts,
-   * so releasing it is a consequence of the status change rather than a second
-   * write that could fail on its own.
+   * They differ only in the status written, the capability required, the audit
+   * action, and the wording. `close` is that shared body; the two routes below
+   * are thin.
    */
+  const close = async (
+    request: FastifyRequest<{ Params: { id: string } }>,
+    reply: FastifyReply,
+    kind: {
+      newStatus: "cancelled" | "defaulted";
+      action: "cancel" | "default";
+      /** e.g. "cancelar" / "declarar incumplido" — used in the 403 wording. */
+      verb: string;
+    },
+  ) => {
+    const parsed = cancelBody.safeParse(request.body);
+
+    if (!parsed.success) {
+      return reply.code(400).send({
+        error: "invalid_body",
+        message: "Explica el motivo con al menos 10 caracteres.",
+      });
+    }
+
+    const actor = request.user!;
+    const existing = app.db
+      .select()
+      .from(contracts)
+      .where(eq(contracts.id, request.params.id))
+      .get();
+
+    if (!existing) {
+      return reply.code(404).send({ error: "not_found", message: "Contrato no encontrado." });
+    }
+
+    // `active` or `paid_off` — both are contracts that still hold a lot and can
+    // be closed. An already-cancelled or defaulted one is done.
+    if (existing.status !== "active" && existing.status !== "paid_off") {
+      return reply.code(409).send({
+        error: "not_active",
+        message: "Ese contrato ya está cerrado.",
+      });
+    }
+
+    // Every non-reversed payment on this contract, with the receipt it sits on.
+    // What the customer has already paid, and what a "refund" would touch.
+    const contractPayments = app.db
+      .select({
+        id: payments.id,
+        amountCents: payments.amountCents,
+        receiptId: payments.receiptId,
+      })
+      .from(payments)
+      .where(and(eq(payments.contractId, existing.id), sql`${payments.reversedAt} IS NULL`))
+      .all();
+
+    const paidToDateCents = contractPayments.reduce((sum, p) => sum + p.amountCents, 0);
+
+    // The settlement question only exists once money has changed hands. With
+    // nothing paid there is nothing to decide, and `closed_settlement` stays null.
+    let settlement: "none" | "held" | "refunded" | null = null;
+
+    if (paidToDateCents > 0) {
+      if (!parsed.data.settlement) {
+        return reply.code(400).send({
+          error: "settlement_required",
+          message:
+            `${existing.code} tiene L ${(paidToDateCents / 100).toLocaleString("es-HN")} ` +
+            "pagados. Indica qué pasa con ese dinero: reembolso, retención temporal o " +
+            "que quede como ingreso.",
+        });
+      }
+
+      settlement = parsed.data.settlement;
+
+      // Reversing money is a bigger power than closing a contract, so the refund
+      // option carries its own capability.
+      if (settlement === "refunded" && !roleCan(app.db, actor.role, "payment:reverse")) {
+        return reply.code(403).send({
+          error: "forbidden",
+          message:
+            `Tu usuario puede ${kind.verb} contratos, pero no revertir pagos. ` +
+            "Elige otra opción o pide a un supervisor que registre el reembolso.",
+        });
+      }
+    }
+
+    const closedAt = new Date().toISOString();
+    const reversedPaymentIds: string[] = [];
+    const voidedReceiptIds: string[] = [];
+
+    app.db.transaction((tx) => {
+      tx.update(contracts)
+        .set({
+          status: kind.newStatus,
+          closedAt,
+          closedReason: parsed.data.reason,
+          closedSettlement: settlement,
+          updatedAt: closedAt,
+        })
+        .where(eq(contracts.id, existing.id))
+        .run();
+
+      if (settlement === "refunded" && contractPayments.length > 0) {
+        const note = `Contrato ${existing.code} ${
+          kind.newStatus === "defaulted" ? "incumplido" : "cancelado"
+        } con reembolso`;
+
+        // The payments keep their amount, date and rate — they just stop
+        // counting, exactly as a receipt void does. Every balance in the app
+        // already filters on `reversed_at IS NULL`.
+        tx.update(payments)
+          .set({ reversedAt: closedAt, reversedBy: actor.id, reversalReason: note })
+          .where(and(eq(payments.contractId, existing.id), sql`${payments.reversedAt} IS NULL`))
+          .run();
+
+        for (const p of contractPayments) {
+          reversedPaymentIds.push(p.id);
+        }
+
+        // A receipt whose payments were all for this contract now carries
+        // nothing — void it too, so it reads as a void rather than as a receipt
+        // whose numbers quietly shrank. A receipt shared with another lot (a
+        // sale group) keeps standing; only its closed line is gone.
+        const receiptIds = [
+          ...new Set(contractPayments.map((p) => p.receiptId).filter((x): x is string => !!x)),
+        ];
+
+        for (const receiptId of receiptIds) {
+          const stillActive = tx
+            .select({ n: sql<number>`COUNT(*)` })
+            .from(payments)
+            .where(and(eq(payments.receiptId, receiptId), sql`${payments.reversedAt} IS NULL`))
+            .get();
+
+          if ((stillActive?.n ?? 0) === 0) {
+            tx.update(receipts)
+              .set({ voidedAt: closedAt, voidReason: note, voidedBy: actor.id })
+              .where(and(eq(receipts.id, receiptId), sql`${receipts.voidedAt} IS NULL`))
+              .run();
+            voidedReceiptIds.push(receiptId);
+          }
+        }
+      }
+
+      recordAudit(tx, {
+        actorId: actor.id,
+        entityType: "contract",
+        entityId: existing.id,
+        action: kind.action,
+        reason: parsed.data.reason,
+        before: { status: existing.status, closedAt: null, paidToDateCents },
+        after: {
+          status: kind.newStatus,
+          closedAt,
+          settlement,
+          ...(settlement === "refunded"
+            ? { reversedPaymentIds, voidedReceiptIds, refundedCents: paidToDateCents }
+            : {}),
+        },
+      });
+    });
+
+    return reply.send({
+      ok: true,
+      closedAt,
+      paidToDateCents,
+      settlement,
+      refundedCents: settlement === "refunded" ? paidToDateCents : 0,
+    });
+  };
+
   app.post<{ Params: { id: string } }>(
     "/contracts/:id/cancel",
     { onRequest: app.requireCapability("contract:cancel") },
-    async (request, reply) => {
-      const parsed = cancelBody.safeParse(request.body);
+    (request, reply) => close(request, reply, { newStatus: "cancelled", action: "cancel", verb: "cancelar" }),
+  );
 
-      if (!parsed.success) {
-        return reply.code(400).send({
-          error: "invalid_body",
-          message: "Explica el motivo con al menos 10 caracteres.",
-        });
-      }
-
-      const actor = request.user!;
-      const existing = app.db
-        .select()
-        .from(contracts)
-        .where(eq(contracts.id, request.params.id))
-        .get();
-
-      if (!existing) {
-        return reply.code(404).send({ error: "not_found", message: "Contrato no encontrado." });
-      }
-
-      if (existing.status !== "active") {
-        return reply.code(409).send({
-          error: "not_active",
-          message: "Ese contrato ya no está vigente.",
-        });
-      }
-
-      // Every non-reversed payment on this contract, with the receipt it sits
-      // on. What the customer has already paid, and what a "refund" would touch.
-      const contractPayments = app.db
-        .select({
-          id: payments.id,
-          amountCents: payments.amountCents,
-          receiptId: payments.receiptId,
-        })
-        .from(payments)
-        .where(and(eq(payments.contractId, existing.id), sql`${payments.reversedAt} IS NULL`))
-        .all();
-
-      const paidToDateCents = contractPayments.reduce((sum, p) => sum + p.amountCents, 0);
-
-      // The settlement question only exists once money has changed hands. With
-      // nothing paid there is nothing to decide, and `closed_settlement` stays
-      // null.
-      let settlement: "none" | "held" | "refunded" | null = null;
-
-      if (paidToDateCents > 0) {
-        if (!parsed.data.settlement) {
-          return reply.code(400).send({
-            error: "settlement_required",
-            message:
-              `${existing.code} tiene L ${(paidToDateCents / 100).toLocaleString("es-HN")} ` +
-              "pagados. Indica qué pasa con ese dinero: reembolso, retención temporal o " +
-              "que quede como ingreso.",
-          });
-        }
-
-        settlement = parsed.data.settlement;
-
-        // Reversing money is a bigger power than cancelling a contract, so the
-        // refund option carries its own capability.
-        if (settlement === "refunded" && !roleCan(app.db, actor.role, "payment:reverse")) {
-          return reply.code(403).send({
-            error: "forbidden",
-            message:
-              "Tu usuario puede cancelar contratos, pero no revertir pagos. " +
-              "Elige otra opción o pide a un supervisor que registre el reembolso.",
-          });
-        }
-      }
-
-      const closedAt = new Date().toISOString();
-      const reversedPaymentIds: string[] = [];
-      const voidedReceiptIds: string[] = [];
-
-      app.db.transaction((tx) => {
-        tx.update(contracts)
-          .set({
-            status: "cancelled",
-            closedAt,
-            closedReason: parsed.data.reason,
-            closedSettlement: settlement,
-            updatedAt: closedAt,
-          })
-          .where(eq(contracts.id, existing.id))
-          .run();
-
-        if (settlement === "refunded" && contractPayments.length > 0) {
-          // The payments keep their amount, date and rate — they just stop
-          // counting, exactly as a receipt void does. Every balance in the app
-          // already filters on `reversed_at IS NULL`.
-          tx.update(payments)
-            .set({
-              reversedAt: closedAt,
-              reversedBy: actor.id,
-              reversalReason: `Contrato ${existing.code} cancelado con reembolso`,
-            })
-            .where(and(eq(payments.contractId, existing.id), sql`${payments.reversedAt} IS NULL`))
-            .run();
-
-          for (const p of contractPayments) {
-            reversedPaymentIds.push(p.id);
-          }
-
-          // A receipt whose payments were all for this contract now carries
-          // nothing — void it too, so it reads as a void rather than as a
-          // receipt whose numbers quietly shrank. A receipt shared with another
-          // lot (a sale group) keeps standing; only its cancelled line is gone.
-          const receiptIds = [
-            ...new Set(contractPayments.map((p) => p.receiptId).filter((x): x is string => !!x)),
-          ];
-
-          for (const receiptId of receiptIds) {
-            const stillActive = tx
-              .select({ n: sql<number>`COUNT(*)` })
-              .from(payments)
-              .where(and(eq(payments.receiptId, receiptId), sql`${payments.reversedAt} IS NULL`))
-              .get();
-
-            if ((stillActive?.n ?? 0) === 0) {
-              tx.update(receipts)
-                .set({
-                  voidedAt: closedAt,
-                  voidReason: `Contrato ${existing.code} cancelado con reembolso`,
-                  voidedBy: actor.id,
-                })
-                .where(and(eq(receipts.id, receiptId), sql`${receipts.voidedAt} IS NULL`))
-                .run();
-              voidedReceiptIds.push(receiptId);
-            }
-          }
-        }
-
-        recordAudit(tx, {
-          actorId: actor.id,
-          entityType: "contract",
-          entityId: existing.id,
-          action: "cancel",
-          reason: parsed.data.reason,
-          before: { status: existing.status, closedAt: null, paidToDateCents },
-          after: {
-            status: "cancelled",
-            closedAt,
-            settlement,
-            ...(settlement === "refunded"
-              ? { reversedPaymentIds, voidedReceiptIds, refundedCents: paidToDateCents }
-              : {}),
-          },
-        });
-      });
-
-      return reply.send({
-        ok: true,
-        closedAt,
-        paidToDateCents,
-        settlement,
-        refundedCents: settlement === "refunded" ? paidToDateCents : 0,
-      });
-    },
+  /**
+   * Declare a contract uncollectable — the customer defaulted.
+   *
+   * Distinct from a cancellation on purpose: a cancellation is a sale unwound
+   * by agreement, a default is the business writing off what it is owed. Owner
+   * only, and locked there (see LOCKED_CAPABILITIES) — it is a decision about
+   * money being given up on, not one to delegate. Everything else — the lot
+   * coming back, the settlement question, the refund path — is shared with
+   * cancellation.
+   */
+  app.post<{ Params: { id: string } }>(
+    "/contracts/:id/default",
+    { onRequest: app.requireCapability("contract:default") },
+    (request, reply) =>
+      close(request, reply, { newStatus: "defaulted", action: "default", verb: "declarar incumplidos" }),
   );
 };
