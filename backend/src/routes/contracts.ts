@@ -9,8 +9,15 @@ import { contracts, customers, lots, payments, projects } from "../db/schema.js"
 import { splitEvenly } from "../lib/allocation.js";
 import { recordAudit } from "../lib/audit.js";
 import type { ContractTerms, SaleType } from "../lib/contracts.js";
-import { assessContract, buildSchedule, financedCents, firstDueDate } from "../lib/contracts.js";
+import {
+  assessContract,
+  buildSchedule,
+  financedCents,
+  firstDueDate,
+  isReservationExpired,
+} from "../lib/contracts.js";
 import { roleCan } from "../lib/capabilities.js";
+import { activeHold } from "../lib/holding.js";
 
 /** Today, as a calendar date. Every due date in the app is a date, not an instant. */
 const today = () => new Date().toISOString().slice(0, 10);
@@ -110,6 +117,13 @@ function present(row: ContractRow, asOf: string) {
     kind: row.kind,
     saleType: row.saleType,
     status: row.status,
+    /**
+     * A reservation whose `expiresOn` has passed. The row still reads
+     * `status = 'active'` — nothing rewrites it — but the hold has lapsed: the
+     * lot is available again and the Contratos screen shows this one as
+     * "Vencida". Derived here, like every other status in the app.
+     */
+    expired: isReservationExpired(row.kind, row.expiresOn, asOf),
     lot: {
       id: row.lotId,
       code: row.lotCode,
@@ -277,20 +291,57 @@ function termsProblem(
  * Server-assigned and sequential. The unique index on `code` is what actually
  * guarantees no two contracts share a number; this makes the common case land
  * on the next free one instead of colliding.
+ *
+ * The suffix is compared as an INTEGER, not as text. A text sort puts
+ * "CT-2026-999" above "CT-2026-1000" — nine is a bigger character than one — so
+ * ordering by the string hands out 1000 a second time the moment the
+ * thousandth contract of a year exists, and every create after that collides
+ * on the unique index for the rest of the year. `substr(code, N)` takes
+ * everything after the `CT-YYYY-` prefix; `CAST(... AS INTEGER)` then makes 1000
+ * genuinely larger than 999.
+ *
+ * Takes any handle with `select` so it can run INSIDE the insert transaction,
+ * where the write lock keeps two racing creates from reading the same maximum.
  */
-function nextContractCode(db: Db, year: string): string {
+function nextContractCode(db: Pick<Db, "select">, year: string): string {
   const prefix = `CT-${year}-`;
 
-  const latest = db
-    .select({ code: contracts.code })
+  const row = db
+    .select({
+      max: sql<number | null>`MAX(CAST(substr(${contracts.code}, ${prefix.length + 1}) AS INTEGER))`,
+    })
     .from(contracts)
     .where(sql`${contracts.code} LIKE ${`${prefix}%`}`)
-    .orderBy(desc(contracts.code))
     .get();
 
-  const sequence = latest ? Number(latest.code.slice(prefix.length)) : 0;
+  return `${prefix}${String((row?.max ?? 0) + 1).padStart(3, "0")}`;
+}
 
-  return `${prefix}${String((Number.isFinite(sequence) ? sequence : 0) + 1).padStart(3, "0")}`;
+/** True for the SQLite error a violated UNIQUE index throws. */
+function isUniqueViolation(error: unknown): boolean {
+  if (typeof error === "object" && error !== null && "code" in error) {
+    return (error as { code?: unknown }).code === "SQLITE_CONSTRAINT_UNIQUE";
+  }
+  return String(error).includes("UNIQUE");
+}
+
+/**
+ * Run a write, and run it once more if it lost a race for a unique value.
+ *
+ * `nextContractCode` reads MAX(number) + 1 under the write lock, but two
+ * transactions can still both read the same maximum before either commits — the
+ * loser then hits the unique index on `code`. One retry recomputes against the
+ * row the winner just wrote and lands on the next free number.
+ */
+function withUniqueRetry<T>(run: () => T): T {
+  try {
+    return run();
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      return run();
+    }
+    throw error;
+  }
 }
 
 export const contractRoutes: FastifyPluginAsync = async (app) => {
@@ -328,9 +379,7 @@ export const contractRoutes: FastifyPluginAsync = async (app) => {
       const asOf = today();
 
       const members = contractsListQuery(app.db)
-        .where(
-          and(eq(contracts.saleGroupId, request.params.groupId), eq(contracts.status, "active")),
-        )
+        .where(and(eq(contracts.saleGroupId, request.params.groupId), activeHold(asOf)))
         .all()
         .map((row) => present(row, asOf));
 
@@ -414,11 +463,14 @@ export const contractRoutes: FastifyPluginAsync = async (app) => {
 
       // A lot can only be held once. This is what stops the same lot being sold
       // to two people, which no amount of care in the interface can prevent on
-      // its own once two staff are entering contracts at the same time.
+      // its own once two staff are entering contracts at the same time. A
+      // reservation that has passed its expiry date is not a holder — the lot
+      // is free again — so a lapsed hold no longer blocks the sale it was
+      // meant to make room for.
       const holder = app.db
         .select({ code: contracts.code })
         .from(contracts)
-        .where(and(eq(contracts.lotId, lot.id), eq(contracts.status, "active")))
+        .where(and(eq(contracts.lotId, lot.id), activeHold(today())))
         .get();
 
       if (holder) {
@@ -465,68 +517,73 @@ export const contractRoutes: FastifyPluginAsync = async (app) => {
       }
 
       const now = new Date().toISOString();
-      const code = nextContractCode(app.db, parsed.data.signedOn.slice(0, 4));
+      const year = parsed.data.signedOn.slice(0, 4);
 
-      const created = app.db.transaction((tx) => {
-        // The first lot of a purchase was written before anybody knew a second
-        // one was coming, so it has no group id. Stamping it here is what turns
-        // two separate contracts into one purchase.
-        if (groupSeed && groupSeed.saleGroupId === null && saleGroupId !== null) {
-          tx.update(contracts)
-            .set({ saleGroupId, updatedAt: now })
-            .where(eq(contracts.id, groupSeed.id))
-            .run();
-        }
+      // The number is allocated INSIDE the transaction that inserts, under the
+      // write lock, and the whole thing retries once if it still races another
+      // create onto the same number — see `withUniqueRetry`.
+      const created = withUniqueRetry(() =>
+        app.db.transaction((tx) => {
+          // The first lot of a purchase was written before anybody knew a
+          // second one was coming, so it has no group id. Stamping it here is
+          // what turns two separate contracts into one purchase.
+          if (groupSeed && groupSeed.saleGroupId === null && saleGroupId !== null) {
+            tx.update(contracts)
+              .set({ saleGroupId, updatedAt: now })
+              .where(eq(contracts.id, groupSeed.id))
+              .run();
+          }
 
-        const next = tx
-          .insert(contracts)
-          .values({
-            id: randomUUID(),
-            code,
-            lotId: lot.id,
-            customerId: customer.id,
-            saleGroupId,
-            kind: parsed.data.kind,
-            saleType: parsed.data.saleType,
-            status: "active",
-            salePriceCents: parsed.data.salePriceCents,
-            downPaymentCents: parsed.data.downPaymentCents,
-            termMonths: parsed.data.termMonths ?? null,
-            monthlyPaymentCents: parsed.data.monthlyPaymentCents ?? null,
-            dueDay: parsed.data.dueDay ?? null,
-            signedOn: parsed.data.signedOn,
-            firstDueOn: parsed.data.firstDueOn ?? null,
-            expiresOn: parsed.data.expiresOn ?? null,
-            notes: parsed.data.notes ?? null,
-            createdAt: now,
-            updatedAt: now,
-          })
-          .returning()
-          .get();
+          const next = tx
+            .insert(contracts)
+            .values({
+              id: randomUUID(),
+              code: nextContractCode(tx, year),
+              lotId: lot.id,
+              customerId: customer.id,
+              saleGroupId,
+              kind: parsed.data.kind,
+              saleType: parsed.data.saleType,
+              status: "active",
+              salePriceCents: parsed.data.salePriceCents,
+              downPaymentCents: parsed.data.downPaymentCents,
+              termMonths: parsed.data.termMonths ?? null,
+              monthlyPaymentCents: parsed.data.monthlyPaymentCents ?? null,
+              dueDay: parsed.data.dueDay ?? null,
+              signedOn: parsed.data.signedOn,
+              firstDueOn: parsed.data.firstDueOn ?? null,
+              expiresOn: parsed.data.expiresOn ?? null,
+              notes: parsed.data.notes ?? null,
+              createdAt: now,
+              updatedAt: now,
+            })
+            .returning()
+            .get();
 
-        recordAudit(tx, {
-          actorId: actor.id,
-          entityType: "contract",
-          entityId: next.id,
-          action: "create",
-          after: {
-            code: next.code,
-            lotId: next.lotId,
-            customerId: next.customerId,
-            saleGroupId: next.saleGroupId,
-            kind: next.kind,
-            saleType: next.saleType,
-            salePriceCents: next.salePriceCents,
-            downPaymentCents: next.downPaymentCents,
-            termMonths: next.termMonths,
-            monthlyPaymentCents: next.monthlyPaymentCents,
-            dueDay: next.dueDay,
-            signedOn: next.signedOn,
-          },
-        });
+          recordAudit(tx, {
+            actorId: actor.id,
+            entityType: "contract",
+            entityId: next.id,
+            action: "create",
+            after: {
+              code: next.code,
+              lotId: next.lotId,
+              customerId: next.customerId,
+              saleGroupId: next.saleGroupId,
+              kind: next.kind,
+              saleType: next.saleType,
+              salePriceCents: next.salePriceCents,
+              downPaymentCents: next.downPaymentCents,
+              termMonths: next.termMonths,
+              monthlyPaymentCents: next.monthlyPaymentCents,
+              dueDay: next.dueDay,
+              signedOn: next.signedOn,
+            },
+          });
 
-        return next;
-      });
+          return next;
+        }),
+      );
 
       return reply.code(201).send({
         contract: { id: created.id, code: created.code, saleGroupId: created.saleGroupId },
@@ -718,6 +775,18 @@ export const contractRoutes: FastifyPluginAsync = async (app) => {
         });
       }
 
+      // What the customer had paid in when the contract was cancelled. The
+      // money is not touched here — cancelling releases the lot and nothing
+      // else — but the audit entry is the only place that later answers "how
+      // much was on this contract when it was closed", which is the first
+      // question a refund or forfeit conversation starts from.
+      const paidToDateCents =
+        app.db
+          .select({ total: sql<number>`COALESCE(SUM(${payments.amountCents}), 0)` })
+          .from(payments)
+          .where(and(eq(payments.contractId, existing.id), sql`${payments.reversedAt} IS NULL`))
+          .get()?.total ?? 0;
+
       const closedAt = new Date().toISOString();
 
       app.db.transaction((tx) => {
@@ -737,12 +806,12 @@ export const contractRoutes: FastifyPluginAsync = async (app) => {
           entityId: existing.id,
           action: "cancel",
           reason: parsed.data.reason,
-          before: { status: existing.status, closedAt: null },
+          before: { status: existing.status, closedAt: null, paidToDateCents },
           after: { status: "cancelled", closedAt },
         });
       });
 
-      return reply.send({ ok: true, closedAt });
+      return reply.send({ ok: true, closedAt, paidToDateCents });
     },
   );
 };

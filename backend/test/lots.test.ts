@@ -295,4 +295,63 @@ describe("lots", async () => {
       assert.equal(response.statusCode, 404);
     });
   });
+
+  describe("restoring an archived lot", () => {
+    // ids.freeLotId ("A-02") was archived in the block above.
+    it("brings it back into the working inventory", async () => {
+      const response = await app.inject({
+        method: "POST",
+        url: `/api/lots/${ids.freeLotId}/restore`,
+        headers: { cookie: ownerCookie },
+      });
+
+      assert.equal(response.statusCode, 200);
+
+      const row = db.select().from(lots).where(eq(lots.id, ids.freeLotId)).get();
+      assert.equal(row?.archivedAt, null);
+      assert.equal(row?.archiveReason, null);
+
+      const body = (await listLots(ownerCookie)).json();
+      assert.equal(body.lots.some((lot: { code: string }) => lot.code === "A-02"), true);
+    });
+
+    it("records the restore in the audit trail", async () => {
+      const restored = db
+        .select()
+        .from(auditEvents)
+        .where(eq(auditEvents.entityId, ids.freeLotId))
+        .all()
+        .find((row) => row.action === "restore");
+
+      assert.ok(restored, "a restore must be audited");
+    });
+
+    it("forbids staff from restoring", async () => {
+      // Archive it again first (as owner), then try to restore as staff.
+      await app.inject({
+        method: "POST",
+        url: `/api/lots/${ids.freeLotId}/archive`,
+        headers: { cookie: ownerCookie },
+        payload: { reason: "Archivado de nuevo para la prueba." },
+      });
+
+      const response = await app.inject({
+        method: "POST",
+        url: `/api/lots/${ids.freeLotId}/restore`,
+        headers: { cookie: staffCookie },
+      });
+
+      assert.equal(response.statusCode, 403);
+    });
+
+    it("404s for a lot that is not archived", async () => {
+      const response = await app.inject({
+        method: "POST",
+        url: `/api/lots/${ids.heldLotId}/restore`,
+        headers: { cookie: ownerCookie },
+      });
+
+      assert.equal(response.statusCode, 404);
+    });
+  });
 });

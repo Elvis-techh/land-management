@@ -1,4 +1,4 @@
-import { desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 
@@ -7,7 +7,11 @@ import { contracts, customers, lots, payments, projects, receipts, users } from 
 import { splitEvenly } from "../lib/allocation.js";
 import type { AllocationTarget } from "../lib/allocation.js";
 import { recordAudit } from "../lib/audit.js";
+import { activeHold } from "../lib/holding.js";
 import { replayContract } from "../lib/ledger.js";
+
+/** Today as a YYYY-MM-DD calendar date. */
+const today = () => new Date().toISOString().slice(0, 10);
 
 const PAYMENT_METHODS = ["cash", "transfer", "card"] as const;
 const PAYMENT_TYPES = ["down_payment", "installment", "full_payment", "adjustment"] as const;
@@ -161,7 +165,9 @@ export const transactionRoutes: FastifyPluginAsync = async (app) => {
         .from(contracts)
         .innerJoin(lots, eq(lots.id, contracts.lotId))
         .innerJoin(projects, eq(projects.id, lots.projectId))
-        .where(sql`${contracts.customerId} = ${request.params.id} AND ${contracts.status} = 'active'`)
+        // Active contracts only, and an expired reservation does not count —
+        // the same "actively holding" rule the lots list derives.
+        .where(and(eq(contracts.customerId, request.params.id), activeHold(today())))
         .all();
 
       const targets: AllocationTarget[] = open.map((contract) => ({

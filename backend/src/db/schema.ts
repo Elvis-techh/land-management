@@ -298,7 +298,14 @@ export const contracts = sqliteTable(
      * lot simply going quiet.
      */
     saleType: text("sale_type").notNull().default("financed"),
-    /** "draft" | "active" | "paid_off" | "cancelled" | "defaulted" */
+    /**
+     * "draft" | "active" | "paid_off" | "cancelled" | "defaulted"
+     *
+     * Only `active` and `cancelled` are written today. A contract that owes
+     * nothing is shown as paid from its derived balance rather than by storing
+     * `paid_off`; `defaulted` and `draft` are reserved for lifecycle rules that
+     * still need to be agreed with the business. See docs/architecture.md.
+     */
     status: text("status").notNull().default("active"),
     /**
      * The agreed price for THIS sale, which is independent of the lot's current

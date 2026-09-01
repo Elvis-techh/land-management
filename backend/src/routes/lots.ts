@@ -7,6 +7,10 @@ import { z } from "zod";
 import { contracts, customers, lots, payments, projects } from "../db/schema.js";
 import { recordAudit } from "../lib/audit.js";
 import { roleCan } from "../lib/capabilities.js";
+import { activeHold } from "../lib/holding.js";
+
+/** Today as a YYYY-MM-DD calendar date — every "is it expired yet" question is a date. */
+const today = () => new Date().toISOString().slice(0, 10);
 
 /**
  * The lots list, shaped exactly as the table needs it.
@@ -19,7 +23,7 @@ import { roleCan } from "../lib/capabilities.js";
  * - `paidToDate` is the sum of the contract's non-reversed payments. Nobody
  *   types a balance in Lindero.
  */
-const lotsListQuery = (db: import("../db/client.js").Db) =>
+const lotsListQuery = (db: import("../db/client.js").Db, asOf: string) =>
   db
     .select({
       id: lots.id,
@@ -46,11 +50,9 @@ const lotsListQuery = (db: import("../db/client.js").Db) =>
     .from(lots)
     .innerJoin(projects, eq(projects.id, lots.projectId))
     // A lot has at most one contract that is holding it. Cancelled and
-    // defaulted contracts release the lot, so they are excluded here.
-    .leftJoin(
-      contracts,
-      and(eq(contracts.lotId, lots.id), eq(contracts.status, "active")),
-    )
+    // defaulted contracts release the lot; so does a reservation that has
+    // passed its expiry date — see `activeHold`.
+    .leftJoin(contracts, and(eq(contracts.lotId, lots.id), activeHold(asOf)))
     .leftJoin(customers, eq(customers.id, contracts.customerId));
 
 /**
@@ -124,55 +126,66 @@ const archiveLotBody = z.object({
 });
 
 export const lotRoutes: FastifyPluginAsync = async (app) => {
-  app.get("/lots", { onRequest: app.requireUser }, async (request, reply) => {
-    const rows = lotsListQuery(app.db).where(isNull(lots.archivedAt)).all();
+  app.get<{ Querystring: { includeArchived?: string } }>(
+    "/lots",
+    { onRequest: app.requireUser },
+    async (request, reply) => {
+      // Archived lots are hidden from the working inventory by default — they
+      // are not for sale. `?includeArchived=true` brings them back so the Lotes
+      // screen can offer a restore, exactly as the Proyectos screen does.
+      const includeArchived = request.query.includeArchived === "true";
 
-    return reply.send({
-      lots: rows.map((row) => ({
-        id: row.id,
-        code: row.code,
-        projectName: row.projectName,
-        areaM2: row.areaM2,
-        basePrice: row.basePriceCents,
-        archivedAt: row.archivedAt,
-        holding:
-          row.contractId && row.customerId
-            ? {
-                contractId: row.contractId,
-                contractCode: row.contractCode,
-                customerId: row.customerId,
-                kind: row.contractKind,
-                salePrice: row.salePriceCents,
-                paidToDate: row.paidToDateCents,
-              }
-            : null,
-      })),
-      // Sent alongside so the table can render customer names without a second
-      // request per row.
-      customers: app.db
-        .select({
-          id: customers.id,
-          fullName: customers.fullName,
-          identification: customers.identification,
-          phone: customers.phone,
-          email: customers.email,
-          address: customers.address,
-          customerSince: customers.customerSince,
-          notes: customers.notes,
-        })
-        .from(customers)
-        .all(),
-      // The projects a lot may be filed under: every ACTIVE one, including
-      // those with no lots yet, since a new project starts empty. Archived
-      // projects are left out — nothing new should be added to them.
-      projects: app.db
-        .select({ id: projects.id, name: projects.name, areaUnit: projects.areaUnit })
-        .from(projects)
-        .where(isNull(projects.archivedAt))
-        .orderBy(projects.name)
-        .all(),
-    });
-  });
+      const rows = lotsListQuery(app.db, today())
+        .where(includeArchived ? undefined : isNull(lots.archivedAt))
+        .all();
+
+      return reply.send({
+        lots: rows.map((row) => ({
+          id: row.id,
+          code: row.code,
+          projectName: row.projectName,
+          areaM2: row.areaM2,
+          basePrice: row.basePriceCents,
+          archivedAt: row.archivedAt,
+          holding:
+            row.contractId && row.customerId
+              ? {
+                  contractId: row.contractId,
+                  contractCode: row.contractCode,
+                  customerId: row.customerId,
+                  kind: row.contractKind,
+                  salePrice: row.salePriceCents,
+                  paidToDate: row.paidToDateCents,
+                }
+              : null,
+        })),
+        // Sent alongside so the table can render customer names without a
+        // second request per row.
+        customers: app.db
+          .select({
+            id: customers.id,
+            fullName: customers.fullName,
+            identification: customers.identification,
+            phone: customers.phone,
+            email: customers.email,
+            address: customers.address,
+            customerSince: customers.customerSince,
+            notes: customers.notes,
+          })
+          .from(customers)
+          .all(),
+        // The projects a lot may be filed under: every ACTIVE one, including
+        // those with no lots yet, since a new project starts empty. Archived
+        // projects are left out — nothing new should be added to them.
+        projects: app.db
+          .select({ id: projects.id, name: projects.name, areaUnit: projects.areaUnit })
+          .from(projects)
+          .where(isNull(projects.archivedAt))
+          .orderBy(projects.name)
+          .all(),
+      });
+    },
+  );
 
   app.post("/lots", { onRequest: app.requireCapability("lot:create") }, async (request, reply) => {
     const parsed = createLotBody.safeParse(request.body);
@@ -417,6 +430,74 @@ export const lotRoutes: FastifyPluginAsync = async (app) => {
       });
 
       return reply.send({ ok: true, archivedAt });
+    },
+  );
+
+  /**
+   * Bring an archived lot back into the working inventory.
+   *
+   * Archiving a lot never destroys anything — the row, its number and its
+   * history all stay — so it is reversible, exactly like restoring a project.
+   * This is also what the "restaura ese lote" advice in `lotCodeClash` refers
+   * to: a lot number stays reserved by its archived lot, and the way to free it
+   * is to restore that lot rather than to invent a second one.
+   */
+  app.post<{ Params: { id: string } }>(
+    "/lots/:id/restore",
+    { onRequest: app.requireCapability("lot:archive") },
+    async (request, reply) => {
+      const actor = request.user!;
+      const existing = app.db.select().from(lots).where(eq(lots.id, request.params.id)).get();
+
+      if (!existing || existing.archivedAt === null) {
+        return reply
+          .code(404)
+          .send({ error: "not_found", message: "Lote archivado no encontrado." });
+      }
+
+      // A lot's number is unique within its project, archived lots included, so
+      // an active lot cannot have taken the number in the meantime — but the
+      // check costs nothing and the message it produces is the useful one.
+      const clash = app.db
+        .select({ id: lots.id })
+        .from(lots)
+        .where(
+          and(
+            eq(lots.projectId, existing.projectId),
+            eq(lots.code, existing.code),
+            isNull(lots.archivedAt),
+          ),
+        )
+        .get();
+
+      if (clash) {
+        return reply.code(409).send({
+          error: "duplicate_code",
+          message:
+            `No se puede restaurar: ya hay un lote activo con el número ${existing.code} ` +
+            "en este proyecto.",
+        });
+      }
+
+      const now = new Date().toISOString();
+
+      app.db.transaction((tx) => {
+        tx.update(lots)
+          .set({ archivedAt: null, archiveReason: null, updatedAt: now })
+          .where(eq(lots.id, existing.id))
+          .run();
+
+        recordAudit(tx, {
+          actorId: actor.id,
+          entityType: "lot",
+          entityId: existing.id,
+          action: "restore",
+          before: { archivedAt: existing.archivedAt },
+          after: { archivedAt: null },
+        });
+      });
+
+      return reply.send({ ok: true });
     },
   );
 };

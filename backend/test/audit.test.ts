@@ -163,6 +163,66 @@ describe("audit history endpoint", async () => {
     );
   });
 
+  it("reports the FILTERED total, not the grand total", async () => {
+    // A customer edit, so the log holds events of more than one type.
+    await app.inject({
+      method: "PATCH",
+      url: `/api/customers/${ids.customerId}`,
+      headers: { cookie: ownerCookie },
+      payload: {
+        fullName: "Cliente Prueba",
+        identification: "0801-1990-00001",
+        phone: "9999-0000",
+        customerSince: 2024,
+        notes: "Actualizado para la prueba de auditoría.",
+      },
+    });
+
+    const unfiltered = (
+      await app.inject({ method: "GET", url: "/api/audit", headers: { cookie: ownerCookie } })
+    ).json();
+
+    const lotsOnly = (
+      await app.inject({
+        method: "GET",
+        url: "/api/audit?entityType=lot&limit=200",
+        headers: { cookie: ownerCookie },
+      })
+    ).json();
+
+    // The bug: total counted every row while the page counted only lot rows, so
+    // the screen offered pages that did not exist.
+    assert.equal(
+      lotsOnly.total,
+      lotsOnly.events.length,
+      "a filtered response's total must match the rows it actually has",
+    );
+    assert.ok(unfiltered.total > lotsOnly.total, "the grand total is larger than one type's");
+  });
+
+  it("can filter for a project event", async () => {
+    await app.inject({
+      method: "POST",
+      url: "/api/projects",
+      headers: { cookie: ownerCookie },
+      payload: { name: "Proyecto Auditoría", areaUnit: "m2" },
+    });
+
+    const body = (
+      await app.inject({
+        method: "GET",
+        url: "/api/audit?entityType=project",
+        headers: { cookie: ownerCookie },
+      })
+    ).json();
+
+    assert.ok(body.events.length > 0, "project events used to be unfilterable");
+    assert.ok(
+      body.events.every((event: { entityType: string }) => event.entityType === "project"),
+    );
+    assert.equal(body.events[0].entityLabel, "Proyecto Auditoría");
+  });
+
   it("paginates", async () => {
     const first = (
       await app.inject({

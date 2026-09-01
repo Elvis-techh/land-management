@@ -6,7 +6,11 @@ import { z } from "zod";
 
 import { contracts, customers, lots, payments, projects } from "../db/schema.js";
 import { recordAudit } from "../lib/audit.js";
+import { activeHold } from "../lib/holding.js";
 import { normalizePhone } from "../lib/phone.js";
+
+/** Today as a YYYY-MM-DD calendar date. */
+const today = () => new Date().toISOString().slice(0, 10);
 
 /**
  * Every customer's ACTIVE contracts, in one query.
@@ -16,11 +20,12 @@ import { normalizePhone } from "../lib/phone.js";
  * "2 contratos" written on the customer row is wrong the moment a contract is
  * cancelled, and nobody would ever find out.
  *
- * Cancelled, defaulted and paid-off contracts are left out on purpose — they
- * belong to the customer's history, which the contract screen will show, not to
- * "what is this person holding right now".
+ * Cancelled and defaulted contracts are left out — they are the customer's
+ * history. So is a reservation past its expiry date: the hold has lapsed and
+ * the lot is free again, exactly as the lots list now derives it (see
+ * `activeHold`).
  */
-const activeContractsQuery = (db: import("../db/client.js").Db) =>
+const activeContractsQuery = (db: import("../db/client.js").Db, asOf: string) =>
   db
     .select({
       customerId: contracts.customerId,
@@ -44,7 +49,7 @@ const activeContractsQuery = (db: import("../db/client.js").Db) =>
     .from(contracts)
     .innerJoin(lots, eq(lots.id, contracts.lotId))
     .innerJoin(projects, eq(projects.id, lots.projectId))
-    .where(eq(contracts.status, "active"))
+    .where(activeHold(asOf))
     .orderBy(asc(contracts.code));
 
 const customerBody = z.object({
@@ -111,7 +116,7 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
     // customer. The list is small, but the shape of the mistake is not.
     const byCustomer = new Map<string, Array<Record<string, unknown>>>();
 
-    for (const row of activeContractsQuery(app.db).all()) {
+    for (const row of activeContractsQuery(app.db, today()).all()) {
       const list = byCustomer.get(row.customerId) ?? [];
 
       list.push({
