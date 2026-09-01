@@ -14,7 +14,8 @@
     "db:migrate": "tsx --env-file-if-exists=.env src/db/migrate.ts",
     "db:seed": "tsx --env-file-if-exists=.env src/db/seed.ts",
     "db:studio": "drizzle-kit studio",
-    "db:reset": "tsx --env-file-if-exists=.env src/db/reset.ts && npm run db:migrate && npm run db:seed"
+    "db:reset": "tsx --env-file-if-exists=.env src/db/reset.ts && npm run db:migrate && npm run db:seed",
+    "db:backup": "node scripts/backup.mjs"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.2",
