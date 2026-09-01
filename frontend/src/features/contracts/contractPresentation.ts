@@ -62,6 +62,13 @@ export const SALE_TYPE_LABELS: Record<SaleType, string> = {
   donation: "Donación",
 };
 
+/** What became of money already paid, when a contract was cancelled. */
+export const SETTLEMENT_LABELS: Record<"none" | "held" | "refunded", string> = {
+  none: "Quedó como ingreso",
+  held: "Retenido temporalmente",
+  refunded: "Reembolsado al cliente",
+};
+
 /** A hold versus a signed sale. */
 export const KIND_LABELS: Record<Contract["kind"], string> = {
   reservation: "Reserva",

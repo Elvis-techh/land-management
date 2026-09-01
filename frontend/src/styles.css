@@ -2216,6 +2216,65 @@ body.modal-open {
   font-weight: 500;
 }
 
+/* The "where does the money go" choice on the cancel dialog. */
+.settlement-choice {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settlement-choice legend {
+  color: var(--text-primary);
+  font-size: 0.7812rem;
+  font-weight: 500;
+  padding: 0;
+  margin-bottom: 2px;
+}
+
+.settlement-option {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 9px 11px;
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.12));
+  border-radius: 9px;
+  cursor: pointer;
+  font-size: 0.8125rem;
+}
+
+.settlement-option:has(input:checked) {
+  border-color: var(--ink);
+  background: var(--surface-sunken, rgba(0, 0, 0, 0.03));
+}
+
+.settlement-option.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.settlement-option input {
+  margin-top: 2px;
+  width: 15px;
+  height: 15px;
+  accent-color: var(--ink);
+}
+
+.settlement-title {
+  display: block;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.settlement-detail {
+  display: block;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  margin-top: 1px;
+}
+
 .required-mark {
   color: var(--red-dark);
 }

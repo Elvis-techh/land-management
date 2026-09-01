@@ -365,6 +365,14 @@ export const contracts = sqliteTable(
      */
     closedAt: text("closed_at"),
     closedReason: text("closed_reason"),
+    /**
+     * What was decided about money the customer had already paid, when the
+     * contract was cancelled: "none" (it stays as income), "held" (retained
+     * while a decision is pending), or "refunded" (the payments were reversed,
+     * so they no longer count anywhere). Null when nothing had been paid, or
+     * for a contract that is still active.
+     */
+    closedSettlement: text("closed_settlement"),
     /** What was agreed verbally, and anything the columns above cannot hold. */
     notes: text("notes"),
     createdAt: timestamp("created_at"),

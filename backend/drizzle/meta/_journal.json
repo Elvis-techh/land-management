@@ -50,6 +50,13 @@
       "when": 1788131061244,
       "tag": "0006_attachments",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1788300239380,
+      "tag": "0007_contract_settlement",
+      "breakpoints": true
     }
   ]
 }

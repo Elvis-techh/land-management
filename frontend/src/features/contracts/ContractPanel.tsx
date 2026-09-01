@@ -11,6 +11,7 @@ import {
   HEALTH_PRESENTATION,
   KIND_LABELS,
   SALE_TYPE_LABELS,
+  SETTLEMENT_LABELS,
   STATUS_PRESENTATION,
   formatDate,
   healthDetail,
@@ -244,6 +245,12 @@ export function ContractPanel({
             <div className="cp-row">
               <span>Motivo del cierre</span>
               <span>{contract.closedReason ?? "—"}</span>
+            </div>
+          )}
+          {contract.closedSettlement && (
+            <div className="cp-row">
+              <span>Lo ya pagado</span>
+              <span>{SETTLEMENT_LABELS[contract.closedSettlement]}</span>
             </div>
           )}
         </section>

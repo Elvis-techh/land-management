@@ -275,6 +275,13 @@ export interface Contract {
   installmentCount: number;
   closedAt: string | null;
   closedReason: string | null;
+  /**
+   * What was decided about money already paid, when the contract was
+   * cancelled: `"none"` (kept as income), `"held"` (retained, decision
+   * pending), or `"refunded"` (payments reversed). `null` when nothing had
+   * been paid, or the contract is still active.
+   */
+  closedSettlement: "none" | "held" | "refunded" | null;
   notes: string | null;
 }
 

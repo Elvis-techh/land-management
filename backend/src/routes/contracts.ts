@@ -5,7 +5,7 @@ import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 
 import type { Db } from "../db/client.js";
-import { contracts, customers, lots, payments, projects } from "../db/schema.js";
+import { contracts, customers, lots, payments, projects, receipts } from "../db/schema.js";
 import { splitEvenly } from "../lib/allocation.js";
 import { recordAudit } from "../lib/audit.js";
 import type { ContractTerms, SaleType } from "../lib/contracts.js";
@@ -50,6 +50,7 @@ const contractsListQuery = (db: Db) =>
       expiresOn: contracts.expiresOn,
       closedAt: contracts.closedAt,
       closedReason: contracts.closedReason,
+      closedSettlement: contracts.closedSettlement,
       notes: contracts.notes,
       createdAt: contracts.createdAt,
       lotId: lots.id,
@@ -174,6 +175,8 @@ function present(row: ContractRow, asOf: string) {
     installmentCount: buildSchedule(terms).length,
     closedAt: row.closedAt,
     closedReason: row.closedReason,
+    /** "none" | "held" | "refunded" — what became of money paid, on cancellation. */
+    closedSettlement: row.closedSettlement,
     notes: row.notes,
   };
 }
@@ -227,6 +230,19 @@ const updateBody = contractBody
 
 const cancelBody = z.object({
   reason: z.string().trim().min(10).max(500),
+  /**
+   * What happens to money the customer has already paid:
+   *
+   * - "none"     — it stays as income; nothing is reversed.
+   * - "held"     — it stays counted for now, flagged for a decision later.
+   * - "refunded" — the payments are reversed here and now, so they stop
+   *                counting anywhere, and any receipt they fully covered is
+   *                voided. Needs the `payment:reverse` capability.
+   *
+   * Required when anything has been paid — the handler rejects a missing one
+   * with `settlement_required` rather than the schema, so it can say why.
+   */
+  settlement: z.enum(["none", "held", "refunded"]).optional(),
 });
 
 /**
@@ -775,19 +791,53 @@ export const contractRoutes: FastifyPluginAsync = async (app) => {
         });
       }
 
-      // What the customer had paid in when the contract was cancelled. The
-      // money is not touched here — cancelling releases the lot and nothing
-      // else — but the audit entry is the only place that later answers "how
-      // much was on this contract when it was closed", which is the first
-      // question a refund or forfeit conversation starts from.
-      const paidToDateCents =
-        app.db
-          .select({ total: sql<number>`COALESCE(SUM(${payments.amountCents}), 0)` })
-          .from(payments)
-          .where(and(eq(payments.contractId, existing.id), sql`${payments.reversedAt} IS NULL`))
-          .get()?.total ?? 0;
+      // Every non-reversed payment on this contract, with the receipt it sits
+      // on. What the customer has already paid, and what a "refund" would touch.
+      const contractPayments = app.db
+        .select({
+          id: payments.id,
+          amountCents: payments.amountCents,
+          receiptId: payments.receiptId,
+        })
+        .from(payments)
+        .where(and(eq(payments.contractId, existing.id), sql`${payments.reversedAt} IS NULL`))
+        .all();
+
+      const paidToDateCents = contractPayments.reduce((sum, p) => sum + p.amountCents, 0);
+
+      // The settlement question only exists once money has changed hands. With
+      // nothing paid there is nothing to decide, and `closed_settlement` stays
+      // null.
+      let settlement: "none" | "held" | "refunded" | null = null;
+
+      if (paidToDateCents > 0) {
+        if (!parsed.data.settlement) {
+          return reply.code(400).send({
+            error: "settlement_required",
+            message:
+              `${existing.code} tiene L ${(paidToDateCents / 100).toLocaleString("es-HN")} ` +
+              "pagados. Indica qué pasa con ese dinero: reembolso, retención temporal o " +
+              "que quede como ingreso.",
+          });
+        }
+
+        settlement = parsed.data.settlement;
+
+        // Reversing money is a bigger power than cancelling a contract, so the
+        // refund option carries its own capability.
+        if (settlement === "refunded" && !roleCan(app.db, actor.role, "payment:reverse")) {
+          return reply.code(403).send({
+            error: "forbidden",
+            message:
+              "Tu usuario puede cancelar contratos, pero no revertir pagos. " +
+              "Elige otra opción o pide a un supervisor que registre el reembolso.",
+          });
+        }
+      }
 
       const closedAt = new Date().toISOString();
+      const reversedPaymentIds: string[] = [];
+      const voidedReceiptIds: string[] = [];
 
       app.db.transaction((tx) => {
         tx.update(contracts)
@@ -795,10 +845,57 @@ export const contractRoutes: FastifyPluginAsync = async (app) => {
             status: "cancelled",
             closedAt,
             closedReason: parsed.data.reason,
+            closedSettlement: settlement,
             updatedAt: closedAt,
           })
           .where(eq(contracts.id, existing.id))
           .run();
+
+        if (settlement === "refunded" && contractPayments.length > 0) {
+          // The payments keep their amount, date and rate — they just stop
+          // counting, exactly as a receipt void does. Every balance in the app
+          // already filters on `reversed_at IS NULL`.
+          tx.update(payments)
+            .set({
+              reversedAt: closedAt,
+              reversedBy: actor.id,
+              reversalReason: `Contrato ${existing.code} cancelado con reembolso`,
+            })
+            .where(and(eq(payments.contractId, existing.id), sql`${payments.reversedAt} IS NULL`))
+            .run();
+
+          for (const p of contractPayments) {
+            reversedPaymentIds.push(p.id);
+          }
+
+          // A receipt whose payments were all for this contract now carries
+          // nothing — void it too, so it reads as a void rather than as a
+          // receipt whose numbers quietly shrank. A receipt shared with another
+          // lot (a sale group) keeps standing; only its cancelled line is gone.
+          const receiptIds = [
+            ...new Set(contractPayments.map((p) => p.receiptId).filter((x): x is string => !!x)),
+          ];
+
+          for (const receiptId of receiptIds) {
+            const stillActive = tx
+              .select({ n: sql<number>`COUNT(*)` })
+              .from(payments)
+              .where(and(eq(payments.receiptId, receiptId), sql`${payments.reversedAt} IS NULL`))
+              .get();
+
+            if ((stillActive?.n ?? 0) === 0) {
+              tx.update(receipts)
+                .set({
+                  voidedAt: closedAt,
+                  voidReason: `Contrato ${existing.code} cancelado con reembolso`,
+                  voidedBy: actor.id,
+                })
+                .where(and(eq(receipts.id, receiptId), sql`${receipts.voidedAt} IS NULL`))
+                .run();
+              voidedReceiptIds.push(receiptId);
+            }
+          }
+        }
 
         recordAudit(tx, {
           actorId: actor.id,
@@ -807,11 +904,24 @@ export const contractRoutes: FastifyPluginAsync = async (app) => {
           action: "cancel",
           reason: parsed.data.reason,
           before: { status: existing.status, closedAt: null, paidToDateCents },
-          after: { status: "cancelled", closedAt },
+          after: {
+            status: "cancelled",
+            closedAt,
+            settlement,
+            ...(settlement === "refunded"
+              ? { reversedPaymentIds, voidedReceiptIds, refundedCents: paidToDateCents }
+              : {}),
+          },
         });
       });
 
-      return reply.send({ ok: true, closedAt, paidToDateCents });
+      return reply.send({
+        ok: true,
+        closedAt,
+        paidToDateCents,
+        settlement,
+        refundedCents: settlement === "refunded" ? paidToDateCents : 0,
+      });
     },
   );
 };

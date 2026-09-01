@@ -19,7 +19,11 @@ import { ContractPanel } from "./features/contracts/ContractPanel";
 import { ContractsPage } from "./features/contracts/ContractsPage";
 import { SplitPreviewDialog } from "./features/contracts/SplitPreviewDialog";
 import { cancelContract, createContract, updateContract } from "./features/contracts/api";
-import type { ContractCreateDraft, ContractTermsDraft } from "./features/contracts/api";
+import type {
+  CancelSettlement,
+  ContractCreateDraft,
+  ContractTermsDraft,
+} from "./features/contracts/api";
 import { useContracts } from "./features/contracts/useContracts";
 import { LoginPage } from "./features/auth/LoginPage";
 import { authApi } from "./features/auth/api";
@@ -342,18 +346,21 @@ export default function App() {
     setContractBeingViewed(null);
   };
 
-  const handleCancelContract = async (reason: string) => {
+  const handleCancelContract = async (reason: string, settlement?: CancelSettlement) => {
     if (!contractBeingCancelled) {
       return;
     }
 
-    await cancelContract(contractBeingCancelled.id, reason).catch(handleApiError);
+    await cancelContract(contractBeingCancelled.id, reason, settlement).catch(handleApiError);
 
     await reloadContracts();
     // Cancelling releases the lot, and the Lotes table derives availability
-    // from active contracts — so it is wrong on screen until it is re-read.
+    // from active contracts — so it is wrong on screen until it is re-read. A
+    // refund also reverses payments, which moves every balance and can void a
+    // receipt, so the money screens have to re-read too.
     await reloadLots();
     await reloadCustomers();
+    await reloadTransactions();
     setContractBeingCancelled(null);
     setContractBeingViewed(null);
   };
@@ -855,6 +862,7 @@ export default function App() {
         <ContractCancelDialog
           contract={contractBeingCancelled}
           money={money}
+          canRefund={can(user, "payment:reverse")}
           onCancel={() => setContractBeingCancelled(null)}
           onConfirm={handleCancelContract}
         />

@@ -6,38 +6,67 @@ import { IconClose } from "../../components/Icons";
 import type { MoneyView } from "../../lib/money";
 import { formatMoney } from "../../lib/money";
 import type { Contract } from "../../types";
+import type { CancelSettlement } from "./api";
 
 const MINIMUM_REASON_LENGTH = 10;
 
 interface ContractCancelDialogProps {
   contract: Contract;
   money: MoneyView;
+  /** May this user reverse payments? Gates the "refund" option. */
+  canRefund: boolean;
   onCancel: () => void;
   /** Rejects when the server refuses; the message is shown in the dialog. */
-  onConfirm: (reason: string) => Promise<void>;
+  onConfirm: (reason: string, settlement?: CancelSettlement) => Promise<void>;
 }
+
+const SETTLEMENT_OPTIONS: Array<{
+  value: CancelSettlement;
+  title: string;
+  detail: string;
+  needsRefundRight?: boolean;
+}> = [
+  {
+    value: "none",
+    title: "Queda como ingreso",
+    detail: "No se devuelve nada. Lo pagado se mantiene en las cuentas.",
+  },
+  {
+    value: "held",
+    title: "Retenido temporalmente",
+    detail: "Sigue contando por ahora. Queda marcado para decidir después.",
+  },
+  {
+    value: "refunded",
+    title: "Reembolsado al cliente",
+    detail:
+      "Se revierten los pagos ahora mismo: dejan de contar y el recibo que cubrían se anula.",
+    needsRefundRight: true,
+  },
+];
 
 /**
  * Cancelling a contract, which gives the lot back.
  *
- * Nothing is deleted: the contract stays, its payments stay, and the lot
- * becomes available again on its own because availability is derived from
- * active contracts rather than written anywhere.
- *
- * The dialog says out loud what has already been paid, because that is the part
- * that turns into a real conversation about a refund the moment somebody
- * confirms — and it is exactly what is easiest to forget when a lot is being
- * released in a hurry.
+ * The contract row and its payments are never deleted. What the dialog forces,
+ * once money has changed hands, is a decision about that money — refund it,
+ * hold it while it is decided, or keep it as income — because "el lote vuelve a
+ * estar disponible" and "¿y lo que ya pagó?" are the same conversation, and the
+ * second half is the one that gets forgotten when a lot is released in a hurry.
  */
 export function ContractCancelDialog({
   contract,
   money,
+  canRefund,
   onCancel,
   onConfirm,
 }: ContractCancelDialogProps) {
   const [reason, setReason] = useState("");
+  const [settlement, setSettlement] = useState<CancelSettlement | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isCancelling, setCancelling] = useState(false);
+
+  const hasMoney = contract.paidToDate > 0;
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -48,10 +77,15 @@ export function ContractCancelDialog({
       return;
     }
 
+    if (hasMoney && settlement === null) {
+      setError("Indica qué pasa con el dinero que el cliente ya pagó.");
+      return;
+    }
+
     setCancelling(true);
 
     try {
-      await onConfirm(reason.trim());
+      await onConfirm(reason.trim(), hasMoney ? (settlement ?? undefined) : undefined);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "No se pudo cancelar el contrato.");
     } finally {
@@ -77,12 +111,41 @@ export function ContractCancelDialog({
         </div>
 
         <div className="modal-form-grid">
-          {contract.paidToDate > 0 && (
-            <p className="form-blocked full-width">
-              {contract.customer.fullName} ya pagó {formatMoney(contract.paidToDate, money)} en
-              este contrato. Cancelarlo no devuelve ese dinero ni lo mueve a otro lote; queda
-              registrado aquí hasta que se decida qué hacer con él.
-            </p>
+          {hasMoney && (
+            <fieldset className="form-field full-width settlement-choice">
+              <legend>
+                {contract.customer.fullName} ya pagó {formatMoney(contract.paidToDate, money)} en
+                este contrato. ¿Qué pasa con ese dinero?
+                <span className="required-mark" aria-hidden="true"> *</span>
+              </legend>
+
+              {SETTLEMENT_OPTIONS.map((option) => {
+                const disabled = option.needsRefundRight === true && !canRefund;
+
+                return (
+                  <label
+                    key={option.value}
+                    className={disabled ? "settlement-option is-disabled" : "settlement-option"}
+                  >
+                    <input
+                      type="radio"
+                      name="settlement"
+                      value={option.value}
+                      checked={settlement === option.value}
+                      disabled={disabled}
+                      onChange={() => setSettlement(option.value)}
+                    />
+                    <span>
+                      <span className="settlement-title">{option.title}</span>
+                      <span className="settlement-detail">
+                        {option.detail}
+                        {disabled && " Tu usuario no puede revertir pagos."}
+                      </span>
+                    </span>
+                  </label>
+                );
+              })}
+            </fieldset>
           )}
 
           <div className="form-field full-width">

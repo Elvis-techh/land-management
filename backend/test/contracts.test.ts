@@ -523,11 +523,20 @@ describe("editing and cancelling", async () => {
 
     assert.ok(before.holding, "the lot should start out held");
 
+    // This contract has payments, so a settlement decision is required.
+    const missing = await cancel(ownerCookie, ids.contractId, {
+      reason: "El cliente desistió de la compra.",
+    });
+    assert.equal(missing.statusCode, 400);
+    assert.equal(missing.json().error, "settlement_required");
+
     const response = await cancel(ownerCookie, ids.contractId, {
-      reason: "El cliente desistió de la compra y se le devolvió la prima.",
+      reason: "El cliente desistió de la compra; lo pagado queda como ingreso.",
+      settlement: "none",
     });
 
     assert.equal(response.statusCode, 200);
+    assert.equal(response.json().settlement, "none");
 
     const after = (await app.inject({
       method: "GET",
@@ -545,6 +554,7 @@ describe("editing and cancelling", async () => {
     assert.equal(row?.status, "cancelled");
     assert.ok(row?.closedAt);
     assert.match(row!.closedReason!, /desistió/);
+    assert.equal(row?.closedSettlement, "none");
   });
 
   it("keeps the cancelled contract and its payments readable", async () => {
@@ -557,7 +567,9 @@ describe("editing and cancelling", async () => {
       .contracts.find((entry: { id: string }) => entry.id === ids.contractId);
 
     assert.equal(row.status, "cancelled");
+    // "none" leaves the payments alone — they still count.
     assert.equal(row.paidToDate, lempiras(15_000));
+    assert.equal(row.closedSettlement, "none");
   });
 
   it("refuses to edit or cancel a contract that is already closed", async () => {
@@ -568,5 +580,141 @@ describe("editing and cancelling", async () => {
       reason: "Intento de cancelar dos veces el mismo contrato.",
     });
     assert.equal(cancelled.statusCode, 409);
+  });
+});
+
+describe("cancelling with a refund", async () => {
+  const { app, db, sqlite, ids } = await buildTestApp();
+  after(async () => {
+    await app.close();
+    sqlite.close();
+  });
+
+  const ownerCookie = await login(app, "owner@test.hn", OWNER_PASSWORD);
+  const staffCookie = await login(app, "staff@test.hn", STAFF_PASSWORD);
+
+  /** A fresh lot + financed contract + one receipted payment, all via the API. */
+  const setUp = async (lotCode: string) => {
+    await app.inject({
+      method: "POST",
+      url: "/api/lots",
+      headers: { cookie: ownerCookie },
+      payload: {
+        code: lotCode,
+        projectName: "Proyecto Prueba",
+        areaM2: 300,
+        basePriceCents: lempiras(100_000),
+      },
+    });
+    const lots = (
+      await app.inject({ method: "GET", url: "/api/lots", headers: { cookie: ownerCookie } })
+    ).json().lots;
+    const lot = lots.find((l: { code: string }) => l.code === lotCode);
+
+    const contract = (
+      await app.inject({
+        method: "POST",
+        url: "/api/contracts",
+        headers: { cookie: ownerCookie },
+        payload: {
+          customerId: ids.customerId,
+          lotId: lot.id,
+          kind: "contract",
+          saleType: "financed",
+          salePriceCents: lempiras(100_000),
+          downPaymentCents: lempiras(20_000),
+          termMonths: 12,
+          monthlyPaymentCents: lempiras(6_700),
+          dueDay: 5,
+          signedOn: "2026-03-10",
+        },
+      })
+    ).json().contract;
+
+    const receipt = (
+      await app.inject({
+        method: "POST",
+        url: "/api/receipts",
+        headers: { cookie: ownerCookie },
+        payload: {
+          customerId: ids.customerId,
+          paidOn: "2026-03-10",
+          method: "cash",
+          lines: [{ contractId: contract.id, amountCents: lempiras(20_000), type: "down_payment" }],
+        },
+      })
+    ).json().receipt;
+
+    return { contractId: contract.id, receiptId: receipt.id, lotId: lot.id };
+  };
+
+  function list(cookie: string) {
+    return app.inject({ method: "GET", url: "/api/contracts", headers: { cookie } });
+  }
+
+  const cancel = (cookie: string, id: string, payload: Record<string, unknown>) =>
+    app.inject({
+      method: "POST",
+      url: `/api/contracts/${id}/cancel`,
+      headers: { cookie },
+      payload,
+    });
+
+  it("reverses the payments and voids the receipt they covered", async () => {
+    const { contractId, receiptId } = await setUp("REF-01");
+
+    const response = await cancel(ownerCookie, contractId, {
+      reason: "El cliente desistió y se acordó el reembolso completo de la prima.",
+      settlement: "refunded",
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.json().settlement, "refunded");
+    assert.equal(response.json().refundedCents, lempiras(20_000));
+
+    // The contract now owes nothing counted — the payment stopped counting.
+    const contract = (await list(ownerCookie))
+      .json()
+      .contracts.find((c: { id: string }) => c.id === contractId);
+    assert.equal(contract.paidToDate, 0);
+    assert.equal(contract.closedSettlement, "refunded");
+
+    // And the receipt reads as a void rather than as one whose numbers shrank.
+    const receipt = (
+      await app.inject({
+        method: "GET",
+        url: `/api/receipts/${receiptId}`,
+        headers: { cookie: ownerCookie },
+      })
+    ).json().receipt;
+    assert.ok(receipt.voidedAt, "the receipt must be voided");
+    assert.match(receipt.voidReason, /reembolso/i);
+  });
+
+  it("needs the payment:reverse capability for the refund option", async () => {
+    const { contractId } = await setUp("REF-02");
+
+    // Give staff contract:cancel but NOT payment:reverse.
+    await app.inject({
+      method: "PUT",
+      url: "/api/permissions",
+      headers: { cookie: ownerCookie },
+      payload: {
+        capabilities: ["contract:create", "contract:cancel", "customer:create", "payment:record"],
+      },
+    });
+
+    const denied = await cancel(staffCookie, contractId, {
+      reason: "Intento de reembolso sin permiso para revertir pagos.",
+      settlement: "refunded",
+    });
+    assert.equal(denied.statusCode, 403);
+
+    // The same staff member CAN cancel keeping the money as income.
+    const ok = await cancel(staffCookie, contractId, {
+      reason: "El cliente desistió; lo pagado se mantiene como ingreso.",
+      settlement: "none",
+    });
+    assert.equal(ok.statusCode, 200);
   });
 });

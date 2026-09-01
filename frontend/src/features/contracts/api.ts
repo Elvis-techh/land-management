@@ -121,10 +121,20 @@ export function updateContract(contractId: string, draft: ContractTermsDraft) {
   );
 }
 
-export function cancelContract(contractId: string, reason: string) {
-  return api.post<{ ok: boolean; closedAt: string }>(`/api/contracts/${contractId}/cancel`, {
-    reason,
-  });
+/** What happens to money the customer already paid — see ContractCancelDialog. */
+export type CancelSettlement = "none" | "held" | "refunded";
+
+export function cancelContract(
+  contractId: string,
+  reason: string,
+  settlement?: CancelSettlement,
+) {
+  return api.post<{
+    ok: boolean;
+    closedAt: string;
+    settlement: CancelSettlement | null;
+    refundedCents: number;
+  }>(`/api/contracts/${contractId}/cancel`, { reason, settlement });
 }
 
 /**
