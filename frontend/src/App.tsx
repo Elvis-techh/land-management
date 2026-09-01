@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { PlaceholderPage } from "./components/PlaceholderPage";
 import { Sidebar } from "./components/Sidebar";
 import { Topbar } from "./components/Topbar";
@@ -43,7 +44,7 @@ import { ReceiptsPage } from "./features/receipts/ReceiptsPage";
 import { TransactionEditDialog } from "./features/receipts/TransactionEditDialog";
 import { useTransactions } from "./features/receipts/useTransactions";
 import { useExchangeRate } from "./features/rate/useExchangeRate";
-import { archiveLot, createLot, updateLot } from "./features/lots/api";
+import { archiveLot, createLot, restoreLot, updateLot } from "./features/lots/api";
 import { useLots } from "./features/lots/useLots";
 import { ApiError } from "./lib/api";
 import type { Currency, MoneyView } from "./lib/money";
@@ -133,12 +134,25 @@ export default function App() {
   const [contractsBeingSplit, setContractsBeingSplit] = useState<Contract[] | null>(null);
 
   const isSignedIn = session.status === "signed-in";
-  const { state: lotsState, reload: reloadLots } = useLots(isSignedIn);
-  const { state: projectsState, reload: reloadProjects } = useProjects(isSignedIn);
-  const { state: customersState, reload: reloadCustomers } = useCustomers(isSignedIn);
-  const { state: contractsState, reload: reloadContracts } = useContracts(isSignedIn);
-  const { state: transactionsState, reload: reloadTransactions } = useTransactions(isSignedIn);
-  const { rate, setRate } = useExchangeRate(isSignedIn);
+
+  // The session expired underneath a request. Drop to the login screen rather
+  // than sit on stale numbers. Defined before the data hooks because they call
+  // it from their own refresh failures — a 401 there used to surface as a
+  // generic "no se pudo cargar" card with a Retry button that could only 401
+  // again.
+  const handleSessionExpired = useCallback(() => {
+    setSession({ status: "anonymous" });
+  }, []);
+
+  const { state: lotsState, reload: reloadLots } = useLots(isSignedIn, handleSessionExpired);
+  const { state: projectsState, reload: reloadProjects } = useProjects(isSignedIn, handleSessionExpired);
+  const { state: customersState, reload: reloadCustomers } = useCustomers(isSignedIn, handleSessionExpired);
+  const { state: contractsState, reload: reloadContracts } = useContracts(isSignedIn, handleSessionExpired);
+  const { state: transactionsState, reload: reloadTransactions } = useTransactions(
+    isSignedIn,
+    handleSessionExpired,
+  );
+  const { rate, setRate } = useExchangeRate(isSignedIn, handleSessionExpired);
 
   // Currency and rate travel together, so a component cannot format money with
   // one and forget the other.
@@ -148,12 +162,15 @@ export default function App() {
 
   // If the session expires while the app is open, any request will come back
   // 401. Drop straight to the login screen rather than showing stale data.
-  const handleApiError = useCallback((error: unknown) => {
-    if (error instanceof ApiError && error.isUnauthenticated) {
-      setSession({ status: "anonymous" });
-    }
-    throw error;
-  }, []);
+  const handleApiError = useCallback(
+    (error: unknown) => {
+      if (error instanceof ApiError && error.isUnauthenticated) {
+        handleSessionExpired();
+      }
+      throw error;
+    },
+    [handleSessionExpired],
+  );
 
   useEffect(() => {
     if (!isSidebarOpen || !isSignedIn) {
@@ -375,6 +392,11 @@ export default function App() {
     setLotBeingArchived(null);
   };
 
+  const handleRestoreLot = async (lot: Lot) => {
+    await restoreLot(lot.id).catch(handleApiError);
+    await reloadLots();
+  };
+
   /**
    * What the button in the top right does on this screen, or `undefined` when
    * there is nothing for it to do — which is what hides it.
@@ -457,6 +479,10 @@ export default function App() {
         />
 
         <div className="content">
+          {/* Keyed by tab, so a render error is contained to the screen that
+              caused it: the sidebar, the top bar and every other tab keep
+              working, and switching away resets the boundary. */}
+          <ErrorBoundary variant="panel" area={`la pantalla de ${pageTitles[activeTab]}`} key={activeTab}>
           {activeTab !== "lots" &&
             activeTab !== "projects" &&
             activeTab !== "customers" &&
@@ -644,11 +670,16 @@ export default function App() {
               user={user}
               onEditLot={setLotBeingEdited}
               onArchiveLot={setLotBeingArchived}
+              onRestoreLot={(lot) => void handleRestoreLot(lot)}
             />
           )}
+          </ErrorBoundary>
         </div>
       </div>
 
+      {/* The dialogs share a boundary of their own: a crash inside a form must
+          not blank the tables and the navigation behind it. */}
+      <ErrorBoundary variant="panel" area="una ventana">
       {isCreatingReceipt &&
         contractsState.status === "ready" &&
         customersState.status === "ready" && (
@@ -849,6 +880,7 @@ export default function App() {
           }}
         />
       )}
+      </ErrorBoundary>
     </div>
   );
 }

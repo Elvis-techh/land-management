@@ -74,13 +74,19 @@ export const KIND_LABELS: Record<Contract["kind"], string> = {
  * Health and lifecycle stay separate everywhere else, but a single column has
  * to pick. The rule: a contract that is no longer active is described by its
  * lifecycle, because "al día" on a cancelled contract is true and useless. A
- * contract that owes nothing says so. Everything else — the overwhelming
- * majority — shows its payment health, which is the question the screen exists
- * to answer.
+ * lapsed reservation says so; a contract that owes nothing says so. Everything
+ * else — the overwhelming majority — shows its payment health, which is the
+ * question the screen exists to answer.
  */
 export function primaryStamp(contract: Contract): { label: string; stampClass: string } {
   if (contract.status !== "active") {
     return STATUS_PRESENTATION[contract.status];
+  }
+
+  // A reservation past its expiry date. The row still says "active", but the
+  // hold is over and the lot is back on the market.
+  if (contract.expired) {
+    return { label: "Vencida", stampClass: "stamp neutral" };
   }
 
   if (contract.health.settled) {
