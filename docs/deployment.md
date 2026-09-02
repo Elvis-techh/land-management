@@ -35,18 +35,38 @@ sudo chown -R lindero:lindero /opt/lindero
 
 ## First deploy
 
+Node 22 or newer, installed system-wide. The systemd unit runs
+`/usr/bin/node`, and it does not read a shell profile — a Node installed
+through `nvm` lives under a user's home directory and will not be found. Use
+NodeSource (or the distribution's package) so the binary is on that path:
+
+```bash
+node --version && command -v node      # expect v22+ at /usr/bin/node
+```
+
 ```bash
 cd /opt/lindero
-sudo -u lindero npm ci
+sudo -u lindero npm ci                   # a plain `npm ci` — the build needs
+                                         # typescript and vite, which are
+                                         # devDependencies
 sudo -u lindero npm run build            # builds both frontend and backend
+
+# The two directories systemd will bind-mount as writable. Neither is in git,
+# so a fresh clone has neither, and the unit fails to START without them — with
+# a mount-namespace error that says nothing about Lindero. Make them first.
+sudo -u lindero mkdir -p backend/data backend/backups
 
 # backend/.env — from backend/.env.example, then edit:
 #   NODE_ENV=production
+#   HOST=127.0.0.1                              # loopback ONLY — see below
 #   COOKIE_SECRET=<openssl rand -base64 48>     # the server refuses to boot without this
 #   FRONTEND_ORIGIN=https://your-domain
 #   TRUST_PROXY=127.0.0.1                       # matches the Nginx config
 #   DATABASE_PATH=/opt/lindero/backend/data/lindero.db
 #   UPLOADS_PATH=/opt/lindero/backend/data/uploads
+#   BACKUP_PATH=/opt/lindero/backend/backups
+#   TIME_ZONE=America/Tegucigalpa                # the OFFICE's calendar, not the
+#                                                # server's — dates are decided in it
 sudo -u lindero cp backend/.env.example backend/.env
 sudo -u lindero editor backend/.env
 
@@ -62,6 +82,33 @@ sudo -u lindero npm run db:bootstrap --workspace @lindero/backend
 # Nginx: start from docs/nginx.conf.example, replace every <PLACEHOLDER>, read it
 # once end to end, then reload. certbot for the TLS certificate.
 ```
+
+## Shutting the front door
+
+Two independent things keep the API off the public internet, and it wants both:
+`HOST=127.0.0.1` above, so it only ever binds loopback, and a firewall, so a
+future misconfiguration is not immediately reachable.
+
+```bash
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+sudo ufw allow OpenSSH            # do this BEFORE enabling, or you lock yourself out
+sudo ufw allow 'Nginx Full'       # 80 and 443
+sudo ufw enable
+sudo ufw status verbose           # 3000 must NOT appear
+```
+
+Check it from somewhere else — not from the droplet, where loopback answers
+regardless:
+
+```bash
+curl -sS --max-time 5 http://<DROPLET_IP>:3000/api/health   # expect: refused / timeout
+curl -sS --max-time 5 https://<YOUR_DOMAIN>/api/health      # expect: a response
+```
+
+If the first one answers, the API is exposed: passwords and session cookies are
+crossing the network unencrypted, and `TRUST_PROXY` is trusting a header on
+requests that never passed through Nginx. Fix it before the first real login.
 
 ## Subsequent deploys
 

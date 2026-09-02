@@ -8,8 +8,9 @@
 #   systemctl enable --now lindero-api
 #
 # Logs:   journalctl -u lindero-api -f
-# Deploy: git pull && npm ci --omit=dev && npm run build --workspace @lindero/backend \
-#           && systemctl restart lindero-api
+# Deploy: git pull && npm ci && npm run build && systemctl restart lindero-api
+#         (a plain `npm ci` — the build needs typescript and vite, which are
+#          devDependencies, so `--omit=dev` leaves it without a compiler)
 #
 # Migrations run automatically on boot (backend/src/server.ts), so a restart is
 # the whole deploy.
@@ -18,6 +19,13 @@
 Description=Lindero API
 After=network-online.target
 Wants=network-online.target
+
+# A migration failure or a missing COOKIE_SECRET exits non-zero on boot; cap the
+# restart loop so a broken deploy is loud in `systemctl status` rather than
+# silently thrashing. These belong in [Unit] — systemd moved them there in v229
+# and ignores them in [Service], which `systemd-analyze verify` will tell you.
+StartLimitIntervalSec=60
+StartLimitBurst=4
 
 [Service]
 Type=simple
@@ -35,18 +43,16 @@ ExecStart=/usr/bin/node dist/server.js
 Restart=on-failure
 RestartSec=5
 
-# A migration failure or a missing COOKIE_SECRET exits non-zero on boot; cap the
-# restart loop so a broken deploy is loud in `systemctl status` rather than
-# silently thrashing.
-StartLimitIntervalSec=60
-StartLimitBurst=4
-
 # Hardening. The one path the process must write is its data directory (the
 # SQLite file, the WAL, and the uploads); everything else is read-only.
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
+# Both of these must already exist: systemd sets the namespace up before the
+# process runs, and a missing path here fails the unit with a mount error
+# rather than anything about Lindero. `mkdir -p` them on first deploy — neither
+# is in git, so a fresh clone has neither.
 ReadWritePaths=/opt/lindero/backend/data /opt/lindero/backend/backups
 
 [Install]

@@ -22,6 +22,9 @@ ExecStart=/usr/bin/node scripts/backup.mjs
 # lands on the same disk as the database is not a backup. Example with rclone:
 # ExecStartPost=/usr/bin/rclone copy /opt/lindero/backend/backups remote:lindero-backups
 
+# Must exist before the unit starts, for the same reason as in
+# lindero-api.service: the namespace is built before the script runs, so
+# `mkdirSync` inside backup.mjs is too late to help.
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
