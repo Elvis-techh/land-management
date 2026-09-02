@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 
 import { IconEdit, IconTrash } from "../../components/Icons";
+import { hasIdentification } from "../../lib/identification";
 import { getInitials } from "../../lib/initials";
 import { formatPhone } from "../../lib/phone";
 import type { User } from "../../lib/permissions";
@@ -30,7 +31,7 @@ interface CustomersPageProps {
 function haystack(customer: CustomerRecord): string {
   return [
     customer.fullName,
-    customer.identification,
+    customer.identification ?? "",
     customer.phone,
     formatPhone(customer.phone),
     customer.email ?? "",
@@ -125,14 +126,14 @@ export function CustomersPage({
 
       <div className="card">
         <div className="table-wrap">
-          <table>
+          <table className="customers-table">
             <thead>
               <tr>
                 <th>Cliente</th>
                 <th>Teléfono</th>
                 <th>Identidad</th>
                 <th>Contratos</th>
-                <th>Notas</th>
+                <th className="col-notes">Notas</th>
                 <th className="col-actions">{showActions ? "Acciones" : ""}</th>
               </tr>
             </thead>
@@ -151,7 +152,16 @@ export function CustomersPage({
                     </span>
                   </td>
                   <td className="mono">{formatPhone(customer.phone)}</td>
-                  <td className="mono">{customer.identification}</td>
+                  <td className="mono">
+                    {hasIdentification(customer.identification) ? (
+                      customer.identification
+                    ) : (
+                      /* Not blank. An empty cell in a column of numbers reads
+                         as data that failed to load rather than a customer who
+                         never gave one. */
+                      <span className="holder-empty">Sin identidad</span>
+                    )}
+                  </td>
                   <td>
                     {/* Read from the contracts themselves on every load. There
                         is no "número de contratos" stored on a customer. */}
@@ -175,13 +185,13 @@ export function CustomersPage({
                       </span>
                     )}
                   </td>
-                  <td>
+                  <td className="col-notes">
                     {customer.notes ? (
-                      // Long notes are clipped to keep rows a consistent height;
-                      // the whole text is on the row's tooltip and in the form.
-                      <span className="cell-notes" title={customer.notes}>
-                        {customer.notes}
-                      </span>
+                      // Nothing is hidden here any more: the note wraps onto as
+                      // many lines as it needs, so the column reads the way the
+                      // edit form does. The row is allowed to grow with it —
+                      // this is the column somebody opens the screen for.
+                      <span className="cell-notes">{customer.notes}</span>
                     ) : (
                       <span className="holder-empty">—</span>
                     )}

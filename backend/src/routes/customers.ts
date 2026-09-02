@@ -54,8 +54,15 @@ const activeContractsQuery = (db: import("../db/client.js").Db, asOf: string) =>
 
 const customerBody = z.object({
   fullName: z.string().trim().min(1).max(160),
-  /** Número de identidad. Unique — one person, one record. */
-  identification: z.string().trim().min(1).max(40),
+  /**
+   * Número de identidad. Optional, and unique among those who gave one.
+   *
+   * Blank is a real answer here, not a validation failure: an identidad is
+   * confidential and is often simply not available when the customer is first
+   * written down. `identificationOrNull` below turns every shape of "nothing"
+   * into NULL before it reaches the database.
+   */
+  identification: z.string().trim().max(40).nullish(),
   /**
    * As typed. Normalised to E.164 below rather than by the schema, so the
    * refusal can explain what a usable number looks like instead of failing as
@@ -81,20 +88,44 @@ const deleteBody = z.object({
 });
 
 /**
+ * An identidad as the column stores it: the trimmed number, or NULL.
+ *
+ * One function so that "", "   ", null and undefined cannot end up meaning four
+ * different things in the database. NULL rather than "" specifically, because
+ * `customers_identification_unique` treats NULLs as distinct and empty strings
+ * as equal — store "" and the SECOND customer without an identidad is refused
+ * as a duplicate of the first, which is the exact case this is here to allow.
+ */
+function identificationOrNull(raw: string | null | undefined): string | null {
+  const trimmed = raw?.trim() ?? "";
+
+  return trimmed === "" ? null : trimmed;
+}
+
+/**
  * The clash an identity number would cause, worded for the user, or `null` when
- * it is free.
+ * it is free — as it always is for a customer who has not given one.
  *
  * Same reasoning as `lotCodeClash` in routes/lots.ts: the unique index is what
  * guarantees this, and the lookup is what turns the guarantee into a sentence
  * naming the person already on file. It matters more here than anywhere — a
  * customer entered twice splits their contracts across two records, and the
  * balance on each one is then quietly wrong.
+ *
+ * A missing identidad cannot clash with anything, and must not: two customers
+ * who have both declined to give one are two customers, not a duplicate. That
+ * is the one duplicate this check has to let through, and the reason the
+ * comparison never runs on NULL.
  */
 function identificationClash(
   db: import("../db/client.js").Db,
-  identification: string,
+  identification: string | null,
   ignoreCustomerId?: string,
 ): string | null {
+  if (identification === null) {
+    return null;
+  }
+
   const clash = db
     .select({ id: customers.id, fullName: customers.fullName })
     .from(customers)
@@ -172,7 +203,8 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
         });
       }
 
-      const clash = identificationClash(app.db, parsed.data.identification);
+      const identification = identificationOrNull(parsed.data.identification);
+      const clash = identificationClash(app.db, identification);
 
       if (clash) {
         return reply.code(409).send({ error: "duplicate_identification", message: clash });
@@ -187,7 +219,7 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
           .values({
             id: randomUUID(),
             fullName: parsed.data.fullName,
-            identification: parsed.data.identification,
+            identification,
             phone,
             email: parsed.data.email ?? null,
             address: parsed.data.address ?? null,
@@ -255,7 +287,8 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
         });
       }
 
-      const clash = identificationClash(app.db, parsed.data.identification, existing.id);
+      const identification = identificationOrNull(parsed.data.identification);
+      const clash = identificationClash(app.db, identification, existing.id);
 
       if (clash) {
         return reply.code(409).send({ error: "duplicate_identification", message: clash });
@@ -268,7 +301,7 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
           .update(customers)
           .set({
             fullName: parsed.data.fullName,
-            identification: parsed.data.identification,
+            identification,
             phone,
             email: parsed.data.email ?? null,
             address: parsed.data.address ?? null,

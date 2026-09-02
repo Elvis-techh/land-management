@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
+import { businessTimeZone } from "../../lib/businessTime";
 import type { MoneyView } from "../../lib/money";
 import { cents, formatMoney } from "../../lib/money";
 import { ROLE_LABELS } from "../../lib/permissions";
@@ -13,6 +14,7 @@ const actionPresentation: Record<AuditAction, { label: string; stampClass: strin
   update: { label: "Editado", stampClass: "stamp neutral" },
   reprice: { label: "Cambio de precio", stampClass: "stamp clay" },
   archive: { label: "Archivado", stampClass: "stamp danger" },
+  restore: { label: "Restaurado", stampClass: "stamp success" },
   delete: { label: "Eliminado", stampClass: "stamp danger" },
   cancel: { label: "Cancelado", stampClass: "stamp danger" },
   reverse: { label: "Reversado", stampClass: "stamp danger" },
@@ -34,6 +36,11 @@ const fieldLabels: Record<string, string> = {
   areaM2: "Área",
   basePriceCents: "Precio base",
   archivedAt: "Archivado",
+  // Account changes, from the Usuarios screen.
+  name: "Nombre",
+  role: "Rol",
+  deactivatedAt: "Cuenta desactivada",
+  passwordResetAt: "Contraseña cambiada",
 };
 
 /** Money fields are stored in centavos and must not be printed raw. */
@@ -68,7 +75,11 @@ function formatTimestamp(value: string): string {
     return value;
   }
 
+  // In the OFFICE's clock, not the reader's. This is a log of when things were
+  // done at the counter, so a laptop set to another zone must not restate the
+  // history three hours out — see lib/businessTime.ts.
   return parsed.toLocaleString("es-HN", {
+    timeZone: businessTimeZone(),
     day: "2-digit",
     month: "short",
     year: "numeric",
@@ -146,7 +157,20 @@ export function AuditPage({ money }: AuditPageProps) {
         ) : (
           <div className="audit-list">
             {events.map((event) => {
-              const action = actionPresentation[event.action];
+              /*
+               * Falls back rather than trusting the map to be complete.
+               *
+               * The server can record an action this screen has never heard of
+               * — it did, for a while, with `restore` — and reading a missing
+               * key off the table would throw while rendering, taking the WHOLE
+               * history down over one unrecognised row. The history is the last
+               * thing that should break, so an unknown action is shown as
+               * itself instead.
+               */
+              const action = actionPresentation[event.action] ?? {
+                label: event.action,
+                stampClass: "stamp neutral",
+              };
               const fields = changedFields(event);
 
               return (

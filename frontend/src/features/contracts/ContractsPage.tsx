@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { IconChevronDown } from "../../components/Icons";
 import { getInitials } from "../../lib/initials";
@@ -9,13 +9,16 @@ import type { User } from "../../lib/permissions";
 import { can } from "../../lib/permissions";
 import { buildProjectAccents } from "../../lib/projectAccent";
 import type { Contract } from "../../types";
+import { ContactButtons } from "./ContactButtons";
 import { ContractToolbar } from "./ContractToolbar";
 import type { ContractFilters } from "./contractFilters";
+import type { ContractFilterPreset } from "./contractFilters";
 import {
   DEFAULT_CONTRACT_FILTERS,
   NO_CONTRACT_FILTERS,
   filterContracts,
   hasActiveFilters,
+  presetFilters,
   searchContracts,
 } from "./contractFilters";
 import {
@@ -29,7 +32,7 @@ import type { ContractSort } from "./contractSort";
 import { DEFAULT_SORT, groupByCustomer, sortContracts } from "./contractSort";
 
 /** The empty state has to span every column. */
-const COLUMN_COUNT = 7;
+const COLUMN_COUNT = 8;
 
 interface ContractsPageProps {
   contracts: Contract[];
@@ -39,6 +42,13 @@ interface ContractsPageProps {
   onOpenContract: (contract: Contract) => void;
   /** Opens the split preview for a purchase of several lots. */
   onSplitPayment: (contracts: Contract[]) => void;
+  /**
+   * Filters handed over by another screen — the Panel General drilling into
+   * the overdue contracts. `null` when this screen was opened normally.
+   */
+  filterPreset?: ContractFilterPreset | null;
+  /** Says the preset has been taken, so it is not applied a second time. */
+  onPresetApplied?: () => void;
 }
 
 export function ContractsPage({
@@ -47,6 +57,8 @@ export function ContractsPage({
   user,
   onOpenContract,
   onSplitPayment,
+  filterPreset = null,
+  onPresetApplied,
 }: ContractsPageProps) {
   const canRecordPayment = can(user, "payment:record");
 
@@ -56,6 +68,26 @@ export function ContractsPage({
   // Which customers are folded shut. Everything starts open: a collapsed group
   // hides a balance, and this screen exists to show balances.
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
+
+  /*
+   * Adopt filters another screen arrived with, exactly once.
+   *
+   * Applied in an effect and then handed back, rather than read straight into
+   * the initial state: this component is not remounted when the tab changes, so
+   * initial state would be whatever was there the first time Contratos was
+   * opened and the drill-down would work only once per session. Clearing it
+   * afterwards is what lets the reader then change the filters freely — without
+   * that, every render would reset them to the preset.
+   */
+  useEffect(() => {
+    if (!filterPreset) {
+      return;
+    }
+
+    setSearch("");
+    setFilters(presetFilters(filterPreset));
+    onPresetApplied?.();
+  }, [filterPreset, onPresetApplied]);
 
   // Derived from state, recalculated when something it depends on changes.
   // Search, filter and sort are a VIEW of `contracts`, never a second copy.
@@ -138,6 +170,12 @@ export function ContractsPage({
                 <th className="col-money">Saldo</th>
                 <th className="col-money">Mensual</th>
                 <th>Estado</th>
+                {/* No visible heading: three 28px icons under the word
+                    "Contacto" would be a column captioned wider than itself.
+                    The name is given to screen readers instead. */}
+                <th className="col-contact">
+                  <span className="sr-only">Contacto</span>
+                </th>
               </tr>
             </thead>
 
@@ -201,6 +239,20 @@ export function ContractsPage({
                         <td>
                           <span className={stamp.stampClass}>{stamp.label}</span>
                         </td>
+                        <td className="col-contact">
+                          {/*
+                            One message for the whole purchase rather than one
+                            per lot. `group.contracts[0]` is not an arbitrary
+                            pick: a group is one customer, and for the common
+                            case — several lots bought together — every contract
+                            in it shares the customer, the project and the
+                            purchase. The message names that first lot and
+                            contract, which is the reference the customer can
+                            actually be asked about; chasing one specific lot of
+                            three is what the rows underneath are for.
+                          */}
+                          <ContactButtons contract={group.contracts[0]!} money={money} />
+                        </td>
                       </tr>
                     )}
 
@@ -248,9 +300,7 @@ export function ContractsPage({
                                 <span className="holder-btn is-static">
                                   <span className="holder-empty">↳</span>
                                   {contract.notes && (
-                                    <span className="contract-note" title={contract.notes}>
-                                      {contract.notes}
-                                    </span>
+                                    <span className="contract-note">{contract.notes}</span>
                                   )}
                                 </span>
                               ) : (
@@ -266,14 +316,12 @@ export function ContractsPage({
                                         of its own: notes run to a sentence, and
                                         a seventh column would push the payment
                                         health — the reason this screen exists —
-                                        off a 1440px screen. Clamped to two
-                                        lines so one long note cannot stretch
-                                        the row past its neighbours; the full
-                                        text is in the tooltip and the panel. */}
+                                        off a 1440px screen. It wraps onto as
+                                        many lines as it needs rather than
+                                        ending in a silent "…", so the row is
+                                        allowed to grow with a long note. */}
                                     {contract.notes && (
-                                      <span className="contract-note" title={contract.notes}>
-                                        {contract.notes}
-                                      </span>
+                                      <span className="contract-note">{contract.notes}</span>
                                     )}
                                   </span>
                                 </span>
@@ -344,6 +392,9 @@ export function ContractsPage({
                                 </span>
                               )}
                             </td>
+                            <td className="col-contact">
+                              <ContactButtons contract={contract} money={money} />
+                            </td>
                           </tr>
                         );
                       })}
@@ -408,8 +459,16 @@ export function ContractsPage({
                 const isGrouped = group.contracts.length > 1;
 
                 return (
+                  /*
+                    The card and its contact row are siblings inside this
+                    wrapper rather than the row sitting inside the card. The
+                    card is a <button>, and a link inside a button is invalid
+                    HTML that browsers resolve by guessing — in practice the
+                    tap opens the contract instead of the message, which is
+                    exactly the failure a phone user would hit first.
+                  */
+                  <div key={contract.id} className="contract-card-shell">
                   <button
-                    key={contract.id}
                     type="button"
                     className="contract-card"
                     onClick={() => onOpenContract(contract)}
@@ -455,6 +514,15 @@ export function ContractsPage({
                       <p className="contract-card-note">{contract.notes}</p>
                     )}
                   </button>
+
+                  {/* The reason to open this list on a phone in the first
+                      place: the customer is on the other end of one of these
+                      three. Full-width targets rather than the 25px icons the
+                      table uses, because this is a thumb. */}
+                  <div className="contract-card-contact">
+                    <ContactButtons contract={contract} money={money} />
+                  </div>
+                  </div>
                 );
               })}
             </div>

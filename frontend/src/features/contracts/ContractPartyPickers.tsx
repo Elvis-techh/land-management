@@ -3,10 +3,10 @@ import { useMemo, useState } from "react";
 import { IconSearch } from "../../components/Icons";
 import { formatArea } from "../../lib/area";
 import type { AreaUnit } from "../../lib/area";
+import { customerLine } from "../../lib/identification";
 import { getInitials } from "../../lib/initials";
 import type { MoneyView } from "../../lib/money";
 import { formatMoney } from "../../lib/money";
-import { formatPhone } from "../../lib/phone";
 import type { CustomerRecord, Lot } from "../../types";
 
 /**
@@ -60,7 +60,7 @@ export function CustomerPicker({ customers, selected, onSelect }: CustomerPicker
       needle === ""
         ? customers
         : customers.filter((customer) =>
-            `${customer.fullName} ${customer.identification} ${customer.phone}`
+            `${customer.fullName} ${customer.identification ?? ""} ${customer.phone}`
               .toLowerCase()
               .includes(needle),
           );
@@ -74,9 +74,7 @@ export function CustomerPicker({ customers, selected, onSelect }: CustomerPicker
         <span className="holder-avatar">{getInitials(selected.fullName)}</span>
         <span className="holder-text">
           <span className="holder-name">{selected.fullName}</span>
-          <span className="holder-contract">
-            {selected.identification} · {formatPhone(selected.phone)}
-          </span>
+          <span className="holder-contract">{customerLine(selected)}</span>
         </span>
         <button type="button" className="link-btn" onClick={() => onSelect(null)}>
           Cambiar
@@ -124,9 +122,7 @@ export function CustomerPicker({ customers, selected, onSelect }: CustomerPicker
             <span className="holder-avatar">{getInitials(customer.fullName)}</span>
             <span className="holder-text">
               <span className="holder-name">{customer.fullName}</span>
-              <span className="holder-contract">
-                {customer.identification} · {formatPhone(customer.phone)}
-              </span>
+              <span className="holder-contract">{customerLine(customer)}</span>
             </span>
             {/* What they are already holding. A person with two live contracts
                 is very often here to buy the lot next to them, and that is

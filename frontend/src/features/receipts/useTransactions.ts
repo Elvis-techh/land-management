@@ -34,11 +34,26 @@ export function useTransactions(enabled: boolean, onSessionExpired: () => void) 
         onSessionExpired();
         return;
       }
-      setState({
-        status: "error",
-        message:
-          caught instanceof Error ? caught.message : "No se pudieron cargar las transacciones.",
-      });
+
+      const message = caught instanceof Error ? caught.message : "No se pudieron cargar las transacciones.";
+
+      /*
+       * A failed REFRESH leaves what is on screen alone.
+       *
+       * This used to be unconditional, and it was safe while `reload` only ever
+       * ran because somebody pressed something — an error then was an answer to
+       * a question they had just asked. Since lib/liveUpdates.ts, it also runs
+       * on its own, when a teammate writes and when the tab comes back to the
+       * front. Blanking a working screen into an error card because one
+       * background request lost the wifi for a second would be a worse bug than
+       * the staleness it replaced.
+       *
+       * The first load has nothing to keep, so it still reports the failure —
+       * which is the case the error card and its Reintentar button are for.
+       */
+      setState((current) =>
+        current.status === "ready" ? current : { status: "error", message },
+      );
     }
   }, [onSessionExpired]);
 

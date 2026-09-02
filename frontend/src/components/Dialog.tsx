@@ -5,6 +5,19 @@ import { createPortal } from "react-dom";
 interface DialogProps {
   /** Read out by screen readers to name the dialog. */
   ariaLabel: string;
+  /**
+   * How much horizontal room this dialog is allowed to take.
+   *
+   * `"default"` is 620px, which is what a column of form fields wants — wider
+   * than that and the eye has to travel back across empty space to find the
+   * next label.
+   *
+   * `"wide"` is for the dialogs that put a form NEXT TO something, where the
+   * something is a table rather than prose. Both are `min(…, 100%)`, so this
+   * only ever grants a ceiling: a dialog that cannot have the room simply does
+   * not take it, and the layout inside is what decides to stack instead.
+   */
+  size?: "default" | "wide";
   onClose: () => void;
   children: ReactNode;
 }
@@ -37,7 +50,7 @@ const openDialogs: symbol[] = [];
  * confined to the 66px header and drawn off the top of the screen. The portal
  * takes that whole class of bug off the table for every dialog.
  */
-export function Dialog({ ariaLabel, onClose, children }: DialogProps) {
+export function Dialog({ ariaLabel, size = "default", onClose, children }: DialogProps) {
   const panelRef = useRef<HTMLDivElement>(null);
 
   // A stable identity for this dialog's slot in the stack, and a ref to the
@@ -103,7 +116,7 @@ export function Dialog({ ariaLabel, onClose, children }: DialogProps) {
     >
       <div
         ref={panelRef}
-        className="entity-modal"
+        className={size === "wide" ? "entity-modal is-wide" : "entity-modal"}
         role="dialog"
         aria-modal="true"
         aria-label={ariaLabel}

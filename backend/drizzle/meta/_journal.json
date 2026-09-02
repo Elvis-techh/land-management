@@ -54,8 +54,29 @@
     {
       "idx": 7,
       "version": "6",
-      "when": 1788300239380,
-      "tag": "0007_contract_settlement",
+      "when": 1788190173046,
+      "tag": "0007_optional_identification",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1788220097281,
+      "tag": "0008_user_accounts",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1788236319705,
+      "tag": "0009_motionless_barracuda",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1788307834993,
+      "tag": "0010_contract_settlement",
       "breakpoints": true
     }
   ]

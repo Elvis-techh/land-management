@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "cbc720d5-d5d8-4fef-a31a-0563fdc8b755",
+  "id": "8a1c5d6c-82ef-4b65-988b-4b78034222aa",
   "prevId": "cc203bfb-a39f-4659-bdd6-eaa89591f27e",
   "tables": {
     "attachments": {
@@ -326,13 +326,6 @@
           "notNull": false,
           "autoincrement": false
         },
-        "closed_settlement": {
-          "name": "closed_settlement",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
         "notes": {
           "name": "notes",
           "type": "text",
@@ -418,7 +411,7 @@
           "name": "identification",
           "type": "text",
           "primaryKey": false,
-          "notNull": true,
+          "notNull": false,
           "autoincrement": false
         },
         "phone": {

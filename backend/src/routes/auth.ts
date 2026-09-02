@@ -19,6 +19,18 @@ interface AuthRoutesOptions {
   isProduction: boolean;
   /** Attempts allowed per minute, per IP — this route only. See app.ts. */
   loginAttemptsPerMinute: number;
+  /**
+   * The office's timezone — see `timeZone` in src/config/env.ts.
+   *
+   * Sent back with the session because the browser has to agree with the server
+   * about what day it is: the date fields in the forms are pre-filled from it,
+   * and the Historial renders its timestamps in it. Published rather than
+   * compiled into the frontend so there is ONE authority for the zone; a
+   * constant on each side is a pair that can silently drift apart the day
+   * somebody sets TIME_ZONE and changes only the server.
+   */
+  timeZone: string;
+
 }
 
 export const authRoutes: FastifyPluginAsync<AuthRoutesOptions> = async (app, options) => {
@@ -58,6 +70,25 @@ export const authRoutes: FastifyPluginAsync<AuthRoutesOptions> = async (app, opt
           .send({ error: "invalid_credentials", message: "Correo o contraseña incorrectos." });
       }
 
+      /*
+       * A deactivated account is told so, plainly.
+       *
+       * The check is deliberately AFTER the password has been verified. Refusing
+       * earlier would answer "does this email exist here" to anybody who typed
+       * one, which is the leak the constant-time comparison above exists to
+       * avoid. Someone who has already proved they know the password learns
+       * nothing new — and they are almost always a real former employee, who is
+       * better served by "your access was removed" than by being left to retype a
+       * password that is perfectly correct.
+       */
+      if (user.deactivatedAt !== null) {
+        request.log.warn({ email }, "Login by a deactivated account");
+        return reply.code(403).send({
+          error: "account_deactivated",
+          message: "Esta cuenta está desactivada. Pide al supervisor que la reactive.",
+        });
+      }
+
       const sessionId = createSession(app.db, user.id, options.sessionDays);
       recordAudit(app.db, {
         actorId: user.id,
@@ -88,6 +119,7 @@ export const authRoutes: FastifyPluginAsync<AuthRoutesOptions> = async (app, opt
           // convenience only — every write re-checks server-side.
           capabilities: [...resolveCapabilities(app.db, user.role as Role)],
         },
+        businessTimeZone: options.timeZone,
       });
     },
   );
@@ -114,6 +146,7 @@ export const authRoutes: FastifyPluginAsync<AuthRoutesOptions> = async (app, opt
         ...request.user,
         capabilities: [...resolveCapabilities(app.db, request.user.role)],
       },
+      businessTimeZone: options.timeZone,
     });
   });
 };

@@ -7,10 +7,13 @@ import type { FastifyError, FastifyReply, FastifyRequest } from "fastify";
 import authPlugin from "./auth/plugin.js";
 import type { AppConfig } from "./config/env.js";
 import type { Db } from "./db/client.js";
+import { publishChange } from "./lib/changes.js";
 import { auditRoutes } from "./routes/audit.js";
 import { authRoutes } from "./routes/auth.js";
 import { contractRoutes } from "./routes/contracts.js";
 import { customerRoutes } from "./routes/customers.js";
+import { dashboardRoutes } from "./routes/dashboard.js";
+import { eventRoutes } from "./routes/events.js";
 import { healthRoutes } from "./routes/health.js";
 import { exchangeRateRoutes } from "./routes/exchangeRate.js";
 import { lotRoutes } from "./routes/lots.js";
@@ -18,6 +21,7 @@ import { permissionRoutes } from "./routes/permissions.js";
 import { projectRoutes } from "./routes/projects.js";
 import { receiptRoutes } from "./routes/receipts.js";
 import { transactionRoutes } from "./routes/transactions.js";
+import { userRoutes } from "./routes/users.js";
 
 export async function buildApp(config: AppConfig, db: Db) {
   const app = Fastify({
@@ -44,6 +48,49 @@ export async function buildApp(config: AppConfig, db: Db) {
   });
 
   await app.register(authPlugin, { db });
+
+  /*
+   * Announce every successful write, from one place.
+   *
+   * The alternative was a `publishChange` beside each of the twenty-odd
+   * handlers that write something, and the bug that design has is the one it
+   * cannot show you: a new route, or a moved one, that simply never announces
+   * itself. Nothing fails, no test goes red, and one screen somewhere stops
+   * keeping up — found weeks later by somebody wondering why they had to
+   * refresh. A hook cannot be forgotten, because there is nothing to remember.
+   *
+   * `onResponse` rather than `onSend`, so the news follows a write that
+   * actually completed. The status check is the same rule: a 409 refusing an
+   * overpayment, a 400 on a bad date and a 403 all changed nothing, and telling
+   * every open tab to re-read after them would be noise that looks like data.
+   *
+   * Reads are skipped by method. Signing in and out is skipped by path: a
+   * session is one person's, nobody else's screen is stale because of it, and
+   * a login storm must not turn into a reload storm.
+   */
+  const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+  app.addHook("onResponse", async (request, reply) => {
+    if (!WRITE_METHODS.has(request.method) || reply.statusCode >= 400) {
+      return;
+    }
+
+    // The registered pattern ("/api/receipts/:id/void") rather than the URL, so
+    // one customer's id never reaches another customer's browser.
+    const route = request.routeOptions?.url ?? request.url;
+
+    if (route.startsWith("/api/auth/")) {
+      return;
+    }
+
+    const clientId = request.headers["x-client-id"];
+
+    publishChange({
+      resource: route.split("/")[2] ?? "unknown",
+      origin: typeof clientId === "string" && clientId !== "" ? clientId : null,
+      at: new Date().toISOString(),
+    });
+  });
 
   /*
    * The last line between a database error and the user's screen.
@@ -90,17 +137,21 @@ export async function buildApp(config: AppConfig, db: Db) {
         sessionDays: config.sessionDays,
         isProduction: config.nodeEnv === "production",
         loginAttemptsPerMinute: config.loginAttemptsPerMinute,
+        timeZone: config.timeZone,
       });
 
       await api.register(lotRoutes);
       await api.register(projectRoutes);
       await api.register(customerRoutes);
-      await api.register(contractRoutes);
+      await api.register(contractRoutes, { timeZone: config.timeZone });
       await api.register(receiptRoutes, { uploadsPath: config.uploadsPath });
       await api.register(transactionRoutes);
       await api.register(permissionRoutes);
+      await api.register(userRoutes);
       await api.register(exchangeRateRoutes);
+      await api.register(dashboardRoutes, { timeZone: config.timeZone });
       await api.register(auditRoutes);
+      await api.register(eventRoutes);
     },
     { prefix: "/api" },
   );

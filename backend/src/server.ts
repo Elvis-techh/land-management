@@ -14,7 +14,7 @@ const { db, sqlite } = createDb(config.databasePath);
 // applied. A failure here stops startup, which is what you want — serving
 // traffic against a half-built schema is worse than a restart loop a service
 // manager will surface.
-runMigrations(db);
+runMigrations(db, sqlite);
 
 const app = await buildApp(config, db);
 

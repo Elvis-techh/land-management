@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { Dialog } from "../../components/Dialog";
 import { IconClose } from "../../components/Icons";
 import { MoneyInput } from "../../components/MoneyInput";
+import { businessToday } from "../../lib/businessTime";
 import type { MoneyView } from "../../lib/money";
 import { cents, formatMoney, parseMoneyInput, toMoneyInput } from "../../lib/money";
 import type { Contract, CustomerRecord, HoldingKind, Lot, SaleType } from "../../types";
@@ -19,24 +20,6 @@ import {
   suggestMonthlyPayment,
   summarizeSchedule,
 } from "./contractSchedule";
-
-/**
- * Today as a LOCAL calendar date.
- *
- * Not `toISOString().slice(0, 10)`, which is UTC: after six in the evening in
- * Tegucigalpa that already reads as tomorrow, and a contract signed this
- * afternoon would default to a signing date that has not happened yet — which
- * then moves every due date in the schedule by a month.
- */
-function todayLocal(): string {
-  const now = new Date();
-
-  return [
-    now.getFullYear(),
-    String(now.getMonth() + 1).padStart(2, "0"),
-    String(now.getDate()).padStart(2, "0"),
-  ].join("-");
-}
 
 /** Two questions, asked one at a time — see the note on the component. */
 type Step = "parties" | "terms";
@@ -137,7 +120,7 @@ export function ContractCreateDialog({
   // Joining an existing purchase inherits its signing date by default: these
   // are lots bought in the same deal, and two signing dates a week apart would
   // give one purchase two different payment calendars.
-  const signedOn = signedOnOverride ?? joinContract?.terms.signedOn ?? todayLocal();
+  const signedOn = signedOnOverride ?? joinContract?.terms.signedOn ?? businessToday();
 
   const salePrice = priceOverride ?? (lot === null ? "" : toMoneyInput(lot.basePrice));
 

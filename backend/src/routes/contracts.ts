@@ -19,9 +19,20 @@ import {
 import { roleCan } from "../lib/capabilities.js";
 import { syncContractLifecycle } from "../lib/contractLifecycle.js";
 import { holdsLot, openContract } from "../lib/holding.js";
+import { businessToday } from "../lib/time.js";
 
-/** Today, as a calendar date. Every due date in the app is a date, not an instant. */
-const today = () => new Date().toISOString().slice(0, 10);
+/**
+ * What this plugin needs from the configuration.
+ *
+ * The timezone is passed in rather than read from the environment here, for the
+ * same reason `receiptRoutes` is handed its uploads path: a route that reaches
+ * for `process.env` is a route no test can put anywhere else, and "what day is
+ * it" is precisely the thing these tests need to control.
+ */
+interface ContractRoutesOptions {
+  /** IANA name — see `timeZone` in src/config/env.ts. */
+  timeZone: string;
+}
 
 /**
  * The contracts list, with every derived figure computed on read.
@@ -61,6 +72,7 @@ const contractsListQuery = (db: Db) =>
       customerId: customers.id,
       customerName: customers.fullName,
       customerPhone: customers.phone,
+      customerEmail: customers.email,
       paidToDateCents: sql<number>`
         COALESCE((
           SELECT SUM(${payments.amountCents})
@@ -136,6 +148,14 @@ function present(row: ContractRow, asOf: string) {
       id: row.customerId,
       fullName: row.customerName,
       phone: row.customerPhone,
+      /*
+       * Carried so the list can offer to write to this person without a second
+       * request per row. Optional in the same way it is on the customer: an
+       * address nobody gave is `null`, and the button that needs one is
+       * disabled rather than hidden — a missing address is a fact about the
+       * record worth seeing, not a feature to make disappear.
+       */
+      email: row.customerEmail,
     },
     terms: {
       salePrice: row.salePriceCents,
@@ -361,7 +381,13 @@ function withUniqueRetry<T>(run: () => T): T {
   }
 }
 
-export const contractRoutes: FastifyPluginAsync = async (app) => {
+export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
+  app,
+  options,
+) => {
+  /** Today in the office's calendar, not the server's and not UTC's. */
+  const today = () => businessToday(options.timeZone);
+
   app.get("/contracts", { onRequest: app.requireUser }, async (_request, reply) => {
     const asOf = today();
 

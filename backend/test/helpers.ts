@@ -29,6 +29,10 @@ const testConfig: AppConfig = {
   // No test may reach the network. The exchange-rate tests drive the routes
   // directly and stub the provider where they need to.
   exchangeRateRefreshHours: 0,
+  // The office's own zone, as production runs in. Tests that care about the
+  // date boundary override it; the rest inherit the real thing rather than
+  // whatever the machine running the suite happens to be set to.
+  timeZone: "America/Tegucigalpa",
 };
 
 /**
@@ -39,7 +43,10 @@ const testConfig: AppConfig = {
  */
 export async function buildTestApp(configOverrides: Partial<AppConfig> = {}) {
   const { db, sqlite } = createDb(":memory:");
-  runMigrations(db);
+
+  // Through the same runner the server uses, so a migration that only works on
+  // an empty database cannot pass here and fail on deploy.
+  runMigrations(db, sqlite);
 
   const ownerId = randomUUID();
   const staffId = randomUUID();

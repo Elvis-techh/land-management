@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ErrorBoundary } from "./components/ErrorBoundary";
-import { PlaceholderPage } from "./components/PlaceholderPage";
 import { Sidebar } from "./components/Sidebar";
 import { Topbar } from "./components/Topbar";
 import { AuditPage } from "./features/audit/AuditPage";
+import { DashboardPage } from "./features/dashboard/DashboardPage";
+import { useDashboard } from "./features/dashboard/useDashboard";
 import { CustomerDeleteDialog } from "./features/customers/CustomerDeleteDialog";
 import { CustomerFormDialog } from "./features/customers/CustomerFormDialog";
 import { CustomerPanel } from "./features/customers/CustomerPanel";
@@ -18,6 +19,7 @@ import { ContractEditDialog } from "./features/contracts/ContractEditDialog";
 import { ContractPanel } from "./features/contracts/ContractPanel";
 import { ContractsPage } from "./features/contracts/ContractsPage";
 import { SplitPreviewDialog } from "./features/contracts/SplitPreviewDialog";
+import type { ContractFilterPreset } from "./features/contracts/contractFilters";
 import {
   cancelContract,
   createContract,
@@ -47,6 +49,19 @@ import {
 } from "./features/projects/api";
 import { useProjects } from "./features/projects/useProjects";
 import { PermissionsPage } from "./features/permissions/PermissionsPage";
+import { UserDeactivateDialog } from "./features/users/UserDeactivateDialog";
+import { UserFormDialog } from "./features/users/UserFormDialog";
+import { UserPasswordDialog } from "./features/users/UserPasswordDialog";
+import { UsersPage } from "./features/users/UsersPage";
+import {
+  createUser,
+  deactivateUser,
+  reactivateUser,
+  resetUserPassword,
+  updateUser,
+} from "./features/users/api";
+import type { UserAccount, UserDraft } from "./features/users/api";
+import { useUsers } from "./features/users/useUsers";
 import { NewReceiptDialog } from "./features/receipts/NewReceiptDialog";
 import { ReceiptVoidDialog } from "./features/receipts/ReceiptVoidDialog";
 import { ReceiptsPage } from "./features/receipts/ReceiptsPage";
@@ -58,6 +73,7 @@ import { useLots } from "./features/lots/useLots";
 import { ApiError } from "./lib/api";
 import type { Currency, MoneyView } from "./lib/money";
 import type { User } from "./lib/permissions";
+import { useLiveUpdates } from "./lib/liveUpdates";
 import { isMobileViewport } from "./lib/viewport";
 import { can } from "./lib/permissions";
 import type { AreaUnit } from "./lib/area";
@@ -72,6 +88,7 @@ const pageTitles: Record<TabId, string> = {
   receipts: "Recibos",
   audit: "Historial",
   permissions: "Permisos",
+  users: "Usuarios",
 };
 
 const primaryActionLabels: Record<TabId, string> = {
@@ -83,6 +100,7 @@ const primaryActionLabels: Record<TabId, string> = {
   receipts: "Nueva transacción",
   audit: "Nuevo lote",
   permissions: "Nuevo lote",
+  users: "Nueva cuenta",
 };
 
 /**
@@ -115,7 +133,17 @@ export default function App() {
       .catch(() => setSession({ status: "anonymous" }));
   }, []);
 
-  const [activeTab, setActiveTab] = useState<TabId>("lots");
+  /*
+   * The Panel General is home.
+   *
+   * Lotes was the landing screen while it was the only one built. The question
+   * somebody opens this app to answer is "how are we doing" — which is the one
+   * screen that cannot be reached by looking at a single row, and is therefore
+   * the one worth showing before anybody has clicked anything.
+   */
+  const [activeTab, setActiveTab] = useState<TabId>("dashboard");
+  /** Filters the Contratos tab should adopt the next time it renders. */
+  const [contractsPreset, setContractsPreset] = useState<ContractFilterPreset | null>(null);
   const [currency, setCurrency] = useState<Currency>("HNL");
   const [isSidebarOpen, setSidebarOpen] = useState(() => !isMobileViewport());
   const [customerSelection, setCustomerSelection] = useState<CustomerSelection | null>(null);
@@ -142,6 +170,12 @@ export default function App() {
   const [contractBeingDefaulted, setContractBeingDefaulted] = useState<Contract | null>(null);
   // The lots of ONE purchase, while their split is being previewed.
   const [contractsBeingSplit, setContractsBeingSplit] = useState<Contract[] | null>(null);
+  // As with the project and customer forms, `null` in `accountBeingEdited`
+  // means the form is creating rather than editing, so the two are kept apart.
+  const [isUserFormOpen, setUserFormOpen] = useState(false);
+  const [accountBeingEdited, setAccountBeingEdited] = useState<UserAccount | null>(null);
+  const [accountChangingPassword, setAccountChangingPassword] = useState<UserAccount | null>(null);
+  const [accountBeingDeactivated, setAccountBeingDeactivated] = useState<UserAccount | null>(null);
 
   const isSignedIn = session.status === "signed-in";
 
@@ -162,7 +196,66 @@ export default function App() {
     isSignedIn,
     handleSessionExpired,
   );
-  const { rate, setRate } = useExchangeRate(isSignedIn, handleSessionExpired);
+  const {
+    state: dashboardState,
+    reload: reloadDashboard,
+    setMonth: setDashboardMonth,
+  } = useDashboard(isSignedIn);
+  const { rate, setRate, reload: reloadRate } = useExchangeRate(isSignedIn, handleSessionExpired);
+  /*
+   * Only fetched for somebody who can manage accounts.
+   *
+   * Every other list here loads for anyone signed in, because everyone can see
+   * lots and customers. This one comes back 403 for an associate, which would
+   * put a permanent error card behind a tab they cannot even reach.
+   */
+  const canManageUsers =
+    session.status === "signed-in" && can(session.user, "user:manage");
+  const { state: usersState, reload: reloadUsers } = useUsers(canManageUsers);
+
+  /*
+   * Re-read everything.
+   *
+   * ALL of it, on any write by anybody, rather than a careful subset — for the
+   * reason set out in backend/src/lib/changes.ts. A single payment moves the
+   * transactions list, the contract's health, the lot's paid-to-date, the
+   * customer's holdings and the project's totals, because every one of those is
+   * derived on read rather than stored. There is no subset to be clever about
+   * that is not also a subset to be wrong about, and each of these is one GET
+   * of a few hundred rows.
+   *
+   * Nothing flickers: each hook swaps its data in place and only shows
+   * "Cargando…" when it has nothing yet.
+   */
+  const reloadEverything = useCallback(() => {
+    void reloadLots();
+    void reloadProjects();
+    void reloadCustomers();
+    void reloadContracts();
+    void reloadTransactions();
+    void reloadDashboard();
+    void reloadRate().catch(() => undefined);
+    // Guarded, unlike the rest: GET /api/users is a 403 for an associate, and
+    // firing one on every write anybody makes would be a stream of refusals in
+    // the log for a screen that account cannot open.
+    if (canManageUsers) {
+      void reloadUsers();
+    }
+  }, [
+    reloadLots,
+    reloadProjects,
+    reloadCustomers,
+    reloadContracts,
+    reloadTransactions,
+    reloadDashboard,
+    reloadRate,
+    canManageUsers,
+    reloadUsers,
+  ]);
+
+  // What makes the app live: a teammate's write, or coming back to this tab,
+  // runs the same reload your own write already runs. See lib/liveUpdates.ts.
+  useLiveUpdates(isSignedIn, reloadEverything);
 
   // Currency and rate travel together, so a component cannot format money with
   // one and forget the other.
@@ -224,6 +317,39 @@ export default function App() {
     if (isMobileViewport()) {
       setSidebarOpen(false);
     }
+  };
+
+  /*
+   * Open one contract's panel from a screen that only knows its id.
+   *
+   * The Panel General holds summary rows of its own rather than `Contract`
+   * objects, so the lookup happens here, against the list this component
+   * already owns. A contract the list does not have — one archived since the
+   * dashboard was last refreshed — opens nothing rather than an empty panel.
+   */
+  const handleOpenContractById = (contractId: string) => {
+    if (contractsState.status !== "ready") {
+      return;
+    }
+
+    const contract = contractsState.contracts.find((row) => row.id === contractId);
+
+    if (contract) {
+      setContractBeingViewed(contract);
+    }
+  };
+
+  /*
+   * Leave for Contratos with filters already applied.
+   *
+   * The preset is held here rather than pushed into ContractsPage, because that
+   * screen owns its own filter state and a prop that overwrote it on every
+   * render would fight the reader every time they changed a chip. It is handed
+   * over once, consumed, and cleared — see `onPresetApplied`.
+   */
+  const handleShowContracts = (preset: ContractFilterPreset) => {
+    setContractsPreset(preset);
+    handleSelectTab("contracts");
   };
 
   const handleSignOut = async () => {
@@ -423,6 +549,57 @@ export default function App() {
     await reloadLots();
   };
 
+  const openUserForm = (account: UserAccount | null) => {
+    setAccountBeingEdited(account);
+    setUserFormOpen(true);
+  };
+
+  const closeUserForm = () => {
+    setUserFormOpen(false);
+    setAccountBeingEdited(null);
+  };
+
+  const handleSaveUser = async (draft: UserDraft & { password?: string }) => {
+    if (accountBeingEdited) {
+      await updateUser(accountBeingEdited.id, draft).catch(handleApiError);
+    } else {
+      // The form guarantees a password when creating; the type cannot, since
+      // one draft shape serves both. The server refuses a missing one anyway.
+      await createUser({ ...draft, password: draft.password ?? "" }).catch(handleApiError);
+    }
+
+    await reloadUsers();
+    closeUserForm();
+  };
+
+  const handleResetPassword = async (password: string) => {
+    if (!accountChangingPassword) {
+      return;
+    }
+
+    await resetUserPassword(accountChangingPassword.id, password).catch(handleApiError);
+
+    // Not just the row: resetting your OWN password ends this session too, and
+    // the next request is what will find that out and drop to the login screen.
+    await reloadUsers();
+    setAccountChangingPassword(null);
+  };
+
+  const handleDeactivateUser = async () => {
+    if (!accountBeingDeactivated) {
+      return;
+    }
+
+    await deactivateUser(accountBeingDeactivated.id).catch(handleApiError);
+    await reloadUsers();
+    setAccountBeingDeactivated(null);
+  };
+
+  const handleReactivateUser = async (account: UserAccount) => {
+    await reactivateUser(account.id).catch(handleApiError);
+    await reloadUsers();
+  };
+
   /**
    * What the button in the top right does on this screen, or `undefined` when
    * there is nothing for it to do — which is what hides it.
@@ -447,12 +624,21 @@ export default function App() {
           ? () => openCustomerForm(null)
           : undefined;
 
+      // The Panel General offers the same action as Contratos, since its own
+      // heading already says "Nuevo contrato" and a button that does nothing is
+      // worse than no button.
+      case "dashboard":
       case "contracts":
         return contractsState.status === "ready" &&
           lotsState.status === "ready" &&
           customersState.status === "ready" &&
           can(user, "contract:create")
           ? () => setCreatingContract(true)
+          : undefined;
+
+      case "users":
+        return usersState.status === "ready" && can(user, "user:manage")
+          ? () => openUserForm(null)
           : undefined;
 
       // Recording a payment needs the customers to pick from and their
@@ -509,15 +695,38 @@ export default function App() {
               caused it: the sidebar, the top bar and every other tab keep
               working, and switching away resets the boundary. */}
           <ErrorBoundary variant="panel" area={`la pantalla de ${pageTitles[activeTab]}`} key={activeTab}>
-          {activeTab !== "lots" &&
-            activeTab !== "projects" &&
-            activeTab !== "customers" &&
-            activeTab !== "contracts" &&
-            activeTab !== "receipts" &&
-            activeTab !== "audit" &&
-            activeTab !== "permissions" && (
-              <PlaceholderPage title={pageTitles[activeTab]} />
-            )}
+          {activeTab === "dashboard" && dashboardState.status === "loading" && (
+            <section className="panel active">
+              <div className="card">
+                <p className="state-message">Cargando el panel…</p>
+              </div>
+            </section>
+          )}
+
+          {activeTab === "dashboard" && dashboardState.status === "error" && (
+            <section className="panel active">
+              <div className="card">
+                <p className="form-error">{dashboardState.message}</p>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => void reloadDashboard()}
+                >
+                  Reintentar
+                </button>
+              </div>
+            </section>
+          )}
+
+          {activeTab === "dashboard" && dashboardState.status === "ready" && (
+            <DashboardPage
+              data={dashboardState.data}
+              money={money}
+              onSelectMonth={setDashboardMonth}
+              onOpenContract={handleOpenContractById}
+              onShowContracts={handleShowContracts}
+            />
+          )}
 
           {activeTab === "audit" && <AuditPage money={money} />}
 
@@ -532,6 +741,36 @@ export default function App() {
                   .then((refreshed) => setSession({ status: "signed-in", user: refreshed }))
                   .catch(() => undefined);
               }}
+            />
+          )}
+
+          {activeTab === "users" && usersState.status === "loading" && (
+            <section className="panel active">
+              <div className="card">
+                <p className="state-message">Cargando cuentas…</p>
+              </div>
+            </section>
+          )}
+
+          {activeTab === "users" && usersState.status === "error" && (
+            <section className="panel active">
+              <div className="card">
+                <p className="form-error">{usersState.message}</p>
+                <button type="button" className="btn-secondary" onClick={() => void reloadUsers()}>
+                  Reintentar
+                </button>
+              </div>
+            </section>
+          )}
+
+          {activeTab === "users" && usersState.status === "ready" && (
+            <UsersPage
+              users={usersState.users}
+              onCreate={() => openUserForm(null)}
+              onEdit={openUserForm}
+              onResetPassword={setAccountChangingPassword}
+              onDeactivate={setAccountBeingDeactivated}
+              onReactivate={handleReactivateUser}
             />
           )}
 
@@ -631,6 +870,8 @@ export default function App() {
               user={user}
               onOpenContract={setContractBeingViewed}
               onSplitPayment={setContractsBeingSplit}
+              filterPreset={contractsPreset}
+              onPresetApplied={() => setContractsPreset(null)}
             />
           )}
 
@@ -805,6 +1046,32 @@ export default function App() {
           customers={customersState.status === "ready" ? customersState.customers : []}
           onCancel={closeCustomerForm}
           onSave={handleSaveCustomer}
+        />
+      )}
+
+      {isUserFormOpen && (
+        <UserFormDialog
+          account={accountBeingEdited}
+          users={usersState.status === "ready" ? usersState.users : []}
+          isSelf={accountBeingEdited?.id === user.id}
+          onCancel={closeUserForm}
+          onSave={handleSaveUser}
+        />
+      )}
+
+      {accountChangingPassword && (
+        <UserPasswordDialog
+          account={accountChangingPassword}
+          onCancel={() => setAccountChangingPassword(null)}
+          onConfirm={handleResetPassword}
+        />
+      )}
+
+      {accountBeingDeactivated && (
+        <UserDeactivateDialog
+          account={accountBeingDeactivated}
+          onCancel={() => setAccountBeingDeactivated(null)}
+          onConfirm={handleDeactivateUser}
         />
       )}
 

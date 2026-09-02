@@ -6,10 +6,10 @@ import { MoneyInput } from "../../components/MoneyInput";
 import { ApiError } from "../../lib/api";
 import type { MoneyView } from "../../lib/money";
 import { cents, formatMoney, parseMoneyInput, toMoneyInput } from "../../lib/money";
-import { parseTimestamp } from "../../lib/time";
 import type { Transaction } from "../../types";
 import type { TransactionEdit } from "./api";
 import { updateTransaction } from "./api";
+import { compareLedgerOrder } from "./transactionSort";
 
 interface TransactionEditDialogProps {
   transaction: Transaction;
@@ -105,20 +105,18 @@ export function TransactionEditDialog({
   /**
    * Ordered oldest-first here, because this is a history rather than a feed.
    *
-   * Two payments on one day are separated by when they were ENTERED, which is
-   * the order `backend/src/lib/ledger.ts` replays them in — so the sequence
+   * `compareLedgerOrder` rather than a sort spelled out again: this is the
+   * order `backend/src/lib/ledger.ts` replays a contract in, so the sequence
    * read here is the sequence the balances either side of this edit were
-   * derived from. The id only settles a dead heat; it is a random UUID, and
-   * ordering a history by it would be ordering it by nothing.
+   * derived from — and it is the same function the Recibos list sorts by, which
+   * is what makes that list's "más recientes primero" the exact reverse of this
+   * panel. Written out twice, the two drifted: rows tied on both the date and
+   * the entry time came out in the same order in a list that claimed to be
+   * newest-first, so the last row of a customer's payments opened here as their
+   * third rather than their first.
    */
   const history = useMemo(
-    () =>
-      [...customerTransactions].sort(
-        (a, b) =>
-          a.paidOn.localeCompare(b.paidOn) ||
-          parseTimestamp(a.createdAt) - parseTimestamp(b.createdAt) ||
-          a.id.localeCompare(b.id),
-      ),
+    () => [...customerTransactions].sort(compareLedgerOrder),
     [customerTransactions],
   );
 
@@ -162,7 +160,14 @@ export function TransactionEditDialog({
   };
 
   return (
-    <Dialog ariaLabel={`Corregir la transacción de ${transaction.customerName}`} onClose={onClose}>
+    /* `wide` because the history beside the form is a table, not prose — see
+       the note on `size` in components/Dialog.tsx. It stacks under the form
+       below 900px, where the room to put it beside them stops existing. */
+    <Dialog
+      ariaLabel={`Corregir la transacción de ${transaction.customerName}`}
+      size="wide"
+      onClose={onClose}
+    >
       <div className="modal-header">
         <div>
           <p className="modal-eyebrow">Corregir transacción</p>

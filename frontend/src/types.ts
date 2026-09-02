@@ -10,7 +10,8 @@ export type TabId =
   | "customers"
   | "receipts"
   | "audit"
-  | "permissions";
+  | "permissions"
+  | "users";
 
 /**
  * A project, with the counts the Proyectos screen shows.
@@ -44,8 +45,15 @@ export interface Project {
 export interface Customer {
   id: string;
   fullName: string;
-  /** Número de identidad. Unique: one person, one record. */
-  identification: string;
+  /**
+   * Número de identidad, or `null` when the customer has not given one.
+   *
+   * Optional: an identidad is confidential and is often not available when
+   * somebody is first written down. Unique among those who HAVE given one, so
+   * a real number still cannot be entered twice. Never render it without
+   * checking — an "Identidad" label with nothing after it reads as lost data.
+   */
+  identification: string | null;
   /**
    * Stored in E.164, e.g. "+50499824471" — see lib/phone.ts.
    *
@@ -263,6 +271,8 @@ export interface Contract {
     fullName: string;
     /** E.164 — run it through `formatPhone` before showing it. */
     phone: string;
+    /** `null` when none was given. The Escribir action is disabled, not hidden. */
+    email: string | null;
   };
   terms: ContractTerms;
   /** Summed from payments of type `down_payment`, not the agreed figure. */
@@ -339,7 +349,7 @@ export interface Receipt {
   id: string;
   /** The sequence, as an integer. Never reused, even after a void. */
   number: number;
-  /** The sequence as people say it: "REC-2026-00042". */
+  /** What is printed on the paper: "IM-482739156034". Random, always 12 digits. */
   code: string;
   /**
    * A short, random, unguessable code for looking the receipt up.
@@ -355,7 +365,7 @@ export interface Receipt {
   voidedAt: string | null;
   voidReason: string | null;
   supersededById: string | null;
-  customer: { id: string; fullName: string; identification: string; phone: string };
+  customer: { id: string; fullName: string; identification: string | null; phone: string };
   issuedBy: { id: string; name: string };
   /** What the customer handed over. Unaffected by a later void. */
   totalPaid: Cents;

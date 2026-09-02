@@ -63,25 +63,62 @@ function compareWhen(a: Transaction, b: Transaction): number {
 }
 
 /**
+ * LEDGER ORDER: `paidOn`, then `createdAt`, then the id. Oldest first.
+ *
+ * The whole key, and the same three parts in the same order as
+ * `compareLedgerOrder` in backend/src/lib/ledger.ts. Exported because the
+ * correction dialog's history has to be this exact sequence — it is the order
+ * the server replays a contract in, so it is the order the balances either side
+ * of an edit were derived from.
+ *
+ * The id is arbitrary — a `randomUUID()` — and only ever settles a genuine dead
+ * heat. Two payments tie that far when they share a `paidOn` AND a `createdAt`
+ * to the millisecond, which is not an exotic case: a receipt covering three
+ * lots writes three payments inside one database transaction, all stamped from
+ * the same `new Date()`. What the id buys is not meaning, it is TOTALITY — a
+ * comparison that never returns zero, so there is exactly one order and every
+ * screen reads the same one.
+ */
+export function compareLedgerOrder(a: Transaction, b: Transaction): number {
+  return compareWhen(a, b) || a.id.localeCompare(b.id);
+}
+
+/**
  * Order the transactions.
  *
- * Rows the chosen field cannot separate fall back to WHEN they happened, newest
- * first, and then to the id. That fallback is not flipped by direction: asking
- * for "menor a mayor" should not also reverse the two payments that tie at
- * L 5,000, for no visible reason.
+ * Ordering by "Fecha del pago" is ledger order, whole, with the direction
+ * applied to ALL THREE parts of the key — so "más recientes primero" is the
+ * exact reverse of "más antiguos primero", and of the history in the correction
+ * dialog. That is a stronger promise than it sounds, and it is the one that was
+ * broken:
  *
- * The id is last and only ever settles a genuine dead heat — two rows with the
- * same `paidOn` and the same `createdAt` to the millisecond. It is NOT a
- * stand-in for `createdAt`: ids are `randomUUID()`, so ordering by one is
- * ordering by a random string that merely happens never to change between
- * renders. Sorting the ties by it is how three payments from one customer on
- * one day ended up with somebody else's payment shuffled into the middle of
- * them — an order that looked like it meant something and meant nothing.
+ * The list used to reverse `paidOn` and `createdAt` but leave the final id
+ * comparison ascending. Rows that tie on the first two parts therefore came out
+ * in the SAME relative order whichever direction was chosen — and a receipt
+ * covering three lots produces exactly such a tie, three payments stamped from
+ * one `new Date()`. So the bottom row of a newest-first list was the LAST of
+ * those three, while the oldest-first history put it third. Scroll to the foot
+ * of a customer's payments, open the one that has to be their first, and the
+ * dialog highlighted the third. Nothing was miscounted; the two screens were
+ * reading one ambiguity in two directions.
+ *
+ * Ordering by anything else keeps a different rule, deliberately. Rows the
+ * chosen field cannot separate fall back to ledger order REVERSED — newest
+ * first — and that fallback is not flipped by direction: asking for "menor a
+ * mayor" should not also reverse the two payments that tie at L 5,000, for no
+ * visible reason.
  */
 export function sortTransactions(
   transactions: Transaction[],
   sort: TransactionSort,
 ): Transaction[] {
+  const factor = sort.direction === "asc" ? 1 : -1;
+
+  // A copy: sorting the array we were handed would mutate the caller's state.
+  if (sort.field === "date") {
+    return [...transactions].sort((a, b) => compareLedgerOrder(a, b) * factor);
+  }
+
   const compare = (a: Transaction, b: Transaction): number => {
     switch (sort.field) {
       case "customer":
@@ -89,27 +126,14 @@ export function sortTransactions(
       case "amount":
         return a.amount - b.amount;
       case "lot":
-        return a.lotCode.localeCompare(b.lotCode, "es");
-      case "date":
       default:
-        // Ascending means oldest first, so the raw comparison is a plain one.
-        // `createdAt` is part of it rather than a fallback, because it is the
-        // same axis at a finer grain: "más recientes primero" has to mean the
-        // newest of the day first too, or the top of a day reads backwards.
-        return compareWhen(a, b);
+        return a.lotCode.localeCompare(b.lotCode, "es");
     }
   };
 
-  const factor = sort.direction === "asc" ? 1 : -1;
-
-  // A copy: sorting the array we were handed would mutate the caller's state.
-  return [...transactions].sort((a, b) => {
-    const result = compare(a, b);
-
-    return (
-      (result !== 0 ? result * factor : -compareWhen(a, b)) || a.id.localeCompare(b.id)
-    );
-  });
+  return [...transactions].sort(
+    (a, b) => compare(a, b) * factor || -compareLedgerOrder(a, b),
+  );
 }
 
 /**

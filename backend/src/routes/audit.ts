@@ -1,5 +1,6 @@
 import { desc, eq, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
+import { alias } from "drizzle-orm/sqlite-core";
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 
@@ -64,6 +65,11 @@ export const auditRoutes: FastifyPluginAsync = async (app) => {
     // Resolve a human-readable label for whatever the row points at, so the
     // screen shows "A-07" rather than a UUID.
     const actor = users;
+    // A second, ALIASED reference to the same table: an audit row about a user
+    // account has an actor and a subject, and both are users. Without the alias
+    // SQLite sees one table joined to itself under one name and the row names
+    // the person who made the change rather than the account that changed.
+    const subject = alias(users, "subject_user");
     const rows = app.db
       .select({
         id: auditEvents.id,
@@ -79,6 +85,7 @@ export const auditRoutes: FastifyPluginAsync = async (app) => {
         lotCode: lots.code,
         customerName: customers.fullName,
         projectName: projects.name,
+        subjectName: subject.name,
       })
       .from(auditEvents)
       .innerJoin(actor, eq(actor.id, auditEvents.actorId))
@@ -87,6 +94,7 @@ export const auditRoutes: FastifyPluginAsync = async (app) => {
       .leftJoin(lots, eq(lots.id, auditEvents.entityId))
       .leftJoin(customers, eq(customers.id, auditEvents.entityId))
       .leftJoin(projects, eq(projects.id, auditEvents.entityId))
+      .leftJoin(subject, eq(subject.id, auditEvents.entityId))
       .where(where)
       .orderBy(desc(auditEvents.createdAt), desc(auditEvents.id))
       .limit(limit)
@@ -111,7 +119,11 @@ export const auditRoutes: FastifyPluginAsync = async (app) => {
           entityType: row.entityType,
           entityId: row.entityId,
           entityLabel:
-            row.lotCode ?? row.customerName ?? row.projectName ?? snapshotLabel(before),
+            row.lotCode ??
+            row.customerName ??
+            row.projectName ??
+            row.subjectName ??
+            snapshotLabel(before),
           actorName: row.actorName,
           actorRole: row.actorRole,
           reason: row.reason,

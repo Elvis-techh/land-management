@@ -79,8 +79,18 @@ const GROUPS: Array<{
       { capability: "payment:record", label: "Registrar pagos" },
       {
         capability: "payment:reverse",
-        label: "Reversar pagos",
-        hint: "Corrige un pago mal capturado escribiendo una reversa.",
+        label: "Reversar pagos y anular recibos",
+        hint:
+          "Escribe una reversa: el pago original queda a la vista y deja de contar. " +
+          "No permite cambiarle el monto — eso va aparte.",
+      },
+      {
+        capability: "payment:edit",
+        label: "Corregir una transacción ya registrada",
+        hint:
+          "Reescribe el monto o la fecha de un pago en su lugar, en vez de reversarlo. " +
+          "La cifra anterior sobrevive solo en el historial, así que es más confianza " +
+          "que reversar. Exige escribir un motivo.",
       },
       {
         capability: "price:change",
@@ -213,6 +223,42 @@ export function PermissionsPage({ onSaved }: PermissionsPageProps) {
 
   const offered = new Set(data.capabilities.map((row) => row.capability));
 
+  /*
+   * Anything the server offers that the list above has never heard of.
+   *
+   * `GROUPS` is written by hand, and the failure it invites is silent: add a
+   * capability to the server and forget the entry here, and the switch simply
+   * does not exist. Nobody sees a gap — they see a complete-looking page — and
+   * the new power stays permanently off for the associate while appearing to
+   * nobody as a decision. That is the same class of bug as a permission that
+   * looks granted and is not.
+   *
+   * So an undescribed capability is shown rather than dropped. It reads badly
+   * on purpose — a raw `payment:edit` next to a plea for a proper label is
+   * exactly the nudge needed — but the supervisor can still grant it, and it
+   * cannot go missing.
+   */
+  const described = new Set(GROUPS.flatMap((group) => group.items.map((item) => item.capability)));
+  const undescribed = data.capabilities.filter((row) => !described.has(row.capability));
+
+  const groups =
+    undescribed.length === 0
+      ? GROUPS
+      : [
+          ...GROUPS,
+          {
+            title: "Otros permisos",
+            description:
+              "Permisos que el servidor ofrece y que esta pantalla todavía no sabe describir. " +
+              "Funcionan igual; solo les falta un nombre en español.",
+            items: undescribed.map((row) => ({
+              capability: row.capability,
+              label: row.capability,
+              hint: undefined,
+            })),
+          },
+        ];
+
   return (
     <section className="panel active">
       <div className="card permissions-intro">
@@ -224,7 +270,7 @@ export function PermissionsPage({ onSaved }: PermissionsPageProps) {
         </p>
       </div>
 
-      {GROUPS.map((group) => {
+      {groups.map((group) => {
         const items = group.items.filter((item) => offered.has(item.capability));
 
         if (items.length === 0) {

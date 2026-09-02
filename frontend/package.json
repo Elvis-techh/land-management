@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "test": "tsx --test test/*.test.ts",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"
   },
@@ -18,6 +19,7 @@
     "vite": "^8.2.2"
   },
   "dependencies": {
+    "html-to-image": "^1.11.13",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   }
