@@ -121,10 +121,38 @@ export function updateContract(contractId: string, draft: ContractTermsDraft) {
   );
 }
 
-export function cancelContract(contractId: string, reason: string) {
-  return api.post<{ ok: boolean; closedAt: string }>(`/api/contracts/${contractId}/cancel`, {
-    reason,
-  });
+/** What happens to money the customer already paid — see ContractCancelDialog. */
+export type CancelSettlement = "none" | "held" | "refunded";
+
+interface CloseResult {
+  ok: boolean;
+  closedAt: string;
+  settlement: CancelSettlement | null;
+  refundedCents: number;
+}
+
+export function cancelContract(
+  contractId: string,
+  reason: string,
+  settlement?: CancelSettlement,
+) {
+  return api.post<CloseResult>(`/api/contracts/${contractId}/cancel`, { reason, settlement });
+}
+
+/**
+ * Declare a contract uncollectable — the customer defaulted. Owner only.
+ *
+ * The same shape as `cancelContract`: same settlement question, same refund
+ * path. It is a separate action because a default is the business writing off
+ * what it is owed, and a cancellation is a sale unwound by agreement — and the
+ * two need to be told apart in the history and the stats.
+ */
+export function defaultContract(
+  contractId: string,
+  reason: string,
+  settlement?: CancelSettlement,
+) {
+  return api.post<CloseResult>(`/api/contracts/${contractId}/default`, { reason, settlement });
 }
 
 /**

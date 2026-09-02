@@ -1,4 +1,4 @@
-import { desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 
@@ -7,7 +7,12 @@ import { contracts, customers, lots, payments, projects, receipts, users } from 
 import { splitEvenly } from "../lib/allocation.js";
 import type { AllocationTarget } from "../lib/allocation.js";
 import { recordAudit } from "../lib/audit.js";
+import { syncContractLifecycle } from "../lib/contractLifecycle.js";
+import { openContract } from "../lib/holding.js";
 import { replayContract } from "../lib/ledger.js";
+
+/** Today as a YYYY-MM-DD calendar date. */
+const today = () => new Date().toISOString().slice(0, 10);
 
 const PAYMENT_METHODS = ["cash", "transfer", "card"] as const;
 const PAYMENT_TYPES = ["down_payment", "installment", "full_payment", "adjustment"] as const;
@@ -161,7 +166,9 @@ export const transactionRoutes: FastifyPluginAsync = async (app) => {
         .from(contracts)
         .innerJoin(lots, eq(lots.id, contracts.lotId))
         .innerJoin(projects, eq(projects.id, lots.projectId))
-        .where(sql`${contracts.customerId} = ${request.params.id} AND ${contracts.status} = 'active'`)
+        // Contracts still being serviced — a paid-off or lapsed one has
+        // nothing left to pay, so it is not a split target.
+        .where(and(eq(contracts.customerId, request.params.id), openContract(today())))
         .all();
 
       const targets: AllocationTarget[] = open.map((contract) => ({
@@ -344,6 +351,10 @@ export const transactionRoutes: FastifyPluginAsync = async (app) => {
           before,
           after,
         });
+
+        // A corrected amount can close a contract (down to zero) or reopen a
+        // paid-off one (corrected below the price again).
+        syncContractLifecycle(tx, existing.contractId, request.user!.id);
       });
 
       const updated = transactionsQuery(app.db).where(eq(payments.id, existing.id)).get();

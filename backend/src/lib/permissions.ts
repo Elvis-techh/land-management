@@ -31,6 +31,7 @@ export const CAPABILITIES = [
   "contract:edit",
   "contract:reprice",
   "contract:cancel",
+  "contract:default",
   "payment:record",
   "payment:reverse",
   "price:change",
@@ -43,18 +44,23 @@ export const CAPABILITIES = [
 export type Capability = (typeof CAPABILITIES)[number];
 
 /**
- * Capabilities that can NEVER be granted to another role, whatever the
- * supervisor toggles.
+ * Capabilities that stay with the owner, whatever the supervisor toggles.
  *
- * This is the lock that makes editable permissions safe. Without it, a
- * supervisor could hand `permission:manage` to the associate role, and an
- * associate could then grant themselves everything — including `user:manage`,
- * which is the only way back. Account control stays with the owner by
- * construction, not by anybody remembering not to tick a box.
+ * `permission:manage` and `user:manage` are here because handing either one
+ * over is an escalation vector: a supervisor could grant `permission:manage` to
+ * the associate role, and an associate could then grant themselves everything,
+ * including `user:manage`, which is the only way back. Account control stays
+ * with the owner by construction, not by anybody remembering not to tick a box.
+ *
+ * `contract:default` is here for a different reason: declaring a contract
+ * uncollectable writes off the customer's remaining balance and frees the lot
+ * for resale. That is a decision about money the business is giving up on, and
+ * it is not one to delegate.
  */
 export const LOCKED_CAPABILITIES: ReadonlySet<Capability> = new Set<Capability>([
   "permission:manage",
   "user:manage",
+  "contract:default",
 ]);
 
 /** The capabilities a supervisor is allowed to turn on and off for a role. */

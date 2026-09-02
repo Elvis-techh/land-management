@@ -46,9 +46,13 @@ export interface LotsData {
  * JSON has no way to say "this number is centavos", so the branding happens
  * here, at the boundary. Past this point TypeScript will not let a plain number
  * be used where money is expected.
+ *
+ * Archived lots come along too — the Lotes screen keeps them out of the working
+ * list itself and shows them only behind the "Archivados" toggle, so a lot
+ * archived by mistake can be found and restored.
  */
 export async function fetchLots(): Promise<LotsData> {
-  const response = await api.get<LotsResponse>("/api/lots");
+  const response = await api.get<LotsResponse>("/api/lots?includeArchived=true");
 
   return {
     lots: response.lots.map((lot) => ({
@@ -94,4 +98,8 @@ export function updateLot(lotId: string, changes: LotUpdate) {
 
 export function archiveLot(lotId: string, reason: string) {
   return api.post<{ ok: boolean; archivedAt: string }>(`/api/lots/${lotId}/archive`, { reason });
+}
+
+export function restoreLot(lotId: string) {
+  return api.post<{ ok: boolean }>(`/api/lots/${lotId}/restore`);
 }

@@ -1,16 +1,24 @@
 import { randomUUID } from "node:crypto";
 
 import { and, desc, eq, sql } from "drizzle-orm";
-import type { FastifyPluginAsync } from "fastify";
+import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 
 import type { Db } from "../db/client.js";
-import { contracts, customers, lots, payments, projects } from "../db/schema.js";
+import { contracts, customers, lots, payments, projects, receipts } from "../db/schema.js";
 import { splitEvenly } from "../lib/allocation.js";
 import { recordAudit } from "../lib/audit.js";
 import type { ContractTerms, SaleType } from "../lib/contracts.js";
-import { assessContract, buildSchedule, financedCents, firstDueDate } from "../lib/contracts.js";
+import {
+  assessContract,
+  buildSchedule,
+  financedCents,
+  firstDueDate,
+  isReservationExpired,
+} from "../lib/contracts.js";
 import { roleCan } from "../lib/capabilities.js";
+import { syncContractLifecycle } from "../lib/contractLifecycle.js";
+import { holdsLot, openContract } from "../lib/holding.js";
 
 /** Today, as a calendar date. Every due date in the app is a date, not an instant. */
 const today = () => new Date().toISOString().slice(0, 10);
@@ -43,6 +51,7 @@ const contractsListQuery = (db: Db) =>
       expiresOn: contracts.expiresOn,
       closedAt: contracts.closedAt,
       closedReason: contracts.closedReason,
+      closedSettlement: contracts.closedSettlement,
       notes: contracts.notes,
       createdAt: contracts.createdAt,
       lotId: lots.id,
@@ -110,6 +119,13 @@ function present(row: ContractRow, asOf: string) {
     kind: row.kind,
     saleType: row.saleType,
     status: row.status,
+    /**
+     * A reservation whose `expiresOn` has passed. The row still reads
+     * `status = 'active'` — nothing rewrites it — but the hold has lapsed: the
+     * lot is available again and the Contratos screen shows this one as
+     * "Vencida". Derived here, like every other status in the app.
+     */
+    expired: isReservationExpired(row.kind, row.expiresOn, asOf),
     lot: {
       id: row.lotId,
       code: row.lotCode,
@@ -160,6 +176,8 @@ function present(row: ContractRow, asOf: string) {
     installmentCount: buildSchedule(terms).length,
     closedAt: row.closedAt,
     closedReason: row.closedReason,
+    /** "none" | "held" | "refunded" — what became of money paid, on cancellation. */
+    closedSettlement: row.closedSettlement,
     notes: row.notes,
   };
 }
@@ -213,6 +231,19 @@ const updateBody = contractBody
 
 const cancelBody = z.object({
   reason: z.string().trim().min(10).max(500),
+  /**
+   * What happens to money the customer has already paid:
+   *
+   * - "none"     — it stays as income; nothing is reversed.
+   * - "held"     — it stays counted for now, flagged for a decision later.
+   * - "refunded" — the payments are reversed here and now, so they stop
+   *                counting anywhere, and any receipt they fully covered is
+   *                voided. Needs the `payment:reverse` capability.
+   *
+   * Required when anything has been paid — the handler rejects a missing one
+   * with `settlement_required` rather than the schema, so it can say why.
+   */
+  settlement: z.enum(["none", "held", "refunded"]).optional(),
 });
 
 /**
@@ -277,20 +308,57 @@ function termsProblem(
  * Server-assigned and sequential. The unique index on `code` is what actually
  * guarantees no two contracts share a number; this makes the common case land
  * on the next free one instead of colliding.
+ *
+ * The suffix is compared as an INTEGER, not as text. A text sort puts
+ * "CT-2026-999" above "CT-2026-1000" — nine is a bigger character than one — so
+ * ordering by the string hands out 1000 a second time the moment the
+ * thousandth contract of a year exists, and every create after that collides
+ * on the unique index for the rest of the year. `substr(code, N)` takes
+ * everything after the `CT-YYYY-` prefix; `CAST(... AS INTEGER)` then makes 1000
+ * genuinely larger than 999.
+ *
+ * Takes any handle with `select` so it can run INSIDE the insert transaction,
+ * where the write lock keeps two racing creates from reading the same maximum.
  */
-function nextContractCode(db: Db, year: string): string {
+function nextContractCode(db: Pick<Db, "select">, year: string): string {
   const prefix = `CT-${year}-`;
 
-  const latest = db
-    .select({ code: contracts.code })
+  const row = db
+    .select({
+      max: sql<number | null>`MAX(CAST(substr(${contracts.code}, ${prefix.length + 1}) AS INTEGER))`,
+    })
     .from(contracts)
     .where(sql`${contracts.code} LIKE ${`${prefix}%`}`)
-    .orderBy(desc(contracts.code))
     .get();
 
-  const sequence = latest ? Number(latest.code.slice(prefix.length)) : 0;
+  return `${prefix}${String((row?.max ?? 0) + 1).padStart(3, "0")}`;
+}
 
-  return `${prefix}${String((Number.isFinite(sequence) ? sequence : 0) + 1).padStart(3, "0")}`;
+/** True for the SQLite error a violated UNIQUE index throws. */
+function isUniqueViolation(error: unknown): boolean {
+  if (typeof error === "object" && error !== null && "code" in error) {
+    return (error as { code?: unknown }).code === "SQLITE_CONSTRAINT_UNIQUE";
+  }
+  return String(error).includes("UNIQUE");
+}
+
+/**
+ * Run a write, and run it once more if it lost a race for a unique value.
+ *
+ * `nextContractCode` reads MAX(number) + 1 under the write lock, but two
+ * transactions can still both read the same maximum before either commits — the
+ * loser then hits the unique index on `code`. One retry recomputes against the
+ * row the winner just wrote and lands on the next free number.
+ */
+function withUniqueRetry<T>(run: () => T): T {
+  try {
+    return run();
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      return run();
+    }
+    throw error;
+  }
 }
 
 export const contractRoutes: FastifyPluginAsync = async (app) => {
@@ -328,9 +396,7 @@ export const contractRoutes: FastifyPluginAsync = async (app) => {
       const asOf = today();
 
       const members = contractsListQuery(app.db)
-        .where(
-          and(eq(contracts.saleGroupId, request.params.groupId), eq(contracts.status, "active")),
-        )
+        .where(and(eq(contracts.saleGroupId, request.params.groupId), openContract(asOf)))
         .all()
         .map((row) => present(row, asOf));
 
@@ -414,11 +480,14 @@ export const contractRoutes: FastifyPluginAsync = async (app) => {
 
       // A lot can only be held once. This is what stops the same lot being sold
       // to two people, which no amount of care in the interface can prevent on
-      // its own once two staff are entering contracts at the same time.
+      // its own once two staff are entering contracts at the same time. A
+      // reservation that has passed its expiry date is not a holder — the lot
+      // is free again — so a lapsed hold no longer blocks the sale it was meant
+      // to make room for. A paid-off contract still holds: the lot is sold.
       const holder = app.db
         .select({ code: contracts.code })
         .from(contracts)
-        .where(and(eq(contracts.lotId, lot.id), eq(contracts.status, "active")))
+        .where(and(eq(contracts.lotId, lot.id), holdsLot(today())))
         .get();
 
       if (holder) {
@@ -465,68 +534,73 @@ export const contractRoutes: FastifyPluginAsync = async (app) => {
       }
 
       const now = new Date().toISOString();
-      const code = nextContractCode(app.db, parsed.data.signedOn.slice(0, 4));
+      const year = parsed.data.signedOn.slice(0, 4);
 
-      const created = app.db.transaction((tx) => {
-        // The first lot of a purchase was written before anybody knew a second
-        // one was coming, so it has no group id. Stamping it here is what turns
-        // two separate contracts into one purchase.
-        if (groupSeed && groupSeed.saleGroupId === null && saleGroupId !== null) {
-          tx.update(contracts)
-            .set({ saleGroupId, updatedAt: now })
-            .where(eq(contracts.id, groupSeed.id))
-            .run();
-        }
+      // The number is allocated INSIDE the transaction that inserts, under the
+      // write lock, and the whole thing retries once if it still races another
+      // create onto the same number — see `withUniqueRetry`.
+      const created = withUniqueRetry(() =>
+        app.db.transaction((tx) => {
+          // The first lot of a purchase was written before anybody knew a
+          // second one was coming, so it has no group id. Stamping it here is
+          // what turns two separate contracts into one purchase.
+          if (groupSeed && groupSeed.saleGroupId === null && saleGroupId !== null) {
+            tx.update(contracts)
+              .set({ saleGroupId, updatedAt: now })
+              .where(eq(contracts.id, groupSeed.id))
+              .run();
+          }
 
-        const next = tx
-          .insert(contracts)
-          .values({
-            id: randomUUID(),
-            code,
-            lotId: lot.id,
-            customerId: customer.id,
-            saleGroupId,
-            kind: parsed.data.kind,
-            saleType: parsed.data.saleType,
-            status: "active",
-            salePriceCents: parsed.data.salePriceCents,
-            downPaymentCents: parsed.data.downPaymentCents,
-            termMonths: parsed.data.termMonths ?? null,
-            monthlyPaymentCents: parsed.data.monthlyPaymentCents ?? null,
-            dueDay: parsed.data.dueDay ?? null,
-            signedOn: parsed.data.signedOn,
-            firstDueOn: parsed.data.firstDueOn ?? null,
-            expiresOn: parsed.data.expiresOn ?? null,
-            notes: parsed.data.notes ?? null,
-            createdAt: now,
-            updatedAt: now,
-          })
-          .returning()
-          .get();
+          const next = tx
+            .insert(contracts)
+            .values({
+              id: randomUUID(),
+              code: nextContractCode(tx, year),
+              lotId: lot.id,
+              customerId: customer.id,
+              saleGroupId,
+              kind: parsed.data.kind,
+              saleType: parsed.data.saleType,
+              status: "active",
+              salePriceCents: parsed.data.salePriceCents,
+              downPaymentCents: parsed.data.downPaymentCents,
+              termMonths: parsed.data.termMonths ?? null,
+              monthlyPaymentCents: parsed.data.monthlyPaymentCents ?? null,
+              dueDay: parsed.data.dueDay ?? null,
+              signedOn: parsed.data.signedOn,
+              firstDueOn: parsed.data.firstDueOn ?? null,
+              expiresOn: parsed.data.expiresOn ?? null,
+              notes: parsed.data.notes ?? null,
+              createdAt: now,
+              updatedAt: now,
+            })
+            .returning()
+            .get();
 
-        recordAudit(tx, {
-          actorId: actor.id,
-          entityType: "contract",
-          entityId: next.id,
-          action: "create",
-          after: {
-            code: next.code,
-            lotId: next.lotId,
-            customerId: next.customerId,
-            saleGroupId: next.saleGroupId,
-            kind: next.kind,
-            saleType: next.saleType,
-            salePriceCents: next.salePriceCents,
-            downPaymentCents: next.downPaymentCents,
-            termMonths: next.termMonths,
-            monthlyPaymentCents: next.monthlyPaymentCents,
-            dueDay: next.dueDay,
-            signedOn: next.signedOn,
-          },
-        });
+          recordAudit(tx, {
+            actorId: actor.id,
+            entityType: "contract",
+            entityId: next.id,
+            action: "create",
+            after: {
+              code: next.code,
+              lotId: next.lotId,
+              customerId: next.customerId,
+              saleGroupId: next.saleGroupId,
+              kind: next.kind,
+              saleType: next.saleType,
+              salePriceCents: next.salePriceCents,
+              downPaymentCents: next.downPaymentCents,
+              termMonths: next.termMonths,
+              monthlyPaymentCents: next.monthlyPaymentCents,
+              dueDay: next.dueDay,
+              signedOn: next.signedOn,
+            },
+          });
 
-        return next;
-      });
+          return next;
+        }),
+      );
 
       return reply.code(201).send({
         contract: { id: created.id, code: created.code, saleGroupId: created.saleGroupId },
@@ -565,12 +639,14 @@ export const contractRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(404).send({ error: "not_found", message: "Contrato no encontrado." });
       }
 
-      if (existing.status !== "active") {
-        // A cancelled or defaulted contract is history. Editing it would
-        // rewrite what the parties are recorded as having agreed.
+      if (existing.status === "cancelled" || existing.status === "defaulted") {
+        // A closed contract is history. Editing it would rewrite what the
+        // parties are recorded as having agreed. A `paid_off` contract, on the
+        // other hand, can still be corrected — a reprice upward reopens it (see
+        // the lifecycle sync below).
         return reply.code(409).send({
           error: "not_active",
-          message: "Solo se editan contratos vigentes. Este ya está cerrado.",
+          message: "Este contrato está cerrado y ya no admite cambios.",
         });
       }
 
@@ -672,6 +748,10 @@ export const contractRoutes: FastifyPluginAsync = async (app) => {
           },
         });
 
+        // A new price can push the balance to zero (settling the contract) or,
+        // on a paid-off contract repriced upward, reopen it.
+        syncContractLifecycle(tx, existing.id, actor.id);
+
         return next;
       });
 
@@ -680,69 +760,203 @@ export const contractRoutes: FastifyPluginAsync = async (app) => {
   );
 
   /**
-   * Cancel a contract and give the lot back.
+   * Close a contract — either a cancellation (a sale unwound) or a default (the
+   * customer declared unable to keep paying). The two share everything: the lot
+   * comes back on its own because availability is derived, nothing is deleted,
+   * and the same question is asked about money already paid — refund it, hold
+   * it, or keep it as income.
    *
-   * Nothing is deleted. The row stays, its payments stay, and the lot becomes
-   * available again by itself — availability is derived from active contracts,
-   * so releasing it is a consequence of the status change rather than a second
-   * write that could fail on its own.
+   * They differ only in the status written, the capability required, the audit
+   * action, and the wording. `close` is that shared body; the two routes below
+   * are thin.
    */
+  const close = async (
+    request: FastifyRequest<{ Params: { id: string } }>,
+    reply: FastifyReply,
+    kind: {
+      newStatus: "cancelled" | "defaulted";
+      action: "cancel" | "default";
+      /** e.g. "cancelar" / "declarar incumplido" — used in the 403 wording. */
+      verb: string;
+    },
+  ) => {
+    const parsed = cancelBody.safeParse(request.body);
+
+    if (!parsed.success) {
+      return reply.code(400).send({
+        error: "invalid_body",
+        message: "Explica el motivo con al menos 10 caracteres.",
+      });
+    }
+
+    const actor = request.user!;
+    const existing = app.db
+      .select()
+      .from(contracts)
+      .where(eq(contracts.id, request.params.id))
+      .get();
+
+    if (!existing) {
+      return reply.code(404).send({ error: "not_found", message: "Contrato no encontrado." });
+    }
+
+    // `active` or `paid_off` — both are contracts that still hold a lot and can
+    // be closed. An already-cancelled or defaulted one is done.
+    if (existing.status !== "active" && existing.status !== "paid_off") {
+      return reply.code(409).send({
+        error: "not_active",
+        message: "Ese contrato ya está cerrado.",
+      });
+    }
+
+    // Every non-reversed payment on this contract, with the receipt it sits on.
+    // What the customer has already paid, and what a "refund" would touch.
+    const contractPayments = app.db
+      .select({
+        id: payments.id,
+        amountCents: payments.amountCents,
+        receiptId: payments.receiptId,
+      })
+      .from(payments)
+      .where(and(eq(payments.contractId, existing.id), sql`${payments.reversedAt} IS NULL`))
+      .all();
+
+    const paidToDateCents = contractPayments.reduce((sum, p) => sum + p.amountCents, 0);
+
+    // The settlement question only exists once money has changed hands. With
+    // nothing paid there is nothing to decide, and `closed_settlement` stays null.
+    let settlement: "none" | "held" | "refunded" | null = null;
+
+    if (paidToDateCents > 0) {
+      if (!parsed.data.settlement) {
+        return reply.code(400).send({
+          error: "settlement_required",
+          message:
+            `${existing.code} tiene L ${(paidToDateCents / 100).toLocaleString("es-HN")} ` +
+            "pagados. Indica qué pasa con ese dinero: reembolso, retención temporal o " +
+            "que quede como ingreso.",
+        });
+      }
+
+      settlement = parsed.data.settlement;
+
+      // Reversing money is a bigger power than closing a contract, so the refund
+      // option carries its own capability.
+      if (settlement === "refunded" && !roleCan(app.db, actor.role, "payment:reverse")) {
+        return reply.code(403).send({
+          error: "forbidden",
+          message:
+            `Tu usuario puede ${kind.verb} contratos, pero no revertir pagos. ` +
+            "Elige otra opción o pide a un supervisor que registre el reembolso.",
+        });
+      }
+    }
+
+    const closedAt = new Date().toISOString();
+    const reversedPaymentIds: string[] = [];
+    const voidedReceiptIds: string[] = [];
+
+    app.db.transaction((tx) => {
+      tx.update(contracts)
+        .set({
+          status: kind.newStatus,
+          closedAt,
+          closedReason: parsed.data.reason,
+          closedSettlement: settlement,
+          updatedAt: closedAt,
+        })
+        .where(eq(contracts.id, existing.id))
+        .run();
+
+      if (settlement === "refunded" && contractPayments.length > 0) {
+        const note = `Contrato ${existing.code} ${
+          kind.newStatus === "defaulted" ? "incumplido" : "cancelado"
+        } con reembolso`;
+
+        // The payments keep their amount, date and rate — they just stop
+        // counting, exactly as a receipt void does. Every balance in the app
+        // already filters on `reversed_at IS NULL`.
+        tx.update(payments)
+          .set({ reversedAt: closedAt, reversedBy: actor.id, reversalReason: note })
+          .where(and(eq(payments.contractId, existing.id), sql`${payments.reversedAt} IS NULL`))
+          .run();
+
+        for (const p of contractPayments) {
+          reversedPaymentIds.push(p.id);
+        }
+
+        // A receipt whose payments were all for this contract now carries
+        // nothing — void it too, so it reads as a void rather than as a receipt
+        // whose numbers quietly shrank. A receipt shared with another lot (a
+        // sale group) keeps standing; only its closed line is gone.
+        const receiptIds = [
+          ...new Set(contractPayments.map((p) => p.receiptId).filter((x): x is string => !!x)),
+        ];
+
+        for (const receiptId of receiptIds) {
+          const stillActive = tx
+            .select({ n: sql<number>`COUNT(*)` })
+            .from(payments)
+            .where(and(eq(payments.receiptId, receiptId), sql`${payments.reversedAt} IS NULL`))
+            .get();
+
+          if ((stillActive?.n ?? 0) === 0) {
+            tx.update(receipts)
+              .set({ voidedAt: closedAt, voidReason: note, voidedBy: actor.id })
+              .where(and(eq(receipts.id, receiptId), sql`${receipts.voidedAt} IS NULL`))
+              .run();
+            voidedReceiptIds.push(receiptId);
+          }
+        }
+      }
+
+      recordAudit(tx, {
+        actorId: actor.id,
+        entityType: "contract",
+        entityId: existing.id,
+        action: kind.action,
+        reason: parsed.data.reason,
+        before: { status: existing.status, closedAt: null, paidToDateCents },
+        after: {
+          status: kind.newStatus,
+          closedAt,
+          settlement,
+          ...(settlement === "refunded"
+            ? { reversedPaymentIds, voidedReceiptIds, refundedCents: paidToDateCents }
+            : {}),
+        },
+      });
+    });
+
+    return reply.send({
+      ok: true,
+      closedAt,
+      paidToDateCents,
+      settlement,
+      refundedCents: settlement === "refunded" ? paidToDateCents : 0,
+    });
+  };
+
   app.post<{ Params: { id: string } }>(
     "/contracts/:id/cancel",
     { onRequest: app.requireCapability("contract:cancel") },
-    async (request, reply) => {
-      const parsed = cancelBody.safeParse(request.body);
+    (request, reply) => close(request, reply, { newStatus: "cancelled", action: "cancel", verb: "cancelar" }),
+  );
 
-      if (!parsed.success) {
-        return reply.code(400).send({
-          error: "invalid_body",
-          message: "Explica el motivo con al menos 10 caracteres.",
-        });
-      }
-
-      const actor = request.user!;
-      const existing = app.db
-        .select()
-        .from(contracts)
-        .where(eq(contracts.id, request.params.id))
-        .get();
-
-      if (!existing) {
-        return reply.code(404).send({ error: "not_found", message: "Contrato no encontrado." });
-      }
-
-      if (existing.status !== "active") {
-        return reply.code(409).send({
-          error: "not_active",
-          message: "Ese contrato ya no está vigente.",
-        });
-      }
-
-      const closedAt = new Date().toISOString();
-
-      app.db.transaction((tx) => {
-        tx.update(contracts)
-          .set({
-            status: "cancelled",
-            closedAt,
-            closedReason: parsed.data.reason,
-            updatedAt: closedAt,
-          })
-          .where(eq(contracts.id, existing.id))
-          .run();
-
-        recordAudit(tx, {
-          actorId: actor.id,
-          entityType: "contract",
-          entityId: existing.id,
-          action: "cancel",
-          reason: parsed.data.reason,
-          before: { status: existing.status, closedAt: null },
-          after: { status: "cancelled", closedAt },
-        });
-      });
-
-      return reply.send({ ok: true, closedAt });
-    },
+  /**
+   * Declare a contract uncollectable — the customer defaulted.
+   *
+   * Distinct from a cancellation on purpose: a cancellation is a sale unwound
+   * by agreement, a default is the business writing off what it is owed. Owner
+   * only, and locked there (see LOCKED_CAPABILITIES) — it is a decision about
+   * money being given up on, not one to delegate. Everything else — the lot
+   * coming back, the settlement question, the refund path — is shared with
+   * cancellation.
+   */
+  app.post<{ Params: { id: string } }>(
+    "/contracts/:id/default",
+    { onRequest: app.requireCapability("contract:default") },
+    (request, reply) =>
+      close(request, reply, { newStatus: "defaulted", action: "default", verb: "declarar incumplidos" }),
   );
 };

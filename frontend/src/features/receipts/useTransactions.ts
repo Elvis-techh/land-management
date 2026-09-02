@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
+import { ApiError } from "../../lib/api";
 import { fetchTransactions } from "./api";
 import type { Transaction } from "../../types";
 
@@ -19,22 +20,27 @@ type TransactionsState =
  *
  * One request feeds both views of the screen. Grouping by customer happens in
  * `transactionSort.ts`, from this same array, so the two can never disagree
- * about what exists.
+ * about what exists. A 401 on refresh goes to `onSessionExpired`, not the error
+ * card.
  */
-export function useTransactions(enabled: boolean) {
+export function useTransactions(enabled: boolean, onSessionExpired: () => void) {
   const [state, setState] = useState<TransactionsState>({ status: "loading" });
 
   const reload = useCallback(async () => {
     try {
       setState({ status: "ready", transactions: await fetchTransactions() });
     } catch (caught) {
+      if (caught instanceof ApiError && caught.isUnauthenticated) {
+        onSessionExpired();
+        return;
+      }
       setState({
         status: "error",
         message:
           caught instanceof Error ? caught.message : "No se pudieron cargar las transacciones.",
       });
     }
-  }, []);
+  }, [onSessionExpired]);
 
   useEffect(() => {
     if (enabled) {

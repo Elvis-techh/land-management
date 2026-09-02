@@ -28,6 +28,7 @@ import {
   storageKeyFor,
 } from "../lib/attachments.js";
 import { recordAudit } from "../lib/audit.js";
+import { syncContractLifecycle } from "../lib/contractLifecycle.js";
 import type { ContractTerms, SaleType } from "../lib/contracts.js";
 import { appliedInstallments, buildSchedule } from "../lib/contracts.js";
 import { orderLedger, receiptFigures, replayContract } from "../lib/ledger.js";
@@ -767,6 +768,12 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
               lines: body.lines,
             },
           });
+
+          // A payment that clears a contract's balance settles it — active
+          // becomes paid_off, once, here.
+          for (const contractId of seen) {
+            syncContractLifecycle(tx, contractId, actor.id);
+          }
         });
       } catch (error) {
         // The unique index on `idempotency_key` is the last word on a double
@@ -839,7 +846,11 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
       const now = new Date().toISOString();
 
       const affected = app.db
-        .select({ id: payments.id, amountCents: payments.amountCents })
+        .select({
+          id: payments.id,
+          amountCents: payments.amountCents,
+          contractId: payments.contractId,
+        })
         .from(payments)
         .where(and(eq(payments.receiptId, existing.id), sql`${payments.reversedAt} IS NULL`))
         .all();
@@ -875,6 +886,12 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
             totalCents: affected.reduce((total, payment) => total + payment.amountCents, 0),
           },
         });
+
+        // Reversing these payments can push a paid-off contract's balance back
+        // above zero — it returns to active.
+        for (const contractId of new Set(affected.map((payment) => payment.contractId))) {
+          syncContractLifecycle(tx, contractId, actor.id);
+        }
       });
 
       const row = receiptsListQuery(app.db).where(eq(receipts.id, existing.id)).get()!;

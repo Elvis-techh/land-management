@@ -245,6 +245,13 @@ export interface Contract {
   kind: HoldingKind;
   saleType: SaleType;
   status: ContractStatus;
+  /**
+   * A reservation whose `expiresOn` has passed. The `status` is still
+   * `"active"` — nothing rewrites the row — but the hold has lapsed: the lot is
+   * available again and this contract reads as "Vencida". Derived by the server
+   * on every request, like the payment health.
+   */
+  expired: boolean;
   lot: {
     id: string;
     code: string;
@@ -268,6 +275,13 @@ export interface Contract {
   installmentCount: number;
   closedAt: string | null;
   closedReason: string | null;
+  /**
+   * What was decided about money already paid, when the contract was
+   * cancelled: `"none"` (kept as income), `"held"` (retained, decision
+   * pending), or `"refunded"` (payments reversed). `null` when nothing had
+   * been paid, or the contract is still active.
+   */
+  closedSettlement: "none" | "held" | "refunded" | null;
   notes: string | null;
 }
 

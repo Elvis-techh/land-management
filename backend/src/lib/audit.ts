@@ -29,6 +29,12 @@ export interface AuditEntry {
     | "restore"
     | "delete"
     | "cancel"
+    /** A contract the owner declared uncollectable — the customer defaulted. */
+    | "default"
+    /** A contract whose balance reached zero: it settled on its own. */
+    | "settle"
+    /** A settled contract whose balance reopened (a payment reversed/corrected). */
+    | "reopen"
     | "reverse"
     | "login"
     | "logout";

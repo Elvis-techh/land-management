@@ -298,7 +298,15 @@ export const contracts = sqliteTable(
      * lot simply going quiet.
      */
     saleType: text("sale_type").notNull().default("financed"),
-    /** "draft" | "active" | "paid_off" | "cancelled" | "defaulted" */
+    /**
+     * "draft" | "active" | "paid_off" | "cancelled" | "defaulted"
+     *
+     * `active`, `paid_off`, `cancelled` and `defaulted` are all reachable.
+     * `paid_off` is set and cleared by `syncContractLifecycle` as the replayed
+     * balance crosses zero; `cancelled` and `defaulted` are set by the close
+     * actions in routes/contracts.ts. `draft` is not written yet. See
+     * docs/architecture.md.
+     */
     status: text("status").notNull().default("active"),
     /**
      * The agreed price for THIS sale, which is independent of the lot's current
@@ -358,6 +366,14 @@ export const contracts = sqliteTable(
      */
     closedAt: text("closed_at"),
     closedReason: text("closed_reason"),
+    /**
+     * What was decided about money the customer had already paid, when the
+     * contract was cancelled: "none" (it stays as income), "held" (retained
+     * while a decision is pending), or "refunded" (the payments were reversed,
+     * so they no longer count anywhere). Null when nothing had been paid, or
+     * for a contract that is still active.
+     */
+    closedSettlement: text("closed_settlement"),
     /** What was agreed verbally, and anything the columns above cannot hold. */
     notes: text("notes"),
     createdAt: timestamp("created_at"),

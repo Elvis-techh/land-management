@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { PlaceholderPage } from "./components/PlaceholderPage";
 import { Sidebar } from "./components/Sidebar";
 import { Topbar } from "./components/Topbar";
@@ -17,8 +18,17 @@ import { ContractEditDialog } from "./features/contracts/ContractEditDialog";
 import { ContractPanel } from "./features/contracts/ContractPanel";
 import { ContractsPage } from "./features/contracts/ContractsPage";
 import { SplitPreviewDialog } from "./features/contracts/SplitPreviewDialog";
-import { cancelContract, createContract, updateContract } from "./features/contracts/api";
-import type { ContractCreateDraft, ContractTermsDraft } from "./features/contracts/api";
+import {
+  cancelContract,
+  createContract,
+  defaultContract,
+  updateContract,
+} from "./features/contracts/api";
+import type {
+  CancelSettlement,
+  ContractCreateDraft,
+  ContractTermsDraft,
+} from "./features/contracts/api";
 import { useContracts } from "./features/contracts/useContracts";
 import { LoginPage } from "./features/auth/LoginPage";
 import { authApi } from "./features/auth/api";
@@ -43,7 +53,7 @@ import { ReceiptsPage } from "./features/receipts/ReceiptsPage";
 import { TransactionEditDialog } from "./features/receipts/TransactionEditDialog";
 import { useTransactions } from "./features/receipts/useTransactions";
 import { useExchangeRate } from "./features/rate/useExchangeRate";
-import { archiveLot, createLot, updateLot } from "./features/lots/api";
+import { archiveLot, createLot, restoreLot, updateLot } from "./features/lots/api";
 import { useLots } from "./features/lots/useLots";
 import { ApiError } from "./lib/api";
 import type { Currency, MoneyView } from "./lib/money";
@@ -129,16 +139,30 @@ export default function App() {
   const [contractBeingViewed, setContractBeingViewed] = useState<Contract | null>(null);
   const [contractBeingEdited, setContractBeingEdited] = useState<Contract | null>(null);
   const [contractBeingCancelled, setContractBeingCancelled] = useState<Contract | null>(null);
+  const [contractBeingDefaulted, setContractBeingDefaulted] = useState<Contract | null>(null);
   // The lots of ONE purchase, while their split is being previewed.
   const [contractsBeingSplit, setContractsBeingSplit] = useState<Contract[] | null>(null);
 
   const isSignedIn = session.status === "signed-in";
-  const { state: lotsState, reload: reloadLots } = useLots(isSignedIn);
-  const { state: projectsState, reload: reloadProjects } = useProjects(isSignedIn);
-  const { state: customersState, reload: reloadCustomers } = useCustomers(isSignedIn);
-  const { state: contractsState, reload: reloadContracts } = useContracts(isSignedIn);
-  const { state: transactionsState, reload: reloadTransactions } = useTransactions(isSignedIn);
-  const { rate, setRate } = useExchangeRate(isSignedIn);
+
+  // The session expired underneath a request. Drop to the login screen rather
+  // than sit on stale numbers. Defined before the data hooks because they call
+  // it from their own refresh failures — a 401 there used to surface as a
+  // generic "no se pudo cargar" card with a Retry button that could only 401
+  // again.
+  const handleSessionExpired = useCallback(() => {
+    setSession({ status: "anonymous" });
+  }, []);
+
+  const { state: lotsState, reload: reloadLots } = useLots(isSignedIn, handleSessionExpired);
+  const { state: projectsState, reload: reloadProjects } = useProjects(isSignedIn, handleSessionExpired);
+  const { state: customersState, reload: reloadCustomers } = useCustomers(isSignedIn, handleSessionExpired);
+  const { state: contractsState, reload: reloadContracts } = useContracts(isSignedIn, handleSessionExpired);
+  const { state: transactionsState, reload: reloadTransactions } = useTransactions(
+    isSignedIn,
+    handleSessionExpired,
+  );
+  const { rate, setRate } = useExchangeRate(isSignedIn, handleSessionExpired);
 
   // Currency and rate travel together, so a component cannot format money with
   // one and forget the other.
@@ -148,12 +172,15 @@ export default function App() {
 
   // If the session expires while the app is open, any request will come back
   // 401. Drop straight to the login screen rather than showing stale data.
-  const handleApiError = useCallback((error: unknown) => {
-    if (error instanceof ApiError && error.isUnauthenticated) {
-      setSession({ status: "anonymous" });
-    }
-    throw error;
-  }, []);
+  const handleApiError = useCallback(
+    (error: unknown) => {
+      if (error instanceof ApiError && error.isUnauthenticated) {
+        handleSessionExpired();
+      }
+      throw error;
+    },
+    [handleSessionExpired],
+  );
 
   useEffect(() => {
     if (!isSidebarOpen || !isSignedIn) {
@@ -325,20 +352,36 @@ export default function App() {
     setContractBeingViewed(null);
   };
 
-  const handleCancelContract = async (reason: string) => {
+  // Cancelling or defaulting releases the lot, and the Lotes table derives
+  // availability from active contracts — so it is wrong on screen until it is
+  // re-read. A refund also reverses payments, which moves every balance and can
+  // void a receipt, so the money screens have to re-read too.
+  const reloadAfterClose = async () => {
+    await reloadContracts();
+    await reloadLots();
+    await reloadCustomers();
+    await reloadTransactions();
+    setContractBeingViewed(null);
+  };
+
+  const handleCancelContract = async (reason: string, settlement?: CancelSettlement) => {
     if (!contractBeingCancelled) {
       return;
     }
 
-    await cancelContract(contractBeingCancelled.id, reason).catch(handleApiError);
-
-    await reloadContracts();
-    // Cancelling releases the lot, and the Lotes table derives availability
-    // from active contracts — so it is wrong on screen until it is re-read.
-    await reloadLots();
-    await reloadCustomers();
+    await cancelContract(contractBeingCancelled.id, reason, settlement).catch(handleApiError);
+    await reloadAfterClose();
     setContractBeingCancelled(null);
-    setContractBeingViewed(null);
+  };
+
+  const handleDefaultContract = async (reason: string, settlement?: CancelSettlement) => {
+    if (!contractBeingDefaulted) {
+      return;
+    }
+
+    await defaultContract(contractBeingDefaulted.id, reason, settlement).catch(handleApiError);
+    await reloadAfterClose();
+    setContractBeingDefaulted(null);
   };
 
   const handleCreateContract = async (draft: ContractCreateDraft) => {
@@ -373,6 +416,11 @@ export default function App() {
     await archiveLot(lotBeingArchived.id, reason).catch(handleApiError);
     await reloadLots();
     setLotBeingArchived(null);
+  };
+
+  const handleRestoreLot = async (lot: Lot) => {
+    await restoreLot(lot.id).catch(handleApiError);
+    await reloadLots();
   };
 
   /**
@@ -457,6 +505,10 @@ export default function App() {
         />
 
         <div className="content">
+          {/* Keyed by tab, so a render error is contained to the screen that
+              caused it: the sidebar, the top bar and every other tab keep
+              working, and switching away resets the boundary. */}
+          <ErrorBoundary variant="panel" area={`la pantalla de ${pageTitles[activeTab]}`} key={activeTab}>
           {activeTab !== "lots" &&
             activeTab !== "projects" &&
             activeTab !== "customers" &&
@@ -644,11 +696,16 @@ export default function App() {
               user={user}
               onEditLot={setLotBeingEdited}
               onArchiveLot={setLotBeingArchived}
+              onRestoreLot={(lot) => void handleRestoreLot(lot)}
             />
           )}
+          </ErrorBoundary>
         </div>
       </div>
 
+      {/* The dialogs share a boundary of their own: a crash inside a form must
+          not blank the tables and the navigation behind it. */}
+      <ErrorBoundary variant="panel" area="una ventana">
       {isCreatingReceipt &&
         contractsState.status === "ready" &&
         customersState.status === "ready" && (
@@ -807,6 +864,7 @@ export default function App() {
           onClose={() => setContractBeingViewed(null)}
           onEditContract={setContractBeingEdited}
           onCancelContract={setContractBeingCancelled}
+          onDefaultContract={setContractBeingDefaulted}
         />
       )}
 
@@ -824,8 +882,20 @@ export default function App() {
         <ContractCancelDialog
           contract={contractBeingCancelled}
           money={money}
+          canRefund={can(user, "payment:reverse")}
           onCancel={() => setContractBeingCancelled(null)}
           onConfirm={handleCancelContract}
+        />
+      )}
+
+      {contractBeingDefaulted && (
+        <ContractCancelDialog
+          contract={contractBeingDefaulted}
+          money={money}
+          mode="default"
+          canRefund={can(user, "payment:reverse")}
+          onCancel={() => setContractBeingDefaulted(null)}
+          onConfirm={handleDefaultContract}
         />
       )}
 
@@ -849,6 +919,7 @@ export default function App() {
           }}
         />
       )}
+      </ErrorBoundary>
     </div>
   );
 }

@@ -1,14 +1,21 @@
 import { desc, eq, sql } from "drizzle-orm";
+import type { SQL } from "drizzle-orm";
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 
-import { auditEvents, customers, lots, users } from "../db/schema.js";
+import { auditEvents, customers, lots, projects, users } from "../db/schema.js";
 
 const auditQuery = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(50),
   offset: z.coerce.number().int().min(0).default(0),
-  /** Optional filter, e.g. only lot changes. */
-  entityType: z.enum(["lot", "customer", "contract", "payment", "user"]).optional(),
+  /**
+   * Optional filter, e.g. only lot changes. Every value `recordAudit` can
+   * write is listed here — `project`, `role` and `exchange_rate` were missing,
+   * so events that are recorded could never be filtered for.
+   */
+  entityType: z
+    .enum(["lot", "project", "customer", "contract", "payment", "user", "role", "exchange_rate"])
+    .optional(),
 });
 
 /**
@@ -27,6 +34,16 @@ function snapshotLabel(snapshot: Record<string, unknown> | null): string | null 
 }
 
 /**
+ * Read the total two ways and they disagree the moment a filter is applied:
+ * the page of rows was filtered, the count was not, and the Historial screen
+ * then offered pages of events that were not there. One `where` clause, built
+ * once, drives both queries.
+ */
+function auditWhere(entityType: string | undefined): SQL | undefined {
+  return entityType ? eq(auditEvents.entityType, entityType) : undefined;
+}
+
+/**
  * The change history.
  *
  * Read-only by design: there is no endpoint to edit or delete an audit row.
@@ -42,10 +59,12 @@ export const auditRoutes: FastifyPluginAsync = async (app) => {
 
     const { limit, offset, entityType } = parsed.data;
 
+    const where = auditWhere(entityType);
+
     // Resolve a human-readable label for whatever the row points at, so the
     // screen shows "A-07" rather than a UUID.
     const actor = users;
-    const baseQuery = app.db
+    const rows = app.db
       .select({
         id: auditEvents.id,
         action: auditEvents.action,
@@ -59,18 +78,16 @@ export const auditRoutes: FastifyPluginAsync = async (app) => {
         actorRole: actor.role,
         lotCode: lots.code,
         customerName: customers.fullName,
+        projectName: projects.name,
       })
       .from(auditEvents)
       .innerJoin(actor, eq(actor.id, auditEvents.actorId))
       // One join per kind of entity a row can point at. Entity ids are UUIDs,
       // so at most one of these ever matches, and the rest come back null.
       .leftJoin(lots, eq(lots.id, auditEvents.entityId))
-      .leftJoin(customers, eq(customers.id, auditEvents.entityId));
-
-    const rows = (entityType
-      ? baseQuery.where(eq(auditEvents.entityType, entityType))
-      : baseQuery
-    )
+      .leftJoin(customers, eq(customers.id, auditEvents.entityId))
+      .leftJoin(projects, eq(projects.id, auditEvents.entityId))
+      .where(where)
       .orderBy(desc(auditEvents.createdAt), desc(auditEvents.id))
       .limit(limit)
       .offset(offset)
@@ -79,6 +96,7 @@ export const auditRoutes: FastifyPluginAsync = async (app) => {
     const total = app.db
       .select({ count: sql<number>`COUNT(*)` })
       .from(auditEvents)
+      .where(where)
       .get();
 
     return reply.send({
@@ -92,7 +110,8 @@ export const auditRoutes: FastifyPluginAsync = async (app) => {
           action: row.action,
           entityType: row.entityType,
           entityId: row.entityId,
-          entityLabel: row.lotCode ?? row.customerName ?? snapshotLabel(before),
+          entityLabel:
+            row.lotCode ?? row.customerName ?? row.projectName ?? snapshotLabel(before),
           actorName: row.actorName,
           actorRole: row.actorRole,
           reason: row.reason,

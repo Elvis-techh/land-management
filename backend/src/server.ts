@@ -1,11 +1,21 @@
 import { buildApp } from "./app.js";
 import { loadConfig } from "./config/env.js";
 import { createDb } from "./db/client.js";
+import { runMigrations } from "./db/migrations.js";
 import { deleteExpiredSessions } from "./auth/session.js";
 import { refreshAutomaticRate } from "./lib/exchangeRate.js";
 
 const config = loadConfig();
 const { db, sqlite } = createDb(config.databasePath);
+
+// Bring the schema up to date before anything touches it — the expired-session
+// sweep just below is the first query that would otherwise hit a missing table
+// on a fresh install. Safe on every boot: drizzle skips migrations already
+// applied. A failure here stops startup, which is what you want — serving
+// traffic against a half-built schema is worse than a restart loop a service
+// manager will surface.
+runMigrations(db);
+
 const app = await buildApp(config, db);
 
 // Housekeeping on boot: expired sessions serve no purpose.

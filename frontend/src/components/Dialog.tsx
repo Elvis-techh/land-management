@@ -10,6 +10,19 @@ interface DialogProps {
 }
 
 /**
+ * Every open dialog, oldest first. Dialogs stack — the contract panel opens the
+ * edit form on top of itself — and two behaviours have to be shared across the
+ * whole stack rather than fought over per dialog:
+ *
+ *   - the scroll lock on <body> is released only when the LAST dialog closes,
+ *     not the first inner one, or the page behind jumps while a dialog is still
+ *     open;
+ *   - one Escape closes only the TOP dialog, not every dialog listening on the
+ *     document at once.
+ */
+const openDialogs: symbol[] = [];
+
+/**
  * The shared shell for anything that floats above the page.
  *
  * It owns the behaviour every dialog needs and every dialog gets wrong when
@@ -27,6 +40,12 @@ interface DialogProps {
 export function Dialog({ ariaLabel, onClose, children }: DialogProps) {
   const panelRef = useRef<HTMLDivElement>(null);
 
+  // A stable identity for this dialog's slot in the stack, and a ref to the
+  // latest `onClose` so the mount-only effect below never reads a stale one.
+  const [id] = useState(() => Symbol("dialog"));
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
   // Mounts invisible, then fades in on the next frame — without this the CSS
   // transition has no starting point to animate from.
   const [isVisible, setVisible] = useState(false);
@@ -39,11 +58,14 @@ export function Dialog({ ariaLabel, onClose, children }: DialogProps) {
   useEffect(() => {
     const previouslyFocused = document.activeElement;
     panelRef.current?.focus();
+
+    openDialogs.push(id);
     document.body.classList.add("modal-open");
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onClose();
+      // Only the dialog on top of the stack answers Escape.
+      if (event.key === "Escape" && openDialogs[openDialogs.length - 1] === id) {
+        onCloseRef.current();
       }
     };
 
@@ -51,12 +73,23 @@ export function Dialog({ ariaLabel, onClose, children }: DialogProps) {
 
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
-      document.body.classList.remove("modal-open");
+
+      const index = openDialogs.lastIndexOf(id);
+      if (index !== -1) {
+        openDialogs.splice(index, 1);
+      }
+      // Release the page only once nothing is left floating above it.
+      if (openDialogs.length === 0) {
+        document.body.classList.remove("modal-open");
+      }
+
       if (previouslyFocused instanceof HTMLElement) {
         previouslyFocused.focus();
       }
     };
-  }, [onClose]);
+    // `id` is stable for the life of the component; listed so the effect is
+    // unambiguously mount/unmount-only.
+  }, [id]);
 
   return createPortal(
     <div

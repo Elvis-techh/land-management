@@ -1,0 +1,53 @@
+# Lindero API — systemd unit.
+#
+# Install (as root), assuming the repo is checked out at /opt/lindero and a
+# dedicated unprivileged `lindero` user owns it:
+#
+#   cp deploy/lindero-api.service /etc/systemd/system/
+#   systemctl daemon-reload
+#   systemctl enable --now lindero-api
+#
+# Logs:   journalctl -u lindero-api -f
+# Deploy: git pull && npm ci --omit=dev && npm run build --workspace @lindero/backend \
+#           && systemctl restart lindero-api
+#
+# Migrations run automatically on boot (backend/src/server.ts), so a restart is
+# the whole deploy.
+
+[Unit]
+Description=Lindero API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=lindero
+Group=lindero
+WorkingDirectory=/opt/lindero/backend
+
+# The env file carries COOKIE_SECRET, NODE_ENV=production, TRUST_PROXY, the
+# paths, etc. The leading "-" means "start anyway if it is missing" — but the
+# server itself refuses to boot in production without COOKIE_SECRET, which is
+# the check that matters.
+EnvironmentFile=-/opt/lindero/backend/.env
+
+ExecStart=/usr/bin/node dist/server.js
+Restart=on-failure
+RestartSec=5
+
+# A migration failure or a missing COOKIE_SECRET exits non-zero on boot; cap the
+# restart loop so a broken deploy is loud in `systemctl status` rather than
+# silently thrashing.
+StartLimitIntervalSec=60
+StartLimitBurst=4
+
+# Hardening. The one path the process must write is its data directory (the
+# SQLite file, the WAL, and the uploads); everything else is read-only.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/lindero/backend/data /opt/lindero/backend/backups
+
+[Install]
+WantedBy=multi-user.target

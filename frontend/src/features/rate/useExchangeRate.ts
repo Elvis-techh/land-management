@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
+import { ApiError } from "../../lib/api";
 import type { ExchangeRate } from "./api";
 import { fetchExchangeRate } from "./api";
 import { FALLBACK_USD_RATE } from "../../lib/money";
@@ -22,7 +23,7 @@ const PLACEHOLDER: ExchangeRate = {
   providerName: "",
 };
 
-export function useExchangeRate(enabled: boolean) {
+export function useExchangeRate(enabled: boolean, onSessionExpired: () => void) {
   const [rate, setRate] = useState<ExchangeRate>(PLACEHOLDER);
 
   const reload = useCallback(async () => {
@@ -31,9 +32,16 @@ export function useExchangeRate(enabled: boolean) {
 
   useEffect(() => {
     if (enabled) {
-      void reload().catch(() => undefined);
+      void reload().catch((caught: unknown) => {
+        // A failed rate load is not worth interrupting anyone over — the
+        // fallback number stands. An expired session is the exception: send it
+        // to the same place every other hook does.
+        if (caught instanceof ApiError && caught.isUnauthenticated) {
+          onSessionExpired();
+        }
+      });
     }
-  }, [enabled, reload]);
+  }, [enabled, reload, onSessionExpired]);
 
   return { rate, setRate, reload };
 }

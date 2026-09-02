@@ -3,11 +3,10 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { migrate } from "drizzle-orm/better-sqlite3/migrator";
-
 import { buildApp } from "../src/app.js";
 import type { AppConfig } from "../src/config/env.js";
 import { createDb } from "../src/db/client.js";
+import { runMigrations } from "../src/db/migrations.js";
 import { contracts, customers, lots, payments, projects, users } from "../src/db/schema.js";
 import { hashPassword } from "../src/lib/password.js";
 
@@ -40,7 +39,7 @@ const testConfig: AppConfig = {
  */
 export async function buildTestApp(configOverrides: Partial<AppConfig> = {}) {
   const { db, sqlite } = createDb(":memory:");
-  migrate(db, { migrationsFolder: "./drizzle" });
+  runMigrations(db);
 
   const ownerId = randomUUID();
   const staffId = randomUUID();

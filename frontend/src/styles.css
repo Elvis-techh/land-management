@@ -2216,6 +2216,73 @@ body.modal-open {
   font-weight: 500;
 }
 
+/* The "where does the money go" choice on the cancel dialog. */
+.settlement-choice {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settlement-choice legend {
+  color: var(--text-primary);
+  font-size: 0.7812rem;
+  font-weight: 500;
+  padding: 0;
+  margin-bottom: 2px;
+}
+
+.settlement-option {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 9px 11px;
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.12));
+  border-radius: 9px;
+  cursor: pointer;
+  font-size: 0.8125rem;
+}
+
+.settlement-option:has(input:checked) {
+  border-color: var(--ink);
+  background: var(--surface-sunken, rgba(0, 0, 0, 0.03));
+}
+
+.settlement-option.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* Beats `.form-field input` (same file, later, would otherwise make the radio a
+   full-width 42px box). */
+.settlement-option input[type="radio"] {
+  flex: 0 0 auto;
+  margin: 2px 0 0;
+  width: 16px;
+  min-height: 0;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  accent-color: var(--ink, var(--clay));
+}
+
+.settlement-title {
+  display: block;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.settlement-detail {
+  display: block;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  margin-top: 1px;
+}
+
 .required-mark {
   color: var(--red-dark);
 }
@@ -3902,6 +3969,51 @@ input:disabled {
   background: var(--paper);
   color: var(--text-secondary);
   font-size: 0.875rem;
+}
+
+/* --------------------------------------------------------------------------
+   Error boundary fallback
+   -------------------------------------------------------------------------- */
+
+.error-boundary {
+  padding: 24px;
+}
+
+.error-boundary-page {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  background: var(--paper);
+}
+
+.error-boundary-card {
+  max-width: 520px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.error-boundary-card h2 {
+  margin: 0;
+}
+
+.error-boundary-detail {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--surface-sunken, rgba(0, 0, 0, 0.04));
+  color: var(--text-secondary);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.8125rem;
+  word-break: break-word;
+}
+
+.error-boundary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
 }
 
 .login-screen {

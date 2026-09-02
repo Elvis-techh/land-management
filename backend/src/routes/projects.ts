@@ -8,6 +8,9 @@ import { lots, projects } from "../db/schema.js";
 import { AREA_UNITS } from "../lib/area.js";
 import { recordAudit } from "../lib/audit.js";
 
+/** Today as a YYYY-MM-DD calendar date. */
+const today = () => new Date().toISOString().slice(0, 10);
+
 /**
  * A project row with the counts the Proyectos screen shows.
  *
@@ -16,7 +19,7 @@ import { recordAudit } from "../lib/audit.js";
  * first time somebody archives a lot, and a project summary that disagrees with
  * the Lotes tab is worse than no summary.
  */
-const projectsListQuery = (db: import("../db/client.js").Db) => {
+const projectsListQuery = (db: import("../db/client.js").Db, asOf: string) => {
   return db
     .select({
       id: projects.id,
@@ -40,17 +43,20 @@ const projectsListQuery = (db: import("../db/client.js").Db) => {
       `,
       // A lot is taken when an active contract points at it. Splitting the two
       // kinds here mirrors exactly how the Lotes tab derives its statuses, so
-      // the two screens cannot disagree about what is sold.
+      // the two screens cannot disagree about what is sold. A reservation past
+      // its expiry date has lapsed — it counts as neither reserved nor sold,
+      // and the lot falls back into `availableCount`.
       reservedCount: sql<number>`
         (SELECT COUNT(*) FROM lots
          JOIN contracts ON contracts.lot_id = lots.id
            AND contracts.status = 'active' AND contracts.kind = 'reservation'
+           AND (contracts.expires_on IS NULL OR contracts.expires_on >= ${asOf})
          WHERE lots.project_id = projects.id AND lots.archived_at IS NULL)
       `,
       soldCount: sql<number>`
         (SELECT COUNT(*) FROM lots
          JOIN contracts ON contracts.lot_id = lots.id
-           AND contracts.status = 'active' AND contracts.kind = 'contract'
+           AND contracts.status IN ('active', 'paid_off') AND contracts.kind = 'contract'
          WHERE lots.project_id = projects.id AND lots.archived_at IS NULL)
       `,
     })
@@ -69,7 +75,7 @@ const archiveBody = z.object({
 
 export const projectRoutes: FastifyPluginAsync = async (app) => {
   app.get("/projects", { onRequest: app.requireUser }, async (request, reply) => {
-    const rows = projectsListQuery(app.db).all();
+    const rows = projectsListQuery(app.db, today()).all();
 
     return reply.send({
       projects: rows.map((row) => ({

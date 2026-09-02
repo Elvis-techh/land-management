@@ -13,3 +13,7 @@ backend/data/
 *.db
 *.db-wal
 *.db-shm
+
+# Local backup snapshots
+backend/backups/
+*.tar.gz

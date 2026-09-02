@@ -1,0 +1,29 @@
+# Runs one backup, then exits. Paired with lindero-backup.timer.
+#
+#   cp deploy/lindero-backup.{service,timer} /etc/systemd/system/
+#   systemctl daemon-reload
+#   systemctl enable --now lindero-backup.timer
+#
+# Run one now:  systemctl start lindero-backup
+# See history:  journalctl -u lindero-backup
+
+[Unit]
+Description=Lindero database + uploads backup
+
+[Service]
+Type=oneshot
+User=lindero
+Group=lindero
+WorkingDirectory=/opt/lindero/backend
+EnvironmentFile=-/opt/lindero/backend/.env
+ExecStart=/usr/bin/node scripts/backup.mjs
+
+# Uncomment once an off-machine destination is set up — a backup that only ever
+# lands on the same disk as the database is not a backup. Example with rclone:
+# ExecStartPost=/usr/bin/rclone copy /opt/lindero/backend/backups remote:lindero-backups
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/lindero/backend/backups
