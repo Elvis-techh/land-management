@@ -1,7 +1,7 @@
 import { api } from "../../lib/api";
 import type { Cents } from "../../lib/money";
 import { cents } from "../../lib/money";
-import type { PaymentHealth } from "../../types";
+import type { PaymentHealth, SaleType } from "../../types";
 import type { DashboardLayout } from "./dashboardSections";
 
 /**
@@ -48,6 +48,45 @@ export interface Debtor {
   monthsBehind: number;
   /** `null` for somebody who has never paid anything at all. */
   lastPaymentOn: string | null;
+}
+
+/**
+ * One payment of the reported month, as it was counted into every total.
+ *
+ * The two breakdowns that open on the Panel General are groupings of this one
+ * array — by customer for "Clientes que pagaron", by project for a project's
+ * "Cobrado" — rather than lists fetched separately. That is what guarantees a
+ * breakdown adds up to the figure it hangs under.
+ */
+export interface MonthPayment {
+  id: string;
+  customerId: string;
+  customerName: string;
+  contractId: string;
+  contractCode: string;
+  lotCode: string;
+  projectId: string;
+  projectName: string;
+  amountCents: Cents;
+  paidOn: string;
+  /** "down_payment" | "installment" | "full_payment" | "adjustment". */
+  type: string;
+  /** "cash" | "transfer" | "card" — same open shape the Recibos tab uses. */
+  method: string;
+}
+
+/** One contract signed in the reported month. */
+export interface SignedContract {
+  contractId: string;
+  contractCode: string;
+  customerId: string;
+  customerName: string;
+  lotCode: string;
+  projectName: string;
+  saleType: SaleType;
+  signedOn: string;
+  salePriceCents: Cents;
+  downPaymentCents: Cents;
 }
 
 export interface HealthBucket {
@@ -101,6 +140,10 @@ export interface Dashboard {
     previousPayingCustomers: number;
     signedCount: number;
     signedValueCents: Cents;
+    /** The rows behind `collectedCents` and `payingCustomers`. */
+    payments: MonthPayment[];
+    /** The rows behind `signedCount` and `signedValueCents`. */
+    signed: SignedContract[];
     byType: {
       downPayment: Cents;
       installment: Cents;
@@ -223,6 +266,15 @@ export async function fetchDashboard(month?: string): Promise<Dashboard> {
         transfer: c(raw.income.byMethod.transfer),
         card: c(raw.income.byMethod.card),
       },
+      payments: raw.income.payments.map((row) => ({
+        ...row,
+        amountCents: c(row.amountCents),
+      })),
+      signed: raw.income.signed.map((row) => ({
+        ...row,
+        salePriceCents: c(row.salePriceCents),
+        downPaymentCents: c(row.downPaymentCents),
+      })),
     },
 
     history: raw.history.map((row) => ({

@@ -243,3 +243,89 @@ export function describeExpiry(expiresOn: string, asOf: string): string {
 
   return `vence en ${pluralise(days, "día", "días")}`;
 }
+
+/* -------------------------------------------------------------------------- */
+/* Opening a figure into the rows behind it                                    */
+/* -------------------------------------------------------------------------- */
+
+/** "15 mar" — a day inside a month whose heading has already named it. */
+export function shortDay(isoDate: string): string {
+  const [year, month, day] = isoDate.split("-").map(Number);
+
+  // `timeZone: "UTC"` against a UTC-constructed date, for the reason at the top
+  // of this file: without it the formatter reads midnight UTC in the device's
+  // own zone and prints the day before, all through the Americas.
+  return new Intl.DateTimeFormat("es-HN", {
+    day: "numeric",
+    month: "short",
+    timeZone: "UTC",
+  }).format(new Date(Date.UTC(year!, month! - 1, day!)));
+}
+
+export const PAYMENT_METHOD_LABELS: Record<string, string> = {
+  cash: "Efectivo",
+  transfer: "Transferencia",
+  card: "Tarjeta",
+};
+
+/**
+ * One person and everything they paid in the month being reported.
+ *
+ * Generic in the payment so the panel keeps the full `MonthPayment` — lot code,
+ * date, method — while this file only ever needs the three fields it groups by.
+ */
+export interface Payer<T extends PayerPayment> {
+  customerId: string;
+  customerName: string;
+  totalCents: Cents;
+  rows: T[];
+}
+
+/**
+ * The fields `groupPayers` needs of a payment.
+ *
+ * Structural rather than the full `MonthPayment`, so this function — and its
+ * tests — do not have to care about the six other fields the panel renders.
+ */
+export interface PayerPayment {
+  customerId: string;
+  customerName: string;
+  amountCents: Cents;
+}
+
+/**
+ * The month's payments grouped into the people who made them.
+ *
+ * One row per customer, because the tile above this panel counts CUSTOMERS: a
+ * panel that opened into forty payments under a figure reading "23" would not
+ * be the same question in more detail, it would be a different question, and
+ * the reader would be left to work out which of the two numbers is wrong.
+ *
+ * Ranked by money, like every other list on this screen that ranks people, with
+ * the name as the tie-break so the order is stable between refreshes rather
+ * than following whatever order the rows arrived in.
+ */
+export function groupPayers<T extends PayerPayment>(payments: readonly T[]): Array<Payer<T>> {
+  const byCustomer = new Map<string, Payer<T>>();
+
+  for (const payment of payments) {
+    const existing = byCustomer.get(payment.customerId);
+
+    if (existing) {
+      existing.totalCents = (existing.totalCents + payment.amountCents) as Cents;
+      existing.rows.push(payment);
+      continue;
+    }
+
+    byCustomer.set(payment.customerId, {
+      customerId: payment.customerId,
+      customerName: payment.customerName,
+      totalCents: payment.amountCents,
+      rows: [payment],
+    });
+  }
+
+  return [...byCustomer.values()].sort(
+    (a, b) => b.totalCents - a.totalCents || a.customerName.localeCompare(b.customerName, "es"),
+  );
+}

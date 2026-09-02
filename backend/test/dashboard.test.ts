@@ -958,3 +958,216 @@ describe("panel general — arranging the screen", () => {
     await app.close();
   });
 });
+
+/*
+ * The drill-downs.
+ *
+ * The Panel General opens three of its figures into the rows they were summed
+ * from, and the whole point of returning those rows from the same pass that did
+ * the summing is that a breakdown cannot disagree with its own total. These
+ * tests are about exactly that: not "does the list have items", but "does the
+ * list add up to the number printed above it".
+ */
+describe("panel general — the rows behind the figures", () => {
+  it("returns the month's payments, and they sum to what was collected", async () => {
+    const { app, db, ids } = await buildTestApp();
+    const cookie = await login(app, "owner@test.hn", OWNER_PASSWORD);
+
+    const first = addContract(db, ids.projectId, ids.customerId, {
+      lotCode: "D-01",
+      salePriceCents: lempiras(90_000),
+      downPaymentCents: 0,
+      termMonths: 18,
+      monthlyPaymentCents: lempiras(5_000),
+      dueDay: 5,
+      signedOn: dayIn(LAST_MONTH, 5),
+    });
+
+    addPayment(db, first.contractId, ids.ownerId, {
+      amountCents: lempiras(5_000),
+      paidOn: dayIn(THIS_MONTH, 3),
+    });
+    addPayment(db, first.contractId, ids.ownerId, {
+      amountCents: lempiras(2_500),
+      paidOn: dayIn(THIS_MONTH, 9),
+      method: "transfer",
+    });
+
+    // A reversed payment is in neither the total nor the list, or the panel
+    // would explain a figure using money that was taken back.
+    addPayment(db, first.contractId, ids.ownerId, {
+      amountCents: lempiras(9_999),
+      paidOn: dayIn(THIS_MONTH, 4),
+      reversedAt: `${dayIn(THIS_MONTH, 4)}T12:00:00.000Z`,
+    });
+
+    // And neither is last month's, when this month is the one being read.
+    addPayment(db, first.contractId, ids.ownerId, {
+      amountCents: lempiras(4_000),
+      paidOn: dayIn(LAST_MONTH, 20),
+    });
+
+    const view = await readDashboard(app, cookie);
+    const rows = view.income.payments;
+
+    assert.equal(rows.length, 2);
+    assert.equal(
+      rows.reduce((total: number, row: any) => total + row.amountCents, 0),
+      view.income.collectedCents,
+    );
+
+    // Each row carries what the panel needs to name it without a second request.
+    const [newest] = rows;
+    assert.equal(newest.paidOn, dayIn(THIS_MONTH, 9));
+    assert.equal(newest.lotCode, "D-01");
+    assert.equal(newest.contractCode, "CT-D-01");
+    assert.equal(newest.method, "transfer");
+    assert.ok(typeof newest.customerName === "string" && newest.customerName.length > 0);
+
+    await app.close();
+  });
+
+  it("groups into exactly the customers the payer count reports", async () => {
+    const { app, db, ids } = await buildTestApp();
+    const cookie = await login(app, "owner@test.hn", OWNER_PASSWORD);
+
+    const contract = addContract(db, ids.projectId, ids.customerId, {
+      lotCode: "D-02",
+      salePriceCents: lempiras(60_000),
+      downPaymentCents: 0,
+      termMonths: 12,
+      monthlyPaymentCents: lempiras(5_000),
+      dueDay: 5,
+      signedOn: dayIn(LAST_MONTH, 5),
+    });
+
+    // One customer, three payments. "Clientes que pagaron" counts people, so the
+    // panel that opens under it must group to one row and not to three.
+    for (const day of [2, 11, 21]) {
+      addPayment(db, contract.contractId, ids.ownerId, {
+        amountCents: lempiras(1_000),
+        paidOn: dayIn(THIS_MONTH, day),
+      });
+    }
+
+    const view = await readDashboard(app, cookie);
+    const customers = new Set(view.income.payments.map((row: any) => row.customerId));
+
+    assert.equal(view.income.payments.length, 3);
+    assert.equal(customers.size, view.income.payingCustomers);
+
+    await app.close();
+  });
+
+  it("splits by project so a project's own rows sum to its collected figure", async () => {
+    const { app, db, ids } = await buildTestApp();
+    const cookie = await login(app, "owner@test.hn", OWNER_PASSWORD);
+
+    const contract = addContract(db, ids.projectId, ids.customerId, {
+      lotCode: "D-03",
+      salePriceCents: lempiras(40_000),
+      downPaymentCents: 0,
+      termMonths: 8,
+      monthlyPaymentCents: lempiras(5_000),
+      dueDay: 5,
+      signedOn: dayIn(LAST_MONTH, 5),
+    });
+
+    addPayment(db, contract.contractId, ids.ownerId, {
+      amountCents: lempiras(3_000),
+      paidOn: dayIn(THIS_MONTH, 6),
+    });
+
+    const view = await readDashboard(app, cookie);
+
+    for (const project of view.projects) {
+      const mine = view.income.payments.filter((row: any) => row.projectId === project.projectId);
+
+      assert.equal(
+        mine.reduce((total: number, row: any) => total + row.amountCents, 0),
+        project.collectedCents,
+        `project ${project.projectName} does not add up to its own payments`,
+      );
+    }
+
+    await app.close();
+  });
+
+  it("returns the contracts signed this month, summing to the reported value", async () => {
+    const { app, db, ids } = await buildTestApp();
+    const cookie = await login(app, "owner@test.hn", OWNER_PASSWORD);
+
+    addContract(db, ids.projectId, ids.customerId, {
+      lotCode: "D-04",
+      salePriceCents: lempiras(150_000),
+      downPaymentCents: lempiras(30_000),
+      termMonths: 24,
+      monthlyPaymentCents: lempiras(5_000),
+      dueDay: 5,
+      signedOn: dayIn(THIS_MONTH, 2),
+    });
+
+    // Signed last month: counted there, and absent from this month's list.
+    addContract(db, ids.projectId, ids.customerId, {
+      lotCode: "D-05",
+      salePriceCents: lempiras(80_000),
+      downPaymentCents: 0,
+      termMonths: 16,
+      monthlyPaymentCents: lempiras(5_000),
+      dueDay: 5,
+      signedOn: dayIn(LAST_MONTH, 14),
+    });
+
+    const view = await readDashboard(app, cookie);
+    const signed = view.income.signed;
+
+    assert.equal(signed.length, view.income.signedCount);
+    assert.equal(
+      signed.reduce((total: number, row: any) => total + row.salePriceCents, 0),
+      view.income.signedValueCents,
+    );
+
+    const mine = signed.find((row: any) => row.lotCode === "D-04");
+    assert.ok(mine, "the contract signed this month is missing from the list");
+    assert.equal(mine.salePriceCents, lempiras(150_000));
+    assert.equal(mine.downPaymentCents, lempiras(30_000));
+    assert.ok(!signed.some((row: any) => row.lotCode === "D-05"));
+
+    await app.close();
+  });
+
+  it("opens a past month into that month's rows, not this one's", async () => {
+    const { app, db, ids } = await buildTestApp();
+    const cookie = await login(app, "owner@test.hn", OWNER_PASSWORD);
+
+    const contract = addContract(db, ids.projectId, ids.customerId, {
+      lotCode: "D-06",
+      salePriceCents: lempiras(70_000),
+      downPaymentCents: 0,
+      termMonths: 14,
+      monthlyPaymentCents: lempiras(5_000),
+      dueDay: 5,
+      signedOn: dayIn(shiftMonth(LAST_MONTH, -1), 5),
+    });
+
+    addPayment(db, contract.contractId, ids.ownerId, {
+      amountCents: lempiras(6_000),
+      paidOn: dayIn(LAST_MONTH, 12),
+    });
+    addPayment(db, contract.contractId, ids.ownerId, {
+      amountCents: lempiras(1_500),
+      paidOn: dayIn(THIS_MONTH, 12),
+    });
+
+    const past = await readDashboard(app, cookie, LAST_MONTH);
+    const rows = past.income.payments;
+
+    assert.ok(rows.every((row: any) => monthOf(row.paidOn) === LAST_MONTH));
+    assert.equal(
+      rows.reduce((total: number, row: any) => total + row.amountCents, 0),
+      past.income.collectedCents,
+    );
+
+    await app.close();
+  });
+});

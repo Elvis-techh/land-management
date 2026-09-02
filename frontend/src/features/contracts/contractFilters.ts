@@ -42,6 +42,25 @@ export const NO_CONTRACT_FILTERS: ContractFilters = {
   onlyWithBalance: false,
 };
 
+/**
+ * A filter state somewhere else can ask the Contratos tab to open with.
+ *
+ * Deliberately a partial rather than a whole `ContractFilters`: a caller wants
+ * to say "the overdue ones" and should not have to restate the four filters it
+ * has no opinion about, nor be silently broken when a fifth is added. Anything
+ * left out keeps its default — including `statuses: ["active"]`, which is what
+ * stops a drill-down from resurrecting cancelled contracts nobody asked for.
+ */
+export type ContractFilterPreset = Partial<ContractFilters>;
+
+/** The default filters with a preset laid over the top. */
+export function presetFilters(preset: ContractFilterPreset): ContractFilters {
+  return { ...DEFAULT_CONTRACT_FILTERS, ...preset };
+}
+
+/** The health values that mean "behind" — the same split the server makes. */
+export const BEHIND_HEALTH: PaymentHealth[] = ["overdue", "at_risk"];
+
 export function countActiveFilters(filters: ContractFilters): number {
   let count = 0;
 

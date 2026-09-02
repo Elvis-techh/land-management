@@ -63,6 +63,7 @@ const contractsListQuery = (db: Db) =>
       customerId: customers.id,
       customerName: customers.fullName,
       customerPhone: customers.phone,
+      customerEmail: customers.email,
       paidToDateCents: sql<number>`
         COALESCE((
           SELECT SUM(${payments.amountCents})
@@ -131,6 +132,14 @@ function present(row: ContractRow, asOf: string) {
       id: row.customerId,
       fullName: row.customerName,
       phone: row.customerPhone,
+      /*
+       * Carried so the list can offer to write to this person without a second
+       * request per row. Optional in the same way it is on the customer: an
+       * address nobody gave is `null`, and the button that needs one is
+       * disabled rather than hidden — a missing address is a fact about the
+       * record worth seeing, not a feature to make disappear.
+       */
+      email: row.customerEmail,
     },
     terms: {
       salePrice: row.salePriceCents,

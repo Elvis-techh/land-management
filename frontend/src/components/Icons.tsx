@@ -281,6 +281,31 @@ export function IconWhatsApp() {
  * at 16px a pair of lines reads as a hamburger menu, and a handle that looks
  * like a menu is a handle nobody grabs.
  */
+/**
+ * A plain SMS bubble, deliberately unlike the WhatsApp mark beside it.
+ *
+ * The two sit next to each other in the contact column and go to different
+ * places, so they must not be mistakable at 16px: this one is a stroked outline
+ * with no handset, where WhatsApp is a filled silhouette with one.
+ */
+export function IconMessage() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 9.6 9.6 0 0 1-2.9-.4L4 21l1.4-3.8A8.1 8.1 0 0 1 3.6 11.5 8.4 8.4 0 0 1 12 3.1a8.4 8.4 0 0 1 9 8.4Z" />
+    </svg>
+  );
+}
+
+/** An envelope. */
+export function IconMail() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <path d="m3.5 7 8.5 6 8.5-6" />
+    </svg>
+  );
+}
+
 export function IconDrag() {
   return (
     <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">

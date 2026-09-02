@@ -392,7 +392,12 @@ export const dashboardRoutes: FastifyPluginAsync<DashboardRoutesOptions> = async
      */
     const paymentRows = app.db
       .select({
+        id: payments.id,
         customerId: contracts.customerId,
+        customerName: customers.fullName,
+        contractId: contracts.id,
+        contractCode: contracts.code,
+        lotCode: lots.code,
         amountCents: payments.amountCents,
         paidOn: payments.paidOn,
         type: payments.type,
@@ -400,9 +405,11 @@ export const dashboardRoutes: FastifyPluginAsync<DashboardRoutesOptions> = async
         recordedBy: payments.recordedBy,
         recorderName: users.name,
         projectId: projects.id,
+        projectName: projects.name,
       })
       .from(payments)
       .innerJoin(contracts, eq(contracts.id, payments.contractId))
+      .innerJoin(customers, eq(customers.id, contracts.customerId))
       .innerJoin(lots, eq(lots.id, contracts.lotId))
       .innerJoin(projects, eq(projects.id, lots.projectId))
       .innerJoin(users, eq(users.id, payments.recordedBy))
@@ -456,6 +463,34 @@ export const dashboardRoutes: FastifyPluginAsync<DashboardRoutesOptions> = async
     const payingCustomers = new Set<string>();
     const previousPayingCustomers = new Set<string>();
 
+    /*
+     * The month's payments, one row each, exactly as they were counted above.
+     *
+     * This is what the two breakdowns on the screen open into: "Clientes que
+     * pagaron" groups it by customer, and a project's "Cobrado" filters it by
+     * project. Both are groupings of THIS array rather than second queries of
+     * their own, which is the only way a breakdown is guaranteed to add up to
+     * the total it hangs under — a separate query, run a moment later or with
+     * one predicate spelled differently, is free to disagree.
+     *
+     * It is filled inside the loop that does the summing, so a row cannot be in
+     * the total and missing from the list.
+     */
+    const monthPayments: Array<{
+      id: string;
+      customerId: string;
+      customerName: string;
+      contractId: string;
+      contractCode: string;
+      lotCode: string;
+      projectId: string;
+      projectName: string;
+      amountCents: number;
+      paidOn: string;
+      type: string;
+      method: string;
+    }> = [];
+
     for (const payment of paymentRows) {
       const paidMonth = monthOf(payment.paidOn);
 
@@ -463,6 +498,20 @@ export const dashboardRoutes: FastifyPluginAsync<DashboardRoutesOptions> = async
 
       if (paidMonth === month) {
         collectedByProject.add(payment.projectId, payment.amountCents);
+        monthPayments.push({
+          id: payment.id,
+          customerId: payment.customerId,
+          customerName: payment.customerName,
+          contractId: payment.contractId,
+          contractCode: payment.contractCode,
+          lotCode: payment.lotCode,
+          projectId: payment.projectId,
+          projectName: payment.projectName,
+          amountCents: payment.amountCents,
+          paidOn: payment.paidOn,
+          type: payment.type,
+          method: payment.method,
+        });
         byType.add(payment.type, payment.amountCents);
         byMethod.add(payment.method, payment.amountCents);
         payingCustomers.add(payment.customerId);
@@ -784,6 +833,34 @@ export const dashboardRoutes: FastifyPluginAsync<DashboardRoutesOptions> = async
           (total, entry) => total + entry.terms.salePriceCents,
           0,
         ),
+        /*
+         * The two counters above, opened up.
+         *
+         * Same rule as `monthPayments`: each list is built from exactly the
+         * rows its counter was derived from, so "8 contratos nuevos" opens into
+         * eight rows and never into seven or nine.
+         */
+        payments: [...monthPayments].sort(
+          (a, b) => b.paidOn.localeCompare(a.paidOn) || a.customerName.localeCompare(b.customerName, "es"),
+        ),
+        signed: [...signedThisMonth]
+          .sort(
+            (a, b) =>
+              b.terms.signedOn.localeCompare(a.terms.signedOn) ||
+              b.terms.salePriceCents - a.terms.salePriceCents,
+          )
+          .map((entry) => ({
+            contractId: entry.row.id,
+            contractCode: entry.row.code,
+            customerId: entry.row.customerId,
+            customerName: entry.row.customerName,
+            lotCode: entry.row.lotCode,
+            projectName: entry.row.projectName,
+            saleType: entry.row.saleType,
+            signedOn: entry.terms.signedOn,
+            salePriceCents: entry.terms.salePriceCents,
+            downPaymentCents: entry.terms.downPaymentCents,
+          })),
         // Where the month's money came from. A month carried by one large prima
         // is not a month that repeats, and the headline figure cannot say so.
         byType: {

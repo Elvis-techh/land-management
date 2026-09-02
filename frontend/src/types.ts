@@ -264,6 +264,8 @@ export interface Contract {
     fullName: string;
     /** E.164 — run it through `formatPhone` before showing it. */
     phone: string;
+    /** `null` when none was given. The Escribir action is disabled, not hidden. */
+    email: string | null;
   };
   terms: ContractTerms;
   /** Summed from payments of type `down_payment`, not the agreed figure. */

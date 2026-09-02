@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 
 import { IconChevronDown, IconDrag, IconEye, IconEyeOff } from "../../components/Icons";
 import { getInitials } from "../../lib/initials";
@@ -7,7 +7,9 @@ import type { Cents, MoneyView } from "../../lib/money";
 import { formatMoney, formatMoneyParts } from "../../lib/money";
 import { buildProjectAccents } from "../../lib/projectAccent";
 import { HEALTH_PRESENTATION } from "../contracts/contractPresentation";
-import type { Dashboard, Debtor } from "./api";
+import { BEHIND_HEALTH } from "../contracts/contractFilters";
+import type { ContractFilterPreset } from "../contracts/contractFilters";
+import type { Dashboard, Debtor, MonthPayment, SignedContract } from "./api";
 import { resetDashboardLayout, saveDashboardLayout } from "./api";
 import { MonthlyBars } from "./MonthlyBars";
 import type { DashboardLayout, SectionId } from "./dashboardSections";
@@ -19,6 +21,7 @@ import {
   resolveLayout,
 } from "./dashboardSections";
 import {
+  PAYMENT_METHOD_LABELS,
   collectionRate,
   compareToPrevious,
   describeComparison,
@@ -26,14 +29,77 @@ import {
   formatDate,
   formatMonth,
   formatMonthName,
+  groupPayers,
   pluralise,
+  shortDay,
 } from "./dashboardPresentation";
+
+/**
+ * The DOM id a band is reachable at, for the tiles that scroll to one.
+ *
+ * A band only has one while it is actually on the page: hidden bands render
+ * nothing, and the editor wraps each band in a frame of its own. Both cases are
+ * handled by `revealBand` below rather than by hoping the element is there.
+ */
+function bandDomId(id: SectionId): string {
+  return `dash-band-${id}`;
+}
+
+/**
+ * Bring a band into view and mark it, or report that it could not be.
+ *
+ * The mark matters more than the scroll. Landing somewhere new mid-page with no
+ * indication of why is disorienting — the reader clicked a figure and the page
+ * moved — so the band it lands on flashes to say "this is the one you asked
+ * for". `false` means the band is hidden or being rearranged, which is a real
+ * answer the caller has to handle: it falls back to leaving for Contratos.
+ */
+function revealBand(id: SectionId): boolean {
+  const element = document.getElementById(bandDomId(id));
+
+  if (!element) {
+    return false;
+  }
+
+  // `smooth` here and nowhere else in the app, because this is the one movement
+  // the reader did not ask for by scrolling: the animation is what tells them
+  // the page moved rather than jumped to a different screen.
+  element.scrollIntoView({ behavior: "smooth", block: "start" });
+
+  element.classList.remove("is-revealed");
+  // Forcing a reflow between the two lines restarts the animation when the same
+  // band is asked for twice; without it the second click does nothing visible.
+  void element.offsetWidth;
+  element.classList.add("is-revealed");
+
+  window.setTimeout(() => element.classList.remove("is-revealed"), 1600);
+
+  return true;
+}
 
 interface DashboardPageProps {
   data: Dashboard;
   money: MoneyView;
   /** Reports a different month. `undefined` means "whatever month it is now". */
   onSelectMonth: (month: string | undefined) => void;
+  /**
+   * Opens one contract's detail panel, by id.
+   *
+   * By id rather than by object because this screen never holds a `Contract` —
+   * it holds the dashboard's own summary rows. App owns the contracts list and
+   * does the lookup, which also means a row for a contract that has since been
+   * archived opens nothing instead of opening something stale.
+   */
+  onOpenContract: (contractId: string) => void;
+  /**
+   * Leaves for Contratos with the filters already applied.
+   *
+   * The only drill-down that leaves this screen. It is used where the complete
+   * answer is a list too long to belong on a summary — every overdue contract —
+   * and never where the answer fits in a panel, because a redirect costs the
+   * reader the month they had selected here.
+   */
+  onShowContracts: (preset: ContractFilterPreset) => void;
 }
 
 /**
@@ -50,7 +116,13 @@ interface DashboardPageProps {
  * Almost every figure is a link into the screen that can act on it. A number
  * nobody can follow anywhere is decoration.
  */
-export function DashboardPage({ data, money, onSelectMonth }: DashboardPageProps) {
+export function DashboardPage({
+  data,
+  money,
+  onSelectMonth,
+  onOpenContract,
+  onShowContracts,
+}: DashboardPageProps) {
   const { income, collections, upcoming } = data;
   const rate = collectionRate(income.collectedCents, income.expectedCents);
   const collectedDelta = compareToPrevious(income.collectedCents, income.previousToDateCents);
@@ -61,6 +133,19 @@ export function DashboardPage({ data, money, onSelectMonth }: DashboardPageProps
 
   // Projects keep the colour they have on Lotes, Clientes and Contratos.
   const accents = buildProjectAccents(data.projects.map((project) => project.projectName));
+
+  /*
+   * How many contracts are actually behind — the real total the worklist shows
+   * the top twelve of.
+   *
+   * Summed from the buckets rather than from `worklist.length`, which is capped
+   * and would report "12 de 12" on a book with fifty overdue contracts. The
+   * buckets are the counters the server states in full, exactly so this figure
+   * has somewhere honest to come from.
+   */
+  const behindTotal = collections.buckets
+    .filter((bucket) => BEHIND_HEALTH.includes(bucket.status))
+    .reduce((total, bucket) => total + bucket.contracts, 0);
 
   /* ---------------------------------------------------------------------- */
   /* Arranging the screen                                                    */
@@ -74,6 +159,22 @@ export function DashboardPage({ data, money, onSelectMonth }: DashboardPageProps
    * Cancelar has something to throw away and a background refresh has something
    * it is not allowed to touch.
    */
+  /**
+   * Which of the two headline figures is currently opened up, if either.
+   *
+   * One at a time: both panels list the same month from different angles, and
+   * two long tables stacked above the rest of the screen pushes everything
+   * below them off the page on a phone.
+   *
+   * Reset when the month changes, further down — a panel left open across a
+   * month change would silently be showing a different month's rows under a
+   * tile the reader is no longer looking at.
+   */
+  const [openTile, setOpenTile] = useState<"payers" | "signed" | null>(null);
+
+  /** Which project's payments are open, by id. `null` for none. */
+  const [openProject, setOpenProject] = useState<string | null>(null);
+
   const [layout, setLayout] = useState<DashboardLayout>(() => resolveLayout(data.layout));
   const [draft, setDraft] = useState<DashboardLayout | null>(null);
   const [dragging, setDragging] = useState<SectionId | null>(null);
@@ -95,6 +196,17 @@ export function DashboardPage({ data, money, onSelectMonth }: DashboardPageProps
   useEffect(() => {
     setLayout(resolveLayout(JSON.parse(storedLayout) as DashboardLayout | null));
   }, [storedLayout]);
+
+  /*
+   * A different month is a different set of rows, so nothing that was opened
+   * against the old one stays open. Keyed on the month rather than on the data
+   * object, which is replaced on every live refresh — closing these panels
+   * every few seconds would make them unusable.
+   */
+  useEffect(() => {
+    setOpenTile(null);
+    setOpenProject(null);
+  }, [data.month]);
 
   const visible = draft ?? layout;
   const hiddenIds = useMemo(() => new Set(visible.hidden), [visible.hidden]);
@@ -195,12 +307,47 @@ export function DashboardPage({ data, money, onSelectMonth }: DashboardPageProps
                     )} con saldo del mes`
               }
               tone={income.stillDueCents > 0 ? "warn" : "good"}
+              action={
+                income.stillDueContracts === 0
+                  ? undefined
+                  : {
+                      /*
+                       * To the Cobranza band, NOT to the overdue list.
+                       *
+                       * This figure counts every live contract whose scheduled
+                       * total for the month has not fully arrived — which
+                       * includes the ones inside the five-day grace, and those
+                       * are deliberately not "atrasados". Sending the reader
+                       * straight to a filtered Contratos would answer with a
+                       * smaller number than the tile they just pressed and look
+                       * like rows had gone missing. The Cobranza band is where
+                       * that population is split into its buckets, so it is the
+                       * honest destination; the complete overdue list is one
+                       * more click from there, correctly labelled.
+                       */
+                      onClick: () => {
+                        if (!revealBand("collections")) {
+                          onShowContracts({ health: BEHIND_HEALTH });
+                        }
+                      },
+                      hint: "Ver el desglose de la cobranza",
+                    }
+              }
             />
 
             <StatTile
               label="Clientes que pagaron"
               value={String(income.payingCustomers)}
               detail={`${payersDelta.label} ${comparison}`}
+              action={
+                income.payingCustomers === 0
+                  ? undefined
+                  : {
+                      onClick: () => setOpenTile((current) => (current === "payers" ? null : "payers")),
+                      hint: "Ver quiénes pagaron",
+                      isOpen: openTile === "payers",
+                    }
+              }
             />
 
             <StatTile
@@ -211,8 +358,37 @@ export function DashboardPage({ data, money, onSelectMonth }: DashboardPageProps
                   ? "Ninguno firmado"
                   : `${formatMoney(income.signedValueCents, money)} en ventas`
               }
+              action={
+                income.signedCount === 0
+                  ? undefined
+                  : {
+                      onClick: () => setOpenTile((current) => (current === "signed" ? null : "signed")),
+                      hint: "Ver los contratos firmados",
+                      isOpen: openTile === "signed",
+                    }
+              }
             />
           </div>
+
+          {openTile === "payers" && (
+            <PayersPanel
+              payments={income.payments}
+              money={money}
+              monthName={formatMonthName(data.month)}
+              onOpenContract={onOpenContract}
+              onClose={() => setOpenTile(null)}
+            />
+          )}
+
+          {openTile === "signed" && (
+            <SignedPanel
+              signed={income.signed}
+              money={money}
+              monthName={formatMonthName(data.month)}
+              onOpenContract={onOpenContract}
+              onClose={() => setOpenTile(null)}
+            />
+          )}
         </div>
     ),
 
@@ -331,7 +507,20 @@ export function DashboardPage({ data, money, onSelectMonth }: DashboardPageProps
         <div className="card dash-card">
           <div className="card-head">
             <h3>A quién llamar primero</h3>
-            <span className="tag">por monto vencido</span>
+            {/*
+              The count says out loud that this is a RANKING and not a census.
+              The list is capped at twelve by the server; a heading that read
+              "Morosos" over twelve rows of a book with forty-seven overdue
+              contracts would be a false statement about the business, and the
+              reader has no way to tell from the card that anything is missing.
+              Saying "12 de 47" makes the cap visible, and the link in the
+              footer is where the other thirty-five live.
+            */}
+            <span className="tag">
+              {behindTotal > collections.worklist.length
+                ? `${collections.worklist.length} de ${behindTotal} · por monto vencido`
+                : "por monto vencido"}
+            </span>
           </div>
 
           {collections.worklist.length === 0 ? (
@@ -350,9 +539,13 @@ export function DashboardPage({ data, money, onSelectMonth }: DashboardPageProps
                 </thead>
                 <tbody>
                   {collections.worklist.map((debtor) => (
-                    <tr key={debtor.contractId}>
+                    <tr
+                      key={debtor.contractId}
+                      className="is-clickable"
+                      onClick={() => onOpenContract(debtor.contractId)}
+                    >
                       <td>
-                        <DebtorName debtor={debtor} />
+                        <DebtorName debtor={debtor} onOpen={() => onOpenContract(debtor.contractId)} />
                       </td>
                       <td>
                         <span className="contract-lot">
@@ -384,6 +577,22 @@ export function DashboardPage({ data, money, onSelectMonth }: DashboardPageProps
                   ))}
                 </tbody>
               </table>
+
+              {/*
+                The complete list, on the screen that can act on it. This is the
+                one drill-down that leaves the Panel General, and it does so
+                because the answer is genuinely a working list of every overdue
+                contract — sortable, filterable, with the contact buttons beside
+                each row — which is what the Contratos tab already is.
+              */}
+              <button
+                type="button"
+                className="dash-drill-link"
+                onClick={() => onShowContracts({ health: BEHIND_HEALTH })}
+              >
+                Ver {behindTotal === 1 ? "el contrato atrasado" : `los ${behindTotal} atrasados`} en
+                Contratos
+              </button>
             </div>
           )}
         </div>
@@ -417,10 +626,27 @@ export function DashboardPage({ data, money, onSelectMonth }: DashboardPageProps
                       project.previousToDateCents,
                     );
 
+                    const isOpen = openProject === project.projectId;
+                    const projectPayments = isOpen
+                      ? income.payments.filter((row) => row.projectId === project.projectId)
+                      : [];
+
                     return (
-                      <tr key={project.projectId}>
+                      <Fragment key={project.projectId}>
+                      <tr
+                        className={`is-clickable${isOpen ? " is-open" : ""}`}
+                        onClick={() =>
+                          setOpenProject((current) =>
+                            current === project.projectId ? null : project.projectId,
+                          )
+                        }
+                        aria-expanded={isOpen}
+                      >
                         <td>
                           <span className={`cell-project ${accents.get(project.projectName) ?? ""}`}>
+                            <span className={`dash-row-caret${isOpen ? " is-open" : ""}`}>
+                              <IconChevronDown />
+                            </span>
                             <span className="project-dot" />
                             {project.projectName}
                           </span>
@@ -463,6 +689,85 @@ export function DashboardPage({ data, money, onSelectMonth }: DashboardPageProps
                           </span>
                         </td>
                       </tr>
+
+                      {/*
+                        Where the "Cobrado" figure beside it came from, and from
+                        whom. Filtered out of the same `income.payments` array
+                        the project totals were summed from, so the rows below
+                        add up to the row above by construction rather than by
+                        two queries happening to agree.
+                      */}
+                      {isOpen && (
+                        <tr className="dash-subrow">
+                          <td colSpan={5}>
+                            {projectPayments.length === 0 ? (
+                              <p className="state-message">
+                                Ningún pago registrado en {formatMonthName(data.month)} para{" "}
+                                {project.projectName}.
+                              </p>
+                            ) : (
+                              <table className="dash-table is-nested">
+                                <thead>
+                                  <tr>
+                                    <th>Cliente</th>
+                                    <th>Lote</th>
+                                    <th>Fecha</th>
+                                    <th>Forma</th>
+                                    <th className="col-money">Monto</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {projectPayments.map((row) => (
+                                    <tr
+                                      key={row.id}
+                                      className="is-clickable"
+                                      onClick={() => onOpenContract(row.contractId)}
+                                    >
+                                      <td>
+                                        <span className="holder-text">
+                                          <span className="holder-name">{row.customerName}</span>
+                                          <span className="holder-contract">
+                                            {row.contractCode}
+                                          </span>
+                                        </span>
+                                      </td>
+                                      <td>
+                                        <span className="code-badge">{row.lotCode}</span>
+                                      </td>
+                                      <td>
+                                        <span className="cell-sub">{shortDay(row.paidOn)}</span>
+                                      </td>
+                                      <td>
+                                        <span className="cell-sub">
+                                          {PAYMENT_METHOD_LABELS[row.method] ?? row.method}
+                                        </span>
+                                      </td>
+                                      <td className="col-money">
+                                        <span className="cell-money">
+                                          {formatMoney(row.amountCents, money)}
+                                        </span>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                                <tfoot>
+                                  <tr>
+                                    <th scope="row" colSpan={4}>
+                                      {pluralise(projectPayments.length, "pago", "pagos")}
+                                    </th>
+                                    <td className="col-money">
+                                      <span className="cell-money">
+                                        {formatMoney(project.collectedCents, money)}
+                                      </span>
+                                    </td>
+                                  </tr>
+                                </tfoot>
+                              </table>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                      </Fragment>
                     );
                   })}
                 </tbody>
@@ -695,7 +1000,11 @@ export function DashboardPage({ data, money, onSelectMonth }: DashboardPageProps
         }
 
         if (draft === null) {
-          return hiddenIds.has(id) ? null : <div key={id}>{content}</div>;
+          return hiddenIds.has(id) ? null : (
+            <div key={id} id={bandDomId(id)}>
+              {content}
+            </div>
+          );
         }
 
         return (
@@ -978,17 +1287,236 @@ function StatTile({
   value,
   detail,
   tone,
+  action,
 }: {
   label: string;
   value: string;
   detail: string;
   tone?: "good" | "warn";
+  /**
+   * What following this figure does, if anything can be done with it.
+   *
+   * A tile with no action stays a plain `div` rather than becoming a button
+   * that does nothing — a figure that looks pressable and is not teaches the
+   * reader to stop trying the ones that are.
+   */
+  action?: {
+    onClick: () => void;
+    /** Spoken by a screen reader in place of the bare number. */
+    hint: string;
+    /** Set when the tile opens a panel underneath, so the caret can turn. */
+    isOpen?: boolean;
+  };
 }) {
-  return (
-    <div className="card dash-tile">
-      <p className="dash-tile-label">{label}</p>
+  const body = (
+    <>
+      <p className="dash-tile-label">
+        {label}
+        {action && (
+          <span className="dash-tile-caret">
+            <IconChevronDown />
+          </span>
+        )}
+      </p>
       <p className={tone ? `dash-tile-value is-${tone}` : "dash-tile-value"}>{value}</p>
       <p className="dash-tile-detail">{detail}</p>
+    </>
+  );
+
+  if (!action) {
+    return <div className="card dash-tile">{body}</div>;
+  }
+
+  return (
+    <button
+      type="button"
+      className={`card dash-tile is-actionable${action.isOpen ? " is-open" : ""}`}
+      onClick={action.onClick}
+      aria-expanded={action.isOpen}
+      aria-label={`${label}: ${value}. ${action.hint}`}
+    >
+      {body}
+    </button>
+  );
+}
+
+/** Who paid this month, and what each of them paid. */
+function PayersPanel({
+  payments,
+  money,
+  monthName,
+  onOpenContract,
+  onClose,
+}: {
+  payments: MonthPayment[];
+  money: MoneyView;
+  monthName: string;
+  onOpenContract: (contractId: string) => void;
+  onClose: () => void;
+}) {
+  const payers = useMemo(() => groupPayers(payments), [payments]);
+  const total = payments.reduce((sum, row) => sum + row.amountCents, 0) as Cents;
+
+  return (
+    <div className="card dash-drilldown">
+      <div className="card-head">
+        <h3>Quiénes pagaron en {monthName}</h3>
+        <button type="button" className="btn-ghost btn-small" onClick={onClose}>
+          Cerrar
+        </button>
+      </div>
+
+      <div className="table-wrap">
+        <table className="dash-table is-payers">
+          <thead>
+            <tr>
+              <th>Cliente</th>
+              <th>Pagos</th>
+              <th className="col-money">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {payers.map((payer) => (
+              <tr key={payer.customerId}>
+                <td>
+                  {payer.customerName}
+                  {/* The total again, under the name, for the width where the
+                      column it normally lives in has been dropped. One number,
+                      one source — see the `.dash-payer-total` rule. */}
+                  <span className="cell-sub dash-payer-total">
+                    {formatMoney(payer.totalCents, money)}
+                  </span>
+                </td>
+                <td>
+                  {/*
+                    Every payment spelled out rather than counted. The count is
+                    the thing a reader can already work out; what they came here
+                    for is which lot the money went against and on what day.
+                  */}
+                  <div className="dash-payment-rows">
+                    {payer.rows.map((row) => (
+                      <button
+                        key={row.id}
+                        type="button"
+                        className="dash-payment-row"
+                        onClick={() => onOpenContract(row.contractId)}
+                        title={`Abrir ${row.contractCode}`}
+                      >
+                        <span className="code-badge">{row.lotCode}</span>
+                        <span className="cell-sub">{shortDay(row.paidOn)}</span>
+                        <span className="cell-sub">
+                          {PAYMENT_METHOD_LABELS[row.method] ?? row.method}
+                        </span>
+                        <span className="dash-payment-amount">
+                          {formatMoney(row.amountCents, money)}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </td>
+                <td className="col-money">
+                  <span className="cell-money">{formatMoney(payer.totalCents, money)}</span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr>
+              <th scope="row">
+                {pluralise(payers.length, "cliente", "clientes")}
+              </th>
+              <td>{pluralise(payments.length, "pago", "pagos")}</td>
+              <td className="col-money">
+                <span className="cell-money">{formatMoney(total, money)}</span>
+              </td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/** The contracts signed this month, newest first. */
+function SignedPanel({
+  signed,
+  money,
+  monthName,
+  onOpenContract,
+  onClose,
+}: {
+  signed: SignedContract[];
+  money: MoneyView;
+  monthName: string;
+  onOpenContract: (contractId: string) => void;
+  onClose: () => void;
+}) {
+  const total = signed.reduce((sum, row) => sum + row.salePriceCents, 0) as Cents;
+
+  return (
+    <div className="card dash-drilldown">
+      <div className="card-head">
+        <h3>Contratos firmados en {monthName}</h3>
+        <button type="button" className="btn-ghost btn-small" onClick={onClose}>
+          Cerrar
+        </button>
+      </div>
+
+      <div className="table-wrap">
+        <table className="dash-table">
+          <thead>
+            <tr>
+              <th>Cliente</th>
+              <th>Lote</th>
+              <th>Firmado</th>
+              <th className="col-money">Valor</th>
+            </tr>
+          </thead>
+          <tbody>
+            {signed.map((row) => (
+              <tr
+                key={row.contractId}
+                className="is-clickable"
+                onClick={() => onOpenContract(row.contractId)}
+              >
+                <td>
+                  <span className="holder-text">
+                    <span className="holder-name">{row.customerName}</span>
+                    <span className="holder-contract">{row.contractCode}</span>
+                  </span>
+                </td>
+                <td>
+                  <span className="contract-lot">
+                    <span className="code-badge">{row.lotCode}</span>
+                    <span className="cell-sub">{row.projectName}</span>
+                  </span>
+                </td>
+                <td>
+                  <span className="cell-sub">{shortDay(row.signedOn)}</span>
+                </td>
+                <td className="col-money">
+                  <span className="cell-money">{formatMoney(row.salePriceCents, money)}</span>
+                  {row.downPaymentCents > 0 && (
+                    <span className="cell-sub">
+                      prima {formatMoney(row.downPaymentCents, money)}
+                    </span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr>
+              <th scope="row" colSpan={3}>
+                {pluralise(signed.length, "contrato", "contratos")}
+              </th>
+              <td className="col-money">
+                <span className="cell-money">{formatMoney(total, money)}</span>
+              </td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
     </div>
   );
 }
@@ -1092,7 +1620,29 @@ function ChangeLists({
 }
 
 /** A person with the lot they are behind on, and the number to call them at. */
-function DebtorName({ debtor }: { debtor: Debtor }) {
+function DebtorName({ debtor, onOpen }: { debtor: Debtor; onOpen?: () => void }) {
+  if (onOpen) {
+    return (
+      <button
+        type="button"
+        className="holder-btn"
+        onClick={(event) => {
+          // The row is clickable too; without this the contract would be asked
+          // for twice on one press.
+          event.stopPropagation();
+          onOpen();
+        }}
+        title={`Abrir ${debtor.contractCode}`}
+      >
+        <span className="holder-avatar">{getInitials(debtor.customerName)}</span>
+        <span className="holder-text">
+          <span className="holder-name">{debtor.customerName}</span>
+          <span className="holder-contract">{debtor.contractCode}</span>
+        </span>
+      </button>
+    );
+  }
+
   return (
     <span className="holder-btn is-static">
       <span className="holder-avatar">{getInitials(debtor.customerName)}</span>

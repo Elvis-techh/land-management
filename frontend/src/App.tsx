@@ -18,6 +18,7 @@ import { ContractEditDialog } from "./features/contracts/ContractEditDialog";
 import { ContractPanel } from "./features/contracts/ContractPanel";
 import { ContractsPage } from "./features/contracts/ContractsPage";
 import { SplitPreviewDialog } from "./features/contracts/SplitPreviewDialog";
+import type { ContractFilterPreset } from "./features/contracts/contractFilters";
 import { cancelContract, createContract, updateContract } from "./features/contracts/api";
 import type { ContractCreateDraft, ContractTermsDraft } from "./features/contracts/api";
 import { useContracts } from "./features/contracts/useContracts";
@@ -131,6 +132,8 @@ export default function App() {
    * the one worth showing before anybody has clicked anything.
    */
   const [activeTab, setActiveTab] = useState<TabId>("dashboard");
+  /** Filters the Contratos tab should adopt the next time it renders. */
+  const [contractsPreset, setContractsPreset] = useState<ContractFilterPreset | null>(null);
   const [currency, setCurrency] = useState<Currency>("HNL");
   const [isSidebarOpen, setSidebarOpen] = useState(() => !isMobileViewport());
   const [customerSelection, setCustomerSelection] = useState<CustomerSelection | null>(null);
@@ -287,6 +290,39 @@ export default function App() {
     if (isMobileViewport()) {
       setSidebarOpen(false);
     }
+  };
+
+  /*
+   * Open one contract's panel from a screen that only knows its id.
+   *
+   * The Panel General holds summary rows of its own rather than `Contract`
+   * objects, so the lookup happens here, against the list this component
+   * already owns. A contract the list does not have — one archived since the
+   * dashboard was last refreshed — opens nothing rather than an empty panel.
+   */
+  const handleOpenContractById = (contractId: string) => {
+    if (contractsState.status !== "ready") {
+      return;
+    }
+
+    const contract = contractsState.contracts.find((row) => row.id === contractId);
+
+    if (contract) {
+      setContractBeingViewed(contract);
+    }
+  };
+
+  /*
+   * Leave for Contratos with filters already applied.
+   *
+   * The preset is held here rather than pushed into ContractsPage, because that
+   * screen owns its own filter state and a prop that overwrote it on every
+   * render would fight the reader every time they changed a chip. It is handed
+   * over once, consumed, and cleared — see `onPresetApplied`.
+   */
+  const handleShowContracts = (preset: ContractFilterPreset) => {
+    setContractsPreset(preset);
+    handleSelectTab("contracts");
   };
 
   const handleSignOut = async () => {
@@ -635,6 +671,8 @@ export default function App() {
               data={dashboardState.data}
               money={money}
               onSelectMonth={setDashboardMonth}
+              onOpenContract={handleOpenContractById}
+              onShowContracts={handleShowContracts}
             />
           )}
 
@@ -780,6 +818,8 @@ export default function App() {
               user={user}
               onOpenContract={setContractBeingViewed}
               onSplitPayment={setContractsBeingSplit}
+              filterPreset={contractsPreset}
+              onPresetApplied={() => setContractsPreset(null)}
             />
           )}
 

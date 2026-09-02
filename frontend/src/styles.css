@@ -4999,9 +4999,40 @@ input:disabled {
   }
 
   /* A card inside a group is stepped in for the same reason the table rows
-     are: it belongs to the name above it. */
-  .contract-card-group .contract-card-head ~ .contract-card {
+     are: it belongs to the name above it. The indent moved to the shell when
+     the contact row was added — the card is no longer the head's sibling, and
+     leaving the old selector in place would silently un-indent every grouped
+     card on a phone. */
+  .contract-card-group .contract-card-head ~ .contract-card-shell {
     margin-left: 14px;
+  }
+
+  .contract-card-shell {
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Joined to the card above it rather than floating free: the buttons act on
+     THAT contract, and a gap here would read as a row belonging to neither. */
+  .contract-card-contact {
+    display: flex;
+    justify-content: flex-end;
+    gap: 4px;
+    margin-top: -1px;
+    padding: 4px 8px;
+    border: 1px solid var(--line);
+    border-top: 0;
+    border-radius: 0 0 12px 12px;
+    background: var(--card);
+  }
+
+  .contract-card-contact .contact-actions {
+    gap: 2px;
+  }
+
+  /* Square off the bottom of the card the row is attached to. */
+  .contract-card-shell .contract-card {
+    border-radius: 12px 12px 0 0;
   }
 
   .contract-card-top {
@@ -6355,5 +6386,303 @@ input:disabled {
 
   .dash-section-body {
     padding: 12px 6px 0;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Panel General — following a figure to the rows behind it
+   --------------------------------------------------------------------------
+   Every rule below exists for one idea: a number on this screen should be
+   followable to whatever it was summed from. That makes tiles, table rows and
+   project rows into controls, and controls have to look like controls without
+   turning a quiet summary into a page of buttons.
+   -------------------------------------------------------------------------- */
+
+/* A tile that can be followed. Same card as the others until it is approached —
+   the affordance is the caret and the hover, not a permanent border. */
+button.dash-tile {
+  width: 100%;
+  margin: 0;
+  border: 1px solid var(--line);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+}
+
+button.dash-tile:hover,
+button.dash-tile:focus-visible {
+  border-color: var(--line-strong);
+  box-shadow: var(--shadow-card);
+}
+
+button.dash-tile:active {
+  transform: translateY(1px);
+}
+
+button.dash-tile.is-open {
+  border-color: var(--ink-line);
+}
+
+.dash-tile-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.dash-tile-caret,
+.dash-row-caret {
+  display: inline-flex;
+  flex: none;
+  color: var(--text-muted);
+  transition: transform 140ms ease;
+}
+
+.dash-tile-caret svg { width: 14px; height: 14px; }
+.dash-row-caret svg { width: 13px; height: 13px; }
+
+.dash-tile.is-open .dash-tile-caret,
+.dash-row-caret.is-open {
+  transform: rotate(180deg);
+}
+
+.dash-row-caret {
+  margin-right: 2px;
+}
+
+/* The panel a tile opens into. Set into the page rather than floating over it:
+   it is more of the same screen, not a dialog, and it must not cover the figure
+   that was just pressed. */
+.dash-drilldown {
+  margin-top: 12px;
+  border-color: var(--line-strong);
+  animation: dash-open 160ms ease-out;
+}
+
+/* It is a child of the headline GRID, so without this it is laid into the hero's
+   own column and opens at a third of the page — wide enough to clip the total
+   off the right-hand edge of its own table. It belongs under the whole band. */
+.dash-headline > .dash-drilldown {
+  grid-column: 1 / -1;
+  margin-top: 0;
+}
+
+@keyframes dash-open {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* One customer's individual payments, stacked inside their row. */
+.dash-payment-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+}
+
+.dash-payment-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 2px 6px;
+  margin-left: -6px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.dash-payment-row:hover,
+.dash-payment-row:focus-visible {
+  background: var(--slate-bg);
+}
+
+.dash-payment-amount {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+/* The one drill-down that leaves the screen. A link rather than a button,
+   because it goes somewhere. */
+.dash-drill-link {
+  display: inline-block;
+  margin: 10px 0 2px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--clay-dark);
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.dash-drill-link:hover { color: var(--ink); }
+
+/* A table row that opens something. */
+.dash-table tr.is-clickable {
+  cursor: pointer;
+}
+
+.dash-table tr.is-clickable:hover {
+  background: var(--slate-bg);
+}
+
+.dash-table tr.is-open {
+  background: var(--slate-bg);
+}
+
+/* A project's payments, nested under the project's own row. */
+.dash-subrow > td {
+  padding: 0 0 10px;
+  background: var(--paper);
+}
+
+.dash-table.is-nested {
+  width: 100%;
+  margin: 0;
+  font-size: 0.8125rem;
+}
+
+.dash-table.is-nested th {
+  font-size: 0.6875rem;
+}
+
+/* The per-customer total shown under the name. Only ever visible at the width
+   where the column it belongs to has been dropped, so the figure is never on
+   screen twice. */
+.dash-payer-total {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  /* On a phone the amount is the whole reason to open this panel, and in a
+     three-column table it is the first thing to slide off the right edge. The
+     total column goes, the figure reappears under the name, and each payment
+     wraps instead of running sideways. */
+  /* Scoped to the payers table alone. The signed-contracts panel and the
+     per-project list have no second copy of their figures, so dropping a money
+     column there would simply lose it. */
+  .dash-table.is-payers tbody .col-money,
+  .dash-table.is-payers thead th.col-money {
+    display: none;
+  }
+
+  .dash-payer-total {
+    display: block;
+    font-family: var(--font-mono);
+  }
+
+  .dash-payment-row {
+    flex-wrap: wrap;
+    gap: 4px 8px;
+  }
+
+  /* The footer total stays: it is the figure the tile above was pressed for. */
+  .dash-table.is-payers tfoot .col-money {
+    display: revert;
+  }
+}
+
+/* The band a tile scrolled to, marked so the reader knows why the page moved. */
+.is-revealed > .dash-card,
+.is-revealed > .card {
+  animation: dash-reveal 1600ms ease-out;
+}
+
+@keyframes dash-reveal {
+  0%, 70% { box-shadow: 0 0 0 2px var(--clay); }
+  100% { box-shadow: var(--shadow-card); }
+}
+
+/* Respect a reader who has asked for less movement: the mark still appears,
+   it simply does not slide or pulse into place. */
+@media (prefers-reduced-motion: reduce) {
+  .dash-drilldown { animation: none; }
+  .is-revealed > .dash-card,
+  .is-revealed > .card { animation: none; box-shadow: 0 0 0 2px var(--clay); }
+  .dash-tile-caret,
+  .dash-row-caret { transition: none; }
+}
+
+/* --------------------------------------------------------------------------
+   Contratos — writing to a customer
+   -------------------------------------------------------------------------- */
+
+/* Shrink-to-fit, and tight: this column is three icons wide and every pixel it
+   takes past that comes off the customer's name. The narrow padding is what
+   keeps the whole table inside a 1440px window rather than a scroll short of
+   it — with the default cell padding the last icon lands under the edge. */
+.col-contact {
+  width: 1%;
+  padding-left: 4px !important;
+  padding-right: 6px !important;
+  white-space: nowrap;
+  text-align: right;
+}
+
+.contact-actions {
+  display: inline-flex;
+  gap: 0;
+}
+
+.contact-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 25px;
+  height: 25px;
+  border-radius: 8px;
+  color: var(--text-muted);
+  text-decoration: none;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.contact-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.contact-btn:hover,
+.contact-btn:focus-visible {
+  background: var(--slate-bg);
+  color: var(--ink);
+}
+
+/* WhatsApp keeps its own green on hover — it is the one channel people
+   recognise by colour, and the button is pressed at speed. */
+.contact-btn.is-whatsapp:hover,
+.contact-btn.is-whatsapp:focus-visible {
+  background: var(--green-bg);
+  color: var(--green-dark);
+}
+
+.contact-btn.is-email:hover,
+.contact-btn.is-email:focus-visible {
+  background: var(--amber-bg);
+  color: var(--amber-dark);
+}
+
+/* No address on file. Visibly off rather than missing, so the gap in the
+   record is legible and the other two buttons stay where they were. */
+.contact-btn.is-disabled {
+  color: var(--line-strong);
+  cursor: not-allowed;
+}
+
+/* On a narrow screen the buttons are the last thing to keep, but they are also
+   the reason somebody opens this list on a phone: they stay, and the icons get
+   the touch target the pointer version does not need. */
+@media (max-width: 900px) {
+  .contact-btn {
+    width: 34px;
+    height: 34px;
   }
 }
