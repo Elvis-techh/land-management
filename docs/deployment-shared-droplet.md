@@ -321,6 +321,35 @@ systemctl show lindero-api -p MemoryCurrent    # watch this for a few days
 If `MemoryCurrent` sits near `MemoryHigh`, raise both — a process being
 throttled constantly is worse than one using another 50 MB.
 
+### 7b. The first account — and why `npm run db:bootstrap` will not work here
+
+[deployment.md](deployment.md) says to create the first owner with
+`npm run db:bootstrap`. On this droplet that fails with `sh: 1: tsx: not
+found`, and the reason is step 4: `--omit=dev` deliberately installs no
+TypeScript toolchain, while every `db:*` script in `backend/package.json` runs
+the TypeScript **source** through `tsx`. Both halves are right; they just
+cannot both be true at once.
+
+The compiled equivalents are already on the droplet — `tsc` emits all of `src`,
+and `dist/db/` came up with the rsync in step 6. Run those instead, naming the
+interpreter absolutely for the same reason the systemd units do:
+
+```bash
+cd /opt/lindero/backend
+sudo -u lindero -H /opt/node22/bin/node --env-file-if-exists=.env dist/db/bootstrap.js
+```
+
+`--env-file-if-exists` is a Node flag (22.9+), not a tsx one, so `.env` is read
+exactly as it would have been. The same substitution works for the other
+scripts — `dist/db/migrate.js` and so on — though migrations already run on
+boot, so that one is rarely needed.
+
+**`db:seed` is the exception, and it should stay one.** It refuses to run when
+`NODE_ENV=production`, because it inserts fictional customers with a password
+published in the repository. To get something on screen here, create a handful
+of records through the interface; keep the seeded demo data on the laptop,
+where `npm run db:reset` still has tsx to run it.
+
 ### 8. Your existing data
 
 This is the step that answers "so I do not lose data locally". After it, the
