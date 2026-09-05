@@ -76,6 +76,51 @@ server {
         try_files $uri $uri/ /index.html;
     }
 
+    # ---------------------------------------------------------------------
+    # Caching. Two extremes, and the reason is the filenames.
+    # ---------------------------------------------------------------------
+
+    # index.html must NEVER be held, and this is the rule that matters most.
+    #
+    # Every asset Vite produces carries a content hash in its name
+    # (index-D_6pL1Go.js), so a new build writes new filenames and yesterday's
+    # cached copy is simply never asked for again. index.html is the one
+    # exception: its name never changes, and it is the file that NAMES those
+    # hashes. A browser holding yesterday's copy asks for a bundle that
+    # `rsync --delete` removed during the last deploy, and the app opens blank
+    # — on somebody's phone, until a cache nobody can reach expires.
+    #
+    # Without an explicit header nginx sends none, and a browser with no
+    # instructions applies HEURISTIC freshness: a file that has not changed in
+    # a month may be held for days. Saying nothing is not the same as saying
+    # "do not cache".
+    #
+    # "no-cache" does not mean "do not store" — it means revalidate before
+    # using. The browser still gets a cheap 304 whenever nothing has changed,
+    # so this costs one conditional request per launch, not a re-download.
+    #
+    # This also covers deep links: `try_files ... /index.html` performs an
+    # INTERNAL REDIRECT, which re-enters location matching and lands here.
+    location = /index.html {
+        add_header Cache-Control "no-cache";
+    }
+
+    # The hashed assets, at the opposite extreme. The name changes whenever the
+    # content does, so a copy already on the device is correct forever and
+    # re-checking it is pure waste. `immutable` stops even the revalidation a
+    # reload would otherwise force.
+    location /assets/ {
+        add_header Cache-Control "public, max-age=31536000, immutable";
+    }
+
+    # The service worker: not hashed, and it decides what the app does on every
+    # launch. `updateViaCache: "none"` in src/lib/serviceWorker.ts already
+    # forces a network check from the registration side; this is the server
+    # saying the same thing, for the browsers that ask before that code runs.
+    location = /sw.js {
+        add_header Cache-Control "no-cache";
+    }
+
     # nginx's packaged mime.types has no entry for .webmanifest, so without
     # this the manifest is served as application/octet-stream and the browser
     # may refuse to treat the app as installable — which would take the
@@ -88,8 +133,13 @@ server {
     # types for CSS, JavaScript and images — a much larger breakage than the
     # one being fixed. `default_type` only applies where the extension is
     # unknown, which is exactly this case.
+    #
+    # Not cached either: this is what Chrome re-reads to notice a new icon or a
+    # new share target, and a held copy is how a manifest change goes unseen
+    # for days.
     location = /manifest.webmanifest {
         default_type application/manifest+json;
+        add_header Cache-Control "no-cache";
     }
 
     # Everything the API needs — including downloading a receipt's proof of
