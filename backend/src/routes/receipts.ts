@@ -22,11 +22,13 @@ import {
 import {
   MAX_ATTACHMENTS_PER_RECEIPT,
   MAX_ATTACHMENT_BYTES,
+  attachmentsForReceipts,
   isAllowedContentType,
-  isValidStorageKey,
+  removeStoredFile,
   safeDisplayName,
+  sendStoredFile,
   storageKeyFor,
-} from "../lib/attachments.js";
+} from "../lib/storedFiles.js";
 import { recordAudit } from "../lib/audit.js";
 import { syncContractLifecycle } from "../lib/contractLifecycle.js";
 import type { ContractTerms, SaleType } from "../lib/contracts.js";
@@ -150,15 +152,6 @@ const receiptsListQuery = (db: Db) =>
 
 type ReceiptRow = ReturnType<ReturnType<typeof receiptsListQuery>["all"]>[number];
 
-interface AttachmentRow {
-  id: string;
-  receiptId: string;
-  fileName: string;
-  contentType: string;
-  byteSize: number;
-  createdAt: string;
-}
-
 /**
  * The contract detail a receipt line shows, fetched for the contracts a batch
  * of receipts actually touches.
@@ -263,31 +256,11 @@ function presentReceipts(db: Db, rows: readonly ReceiptRow[], includeLines: bool
   }
 
   // One query for every attachment across the batch, grouped in memory — the
-  // same shape as the credits above, and for the same reason.
-  const attachmentsByReceipt = new Map<string, AttachmentRow[]>();
-
-  if (includeLines) {
-    for (const row of db
-      .select({
-        id: attachments.id,
-        receiptId: attachments.receiptId,
-        fileName: attachments.fileName,
-        contentType: attachments.contentType,
-        byteSize: attachments.byteSize,
-        createdAt: attachments.createdAt,
-      })
-      .from(attachments)
-      .where(inArray(attachments.receiptId, receiptIds))
-      .all()) {
-      const list = attachmentsByReceipt.get(row.receiptId);
-
-      if (list) {
-        list.push(row);
-      } else {
-        attachmentsByReceipt.set(row.receiptId, [row]);
-      }
-    }
-  }
+  // same shape as the credits above, and for the same reason. Shared with the
+  // transactions list, which asks the same question of far more receipts.
+  const attachmentsByReceipt = includeLines
+    ? attachmentsForReceipts(db, receiptIds)
+    : new Map<string, never[]>();
 
   const touchedContractIds = [
     ...new Set([...paymentsByReceipt.values()].flat().map((credit) => credit.contractId)),
@@ -341,13 +314,7 @@ function presentReceipts(db: Db, rows: readonly ReceiptRow[], includeLines: bool
       ...(includeLines
         ? {
             /** The customer's proof of transfer, when one was attached. */
-            attachments: (attachmentsByReceipt.get(row.id) ?? []).map((file) => ({
-              id: file.id,
-              fileName: file.fileName,
-              contentType: file.contentType,
-              byteSize: file.byteSize,
-              createdAt: file.createdAt,
-            })),
+            attachments: attachmentsByReceipt.get(row.id) ?? [],
             lines: own.map((credit) => {
               const line = figures.lines.find((entry) => entry.paymentId === credit.id);
               const detail = details.get(credit.contractId);
@@ -1177,25 +1144,72 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
           .send({ error: "empty_file", message: "El archivo está vacío." });
       }
 
+      /*
+       * Which lot this slip is evidence for, when the uploader said.
+       *
+       * Read off the multipart FIELDS rather than the query string, and that
+       * puts one requirement on the caller: the field has to be appended to the
+       * form BEFORE the file. `request.file()` resolves the moment it reaches
+       * the file part, so anything sent after it has not been parsed yet and
+       * would silently read as absent — a proof quietly filed against the whole
+       * receipt instead of the lot somebody picked. See features/receipts/api.ts.
+       */
+      const claimedPaymentId = (part.fields as Record<string, unknown> | undefined)?.paymentId;
+      const paymentId =
+        claimedPaymentId !== null &&
+        typeof claimedPaymentId === "object" &&
+        "value" in claimedPaymentId &&
+        typeof claimedPaymentId.value === "string" &&
+        claimedPaymentId.value !== ""
+          ? claimedPaymentId.value
+          : null;
+
+      if (paymentId !== null) {
+        // It has to be a line on THIS receipt. A payment id from another
+        // receipt would file one customer's bank slip under another's lot,
+        // which is the privacy failure this whole feature exists to avoid.
+        const line = app.db
+          .select({ id: payments.id })
+          .from(payments)
+          .where(and(eq(payments.id, paymentId), eq(payments.receiptId, receipt.id)))
+          .get();
+
+        if (!line) {
+          return reply.code(400).send({
+            error: "unknown_payment",
+            message: "Ese lote no está en este recibo.",
+          });
+        }
+      }
+
       const storageKey = storageKeyFor(part.mimetype);
       const attachmentId = randomUUID();
 
       await mkdir(options.uploadsPath, { recursive: true });
       await writeFile(join(options.uploadsPath, storageKey), buffer);
 
+      // Read back rather than guessed at: the column defaults to SQLite's own
+      // CURRENT_TIMESTAMP, and a value this handler invented would be in a
+      // different format from every other attachment the client is holding.
+      let createdAt = "";
+
       try {
         app.db.transaction((tx) => {
-          tx.insert(attachments)
-            .values({
-              id: attachmentId,
-              receiptId: receipt.id,
-              storageKey,
-              fileName: safeDisplayName(part.filename ?? "comprobante"),
-              contentType: part.mimetype,
-              byteSize: buffer.byteLength,
-              uploadedBy: request.user!.id,
-            })
-            .run();
+          createdAt =
+            tx
+              .insert(attachments)
+              .values({
+                id: attachmentId,
+                receiptId: receipt.id,
+                paymentId,
+                storageKey,
+                fileName: safeDisplayName(part.filename ?? "comprobante"),
+                contentType: part.mimetype,
+                byteSize: buffer.byteLength,
+                uploadedBy: request.user!.id,
+              })
+              .returning({ createdAt: attachments.createdAt })
+              .get()?.createdAt ?? "";
 
           recordAudit(tx, {
             actorId: request.user!.id,
@@ -1216,21 +1230,34 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
       return reply.code(201).send({
         attachment: {
           id: attachmentId,
+          paymentId,
           fileName: safeDisplayName(part.filename ?? "comprobante"),
           contentType: part.mimetype,
           byteSize: buffer.byteLength,
+          createdAt,
         },
       });
     },
   );
 
   /**
-   * Serve one attached file.
+   * Serve one attached file, for viewing rather than for saving.
    *
    * Behind the session guard like everything else: a proof of payment carries a
    * customer's name, their bank and their account, and is nobody else's
    * business. The id is a UUID rather than a guessable number for the same
    * reason the receipt lookup code is random.
+   *
+   * This used to send `Content-Disposition: attachment`, which meant every look
+   * at a comprobante put a copy of somebody's bank slip in the Downloads folder
+   * of whatever machine was being used — including the shared one in the office
+   * — and left it there. The files are meant to live on the server precisely so
+   * they stop living on phones and laptops; a viewer that downloads them undoes
+   * the whole point.
+   *
+   * The reason it was `attachment` in the first place is real, though, and is
+   * answered below rather than dismissed: a stored PDF is a file somebody else
+   * chose the contents of, and PDF viewers run scripts. See the CSP.
    */
   app.get<{ Params: { id: string } }>(
     "/attachments/:id/file",
@@ -1246,26 +1273,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
         return reply.code(404).send({ error: "not_found", message: "Ese archivo no existe." });
       }
 
-      // Asserted on the way out as well as on the way in. The key comes from
-      // our own row, so this can only fail if something has already gone very
-      // wrong — which is exactly when a path handed to the filesystem must not
-      // be trusted.
-      if (!isValidStorageKey(row.storageKey)) {
-        request.log.error({ attachmentId: row.id }, "Refusing to serve a malformed storage key");
-        return reply.code(500).send({ error: "bad_storage_key", message: "Archivo no disponible." });
-      }
-
-      // `Content-Disposition: attachment` rather than inline: a stored PDF or
-      // SVG rendered in the browser would run in this app's origin, and a
-      // proof of payment is a file somebody else chose the contents of.
-      reply
-        .header("Content-Type", row.contentType)
-        .header("Content-Length", String(row.byteSize))
-        .header("Content-Disposition", `attachment; filename="${encodeURIComponent(row.fileName)}"`)
-        .header("X-Content-Type-Options", "nosniff")
-        .header("Cache-Control", "private, max-age=3600");
-
-      return reply.send(createReadStream(join(options.uploadsPath, row.storageKey)));
+      return sendStoredFile(reply, row, options.uploadsPath);
     },
   );
 
@@ -1302,11 +1310,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
         });
       });
 
-      // After the row, and forgiving: a file already gone from disk must not
-      // stop the row being removed, or the attachment becomes undeletable.
-      if (isValidStorageKey(row.storageKey)) {
-        await unlink(join(options.uploadsPath, row.storageKey)).catch(() => undefined);
-      }
+      await removeStoredFile(options.uploadsPath, row.storageKey);
 
       return { ok: true };
     },

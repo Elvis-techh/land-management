@@ -35,6 +35,22 @@ export function IconContracts() {
   );
 }
 
+/**
+ * A paperclip: this contract has its signed copy on file.
+ *
+ * Deliberately the marker for what IS there rather than for what is missing.
+ * Every contract written before documents existed has none, so flagging the
+ * absences would light up the entire back catalogue on the first day — and a
+ * warning against every row is a warning nobody reads.
+ */
+export function IconPaperclip() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M20 11.5L12.2 19.3A5 5 0 0 1 5.1 12.2L13 4.4a3.4 3.4 0 0 1 4.8 4.8l-7.8 7.8a1.7 1.7 0 0 1-2.4-2.4l7.2-7.2" />
+    </svg>
+  );
+}
+
 export function IconCustomers() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">

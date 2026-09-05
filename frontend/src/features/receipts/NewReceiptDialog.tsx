@@ -9,7 +9,7 @@ import { hasIdentification } from "../../lib/identification";
 import type { MoneyView } from "../../lib/money";
 import { cents, formatMoney, parseMoneyInput, toMoneyInput } from "../../lib/money";
 import type { Contract, CustomerRecord, Receipt } from "../../types";
-import type { PendingProof } from "./ProofDropzone";
+import type { PendingProof, ProofLot } from "./ProofDropzone";
 import { ProofDropzone, acceptProofFiles } from "./ProofDropzone";
 import type { ReceiptDraft, ReceiptDraftLine } from "./api";
 import { createReceipt, fetchCustomerSplit, fetchDuplicates, uploadAttachment } from "./api";
@@ -305,6 +305,25 @@ export function NewReceiptDialog({
     }
   };
 
+  /*
+   * The lots a comprobante can be filed against.
+   *
+   * Derived from the LINES rather than from `payable`, so the picker offers
+   * only the lots this receipt actually puts money on. Offering a lot that ends
+   * up with no line would produce a proof tagged to a payment that was never
+   * created, which the server would then refuse at upload time — after the
+   * money had already been recorded.
+   */
+  const proofLots: ProofLot[] = useMemo(
+    () =>
+      lines.map((line) => ({
+        contractId: line.contractId,
+        lotCode:
+          payable.find((contract) => contract.id === line.contractId)?.lot.code ?? "este lote",
+      })),
+    [lines, payable],
+  );
+
   const submit = async (allowOverpayment: boolean) => {
     setError(null);
     setSaving(true);
@@ -329,11 +348,30 @@ export function NewReceiptDialog({
       if (proofs.length > 0) {
         const failures: string[] = [];
 
+        /*
+         * Which payment each lot ended up as.
+         *
+         * The form tags a proof with a CONTRACT, because that is all it can
+         * know — the payments do not exist until the receipt is written. The
+         * server answers with the lines it created, and this is where the one
+         * becomes the other. A tag whose line is missing (it should not
+         * happen; an amount edited to zero between the tag and the save would
+         * do it) simply falls back to the whole receipt rather than failing
+         * the upload of a file that is already correct.
+         */
+        const paymentByContract = new Map(
+          receipt.lines.map((line) => [line.contractId, line.paymentId]),
+        );
+
         for (const [index, proof] of proofs.entries()) {
           setSavingStep(`Subiendo comprobante ${index + 1} de ${proofs.length}…`);
 
           try {
-            await uploadAttachment(receipt.id, proof.file);
+            await uploadAttachment(
+              receipt.id,
+              proof.file,
+              proof.contractId === null ? null : (paymentByContract.get(proof.contractId) ?? null),
+            );
           } catch {
             failures.push(proof.file.name);
           }
@@ -600,6 +638,7 @@ export function NewReceiptDialog({
             onFilesChange={setProofs}
             onReject={setError}
             maxFiles={MAX_PROOFS}
+            lots={proofLots}
             disabled={isSaving}
           />
         </div>

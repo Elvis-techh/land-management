@@ -44,6 +44,7 @@ is worth building when there is enough real data to prove it works.
 | 0 — HTTPS, domain, first deploy | **Done.** Enviar verified on Android and Linux. |
 | 1 — PWA, installable | **Done.** Installed on Android from the home screen. |
 | 2 — Share target into the prefilled dialog | **Done.** WhatsApp → share → form opens with the image attached. |
+| 2b — Reading the comprobantes back | **Done.** Several per receipt, taggable per lot, thumbnails on the transaction rows, viewed in the app instead of downloaded. |
 | 5a — Duplicate warning | **Done.** By reference, and by customer/date/total where there is none. |
 | 3 — AI extraction | Deferred |
 | 4 — Wiring extraction into the dialog | Deferred with it |
@@ -52,6 +53,48 @@ is worth building when there is enough real data to prove it works.
 **This round is complete.** What remains before real use: wipe the droplet's
 test data and bootstrap the real first account (see "Your data question" —
 `rm` the database, uploads, and re-run `dist/db/bootstrap.js`).
+
+## 2b — Reading the comprobantes back (added 2026-09-05)
+
+Phase 2 got files IN. Getting them back OUT was worse than nobody had noticed:
+the only way to look at a stored comprobante was to click it, which downloaded
+it — so every "is this the right slip?" left a copy of a customer's bank
+details in the Downloads folder of whatever machine asked, usually the shared
+one at the front desk, permanently. Storing the files centrally so they stop
+living on phones does not work if reading one puts it back on a device.
+
+What changed:
+
+- **Served for viewing, not for saving.** `/api/attachments/:id/file` sends
+  `Content-Disposition: inline` under `Content-Security-Policy: sandbox` —
+  `sandbox allow-scripts` for a PDF, whose viewer is itself script. The header
+  it replaced was `attachment`, and the reason given for it was real: a stored
+  PDF is a file somebody else chose the contents of. The sandbox answers that
+  better, because it holds while the file is being *read* — an opaque origin
+  with no access to the session, the cookie or any endpoint — where
+  `attachment` only moved the problem to a folder where it would later be
+  opened in a viewer with no sandbox at all.
+- **A viewer inside Lindero.** One overlay for a comprobante, a receipt, or a
+  file not yet uploaded, with arrow keys and a thumbnail strip. It is also
+  where the receipt PNG now goes when neither the clipboard nor the share
+  sheet is available — that used to be `window.open` on a `blob:` URL, which
+  several browsers save rather than show.
+- **Checked before it is attached.** The dropzone's thumbnails open the same
+  viewer over the file in hand, so the wrong screenshot is caught before the
+  payment is recorded rather than months later when it is disputed.
+- **Thumbnails on the transaction rows.** The list arrives knowing what is
+  attached, so the check costs a glance down the column; the bytes are fetched
+  lazily, per row, as they scroll into view.
+- **Several per receipt, and per lot.** The ceiling of eight was always there
+  and the dropzone always took several — what was missing was any way to add
+  one to a receipt that already existed, and any way to say WHICH lot a slip
+  was evidence for on a receipt covering three. `attachments.payment_id`
+  (migration 0011, nullable) is that, and null still means "the whole
+  receipt", which is what every existing row means and what most new ones will.
+- **Off the document.** The proofs used to print at the foot of `ReceiptPaper`,
+  which put the customer's own bank slip into the PNG sent back to them over
+  WhatsApp. A receipt is what the office issues; a comprobante is what the
+  office keeps. They now sit beside the document, not on it.
 
 Two things about that deferral are worth being exact about, because both were
 initially misunderstood and both change what gets built.

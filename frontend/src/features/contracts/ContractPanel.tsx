@@ -7,6 +7,7 @@ import { formatPhone } from "../../lib/phone";
 import type { User } from "../../lib/permissions";
 import { can } from "../../lib/permissions";
 import type { Contract } from "../../types";
+import { ContractDocuments } from "./ContractDocuments";
 import {
   HEALTH_PRESENTATION,
   KIND_LABELS,
@@ -29,6 +30,14 @@ interface ContractPanelProps {
   onEditContract: (contract: Contract) => void;
   onCancelContract: (contract: Contract) => void;
   onDefaultContract: (contract: Contract) => void;
+  /**
+   * Re-read the contracts list after paperwork is filed or removed.
+   *
+   * The list marks which contracts have their signed copy on file, and that
+   * marker comes from the list's own `documentCount` — so filing one here has
+   * to reach back up.
+   */
+  onDocumentsChanged: () => void;
 }
 
 /**
@@ -45,6 +54,7 @@ export function ContractPanel({
   onEditContract,
   onCancelContract,
   onDefaultContract,
+  onDocumentsChanged,
 }: ContractPanelProps) {
   const stamp = primaryStamp(contract);
   const detail = healthDetail(contract);
@@ -259,6 +269,21 @@ export function ContractPanel({
             </div>
           )}
         </section>
+
+        {/*
+          The actual legal document, beside everything derived from it.
+
+          Last in the panel on purpose: the figures above are what somebody
+          reads on the phone every day, and the signed scan is what they go
+          looking for on the rare day it matters. Being at the foot is not
+          being buried — it is the one section whose absence is itself
+          information, so it renders whether or not anything has been filed.
+        */}
+        <ContractDocuments
+          contractId={contract.id}
+          user={user}
+          onCountChanged={onDocumentsChanged}
+        />
 
         {contract.notes && (
           <section className="cp-section">

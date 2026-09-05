@@ -74,7 +74,14 @@ Project 1 ── * Lot 1 ── * Contract * ── 1 Customer
 ```
 
 Supporting records will include exchange-rate evidence, payment adjustments,
-users/roles, audit events, attachments, and reminder deliveries.
+users/roles, audit events, uploaded files, and reminder deliveries.
+
+Uploaded files live in two tables that share their machinery and not their
+meaning — `attachments` (the comprobante behind a payment) and
+`contract_documents` (the signed legal contract for a lot). Both keep only a
+row here; the bytes are on disk under a generated name, and both are served
+inline under a sandbox CSP so reading one never writes a copy to the device
+doing the reading. See `src/lib/storedFiles.ts`.
 
 ## Financial invariants
 

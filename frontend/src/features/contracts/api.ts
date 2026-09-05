@@ -1,6 +1,8 @@
-import { api } from "../../lib/api";
+import type { ViewerFile } from "../../components/DocumentViewer";
+import { ApiError, api } from "../../lib/api";
+import { CLIENT_ID } from "../../lib/liveUpdates";
 import { cents } from "../../lib/money";
-import type { Contract } from "../../types";
+import type { Contract, ContractDocument } from "../../types";
 
 /**
  * Exactly what GET /api/contracts sends back.
@@ -195,4 +197,80 @@ export function createContract(draft: ContractCreateDraft) {
     "/api/contracts",
     draft,
   );
+}
+
+/* -------------------------------------------------------------------------- */
+/* The signed paperwork                                                        */
+/* -------------------------------------------------------------------------- */
+
+/** Every document filed against one contract, oldest first. */
+export async function fetchContractDocuments(contractId: string): Promise<ContractDocument[]> {
+  const response = await api.get<{ documents: ContractDocument[] }>(
+    `/api/contracts/${contractId}/documents`,
+  );
+
+  return response.documents;
+}
+
+/**
+ * File the signed contract against the contract record.
+ *
+ * Sent as multipart rather than JSON, for the same reason a comprobante is: a
+ * base64 scan inflates by a third and has to be held in memory as one enormous
+ * string on both ends, where a multipart body streams. A fifteen-page contract
+ * is where that stops being theoretical. The browser sets the Content-Type
+ * header itself — only it knows the boundary — so `api.post` is bypassed here.
+ */
+export async function uploadContractDocument(
+  contractId: string,
+  file: File,
+): Promise<ContractDocument> {
+  const body = new FormData();
+  body.append("file", file);
+
+  const response = await fetch(`/api/contracts/${contractId}/documents`, {
+    method: "POST",
+    credentials: "include",
+    // `api.post` is bypassed here, so this header has to be repeated: without
+    // it the server cannot tell whose write this was, and the uploading tab
+    // refreshes itself for news it already has. See lib/liveUpdates.ts.
+    headers: { "X-Client-Id": CLIENT_ID },
+    body,
+  });
+
+  const payload: unknown = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    const error = payload as { message?: string } | null;
+    throw new ApiError(response.status, error?.message ?? "No se pudo subir el documento.");
+  }
+
+  return (payload as { document: ContractDocument }).document;
+}
+
+export function deleteContractDocument(documentId: string) {
+  return api.delete<{ ok: true }>(`/api/contract-documents/${documentId}`);
+}
+
+/**
+ * Where the browser can fetch a document's bytes. Behind the session.
+ *
+ * Served for VIEWING — inline, in an opaque origin — so putting this in an
+ * `<iframe>` shows the contract rather than saving a copy of it to whatever
+ * machine is being used. See routes/contracts.ts for how that is made safe.
+ */
+export function contractDocumentUrl(documentId: string): string {
+  return `/api/contract-documents/${documentId}/file`;
+}
+
+/** A filed document, in the shape the viewer and the thumbnails want. */
+export function storedDocument(document: ContractDocument): ViewerFile {
+  return {
+    id: document.id,
+    name: document.fileName,
+    contentType: document.contentType,
+    url: contractDocumentUrl(document.id),
+    caption: `Subido por ${document.uploadedBy}`,
+    sizeBytes: document.byteSize,
+  };
 }

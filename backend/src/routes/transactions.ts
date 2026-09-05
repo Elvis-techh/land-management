@@ -6,6 +6,7 @@ import type { Db } from "../db/client.js";
 import { contracts, customers, lots, payments, projects, receipts, users } from "../db/schema.js";
 import { splitEvenly } from "../lib/allocation.js";
 import type { AllocationTarget } from "../lib/allocation.js";
+import { attachmentsForPayment, attachmentsForReceipts } from "../lib/storedFiles.js";
 import { recordAudit } from "../lib/audit.js";
 import { syncContractLifecycle } from "../lib/contractLifecycle.js";
 import { openContract } from "../lib/holding.js";
@@ -102,7 +103,32 @@ export const transactionRoutes: FastifyPluginAsync = async (app) => {
       .orderBy(desc(payments.paidOn), desc(payments.createdAt))
       .all();
 
-    return { transactions: rows };
+    /*
+     * The comprobantes, so a row can show one without being opened.
+     *
+     * The whole point of the thumbnail on a transaction row is that checking
+     * "is this the right slip?" costs a glance rather than a click, a fetch and
+     * a wait — so the list has to arrive already knowing what is attached. One
+     * extra query for the entire screen, not one per row.
+     *
+     * Only the metadata travels. The bytes are fetched per file, lazily, by the
+     * browser, from /api/attachments/:id/file — a hundred rows must not mean a
+     * hundred photographs on the wire before anything is drawn.
+     */
+    const byReceipt = attachmentsForReceipts(
+      app.db,
+      [...new Set(rows.map((row) => row.receiptId).filter((id) => id !== null))],
+    );
+
+    return {
+      transactions: rows.map((row) => ({
+        ...row,
+        attachments:
+          row.receiptId === null
+            ? []
+            : attachmentsForPayment(byReceipt.get(row.receiptId), row.id),
+      })),
+    };
   });
 
   /**

@@ -293,6 +293,36 @@ export interface Contract {
    */
   closedSettlement: "none" | "held" | "refunded" | null;
   notes: string | null;
+  /**
+   * How many files of signed paperwork this contract has on file.
+   *
+   * A COUNT, not the documents — the list is every contract in the business and
+   * each can carry a dozen scans. The panel asks for the actual list when a
+   * contract is opened. Zero for everything written before documents existed,
+   * which is why the screen marks the contracts that HAVE their paperwork
+   * rather than flagging the ones that do not.
+   */
+  documentCount: number;
+}
+
+/**
+ * One file of signed paperwork behind a contract.
+ *
+ * The legal instrument itself, or something that travelled with it: an adenda,
+ * a copy of a party's identidad, the plano. Distinct from `ReceiptAttachment`
+ * in meaning rather than in shape — that one is a customer's evidence for a
+ * payment and can be removed when it is the wrong screenshot; this is the
+ * document a dispute is settled by, which is why removing it takes a
+ * capability an associate does not have.
+ */
+export interface ContractDocument {
+  id: string;
+  fileName: string;
+  contentType: string;
+  byteSize: number;
+  createdAt: string;
+  /** The name of whoever filed it — the question asked of a document later. */
+  uploadedBy: string;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -424,11 +454,31 @@ export interface Transaction {
   receiptCode: string | null;
   receiptVoidedAt: string | null;
   recordedByName: string;
+  /**
+   * The comprobantes behind THIS row — its own, plus any filed against the
+   * receipt as a whole.
+   *
+   * Sent with the list rather than fetched when a row is opened, because the
+   * thumbnail is the feature: checking that the right slip is attached should
+   * cost a glance down the column, not a click and a wait per row. Metadata
+   * only; the bytes are fetched per file and lazily by the browser.
+   */
+  attachments: ReceiptAttachment[];
 }
 
 /** A file attached to a receipt — the customer's proof of transfer. */
 export interface ReceiptAttachment {
   id: string;
+  /**
+   * The payment — and so the lot — this file is evidence for, or null for one
+   * that stands behind the whole receipt.
+   *
+   * Null is the ordinary case and always will be: one customer, one transfer,
+   * one slip. It earns its place on the receipts that cover three lots at once,
+   * where "which of these is the deposit for A-14" is a real question and the
+   * answer used to live in somebody's memory.
+   */
+  paymentId: string | null;
   fileName: string;
   contentType: string;
   byteSize: number;

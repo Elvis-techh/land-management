@@ -3,11 +3,12 @@ import { describe, it } from "node:test";
 
 import {
   MAX_ATTACHMENTS_PER_RECEIPT,
+  asciiFileName,
   isAllowedContentType,
   isValidStorageKey,
   safeDisplayName,
   storageKeyFor,
-} from "../src/lib/attachments.js";
+} from "../src/lib/storedFiles.js";
 import { OWNER_PASSWORD, buildTestApp, login } from "./helpers.js";
 
 const lempiras = (amount: number) => Math.round(amount * 100);
@@ -18,16 +19,30 @@ const PNG_PIXEL = Buffer.from(
   "base64",
 );
 
-/** Build a multipart body by hand, so the test exercises the real parser. */
+/**
+ * Build a multipart body by hand, so the test exercises the real parser.
+ *
+ * `fields` are written BEFORE the file, which is not a stylistic choice: the
+ * handler reads them off the part it stops at, so anything sent after the file
+ * has not been parsed when it looks. Sending them in this order is what the
+ * browser is asked to do too — see features/receipts/api.ts.
+ */
 function multipartBody(
   fileName: string,
   contentType: string,
   content: Buffer,
+  fields: Record<string, string> = {},
 ): { payload: Buffer; headers: Record<string, string> } {
   const boundary = "----LinderoTestBoundary7f3a";
 
   const head = Buffer.from(
-    `--${boundary}\r\n` +
+    Object.entries(fields)
+      .map(
+        ([name, value]) =>
+          `--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`,
+      )
+      .join("") +
+      `--${boundary}\r\n` +
       `Content-Disposition: form-data; name="file"; filename="${fileName}"\r\n` +
       `Content-Type: ${contentType}\r\n\r\n`,
   );
@@ -78,6 +93,19 @@ describe("attachment safety helpers", () => {
     assert.equal(isAllowedContentType("application/x-msdownload"), false);
   });
 
+  it("keeps the Content-Disposition fallback name inside plain ASCII", () => {
+    // The quote would close the quoted-string the name sits inside, and the
+    // backslash would escape whatever came next — a filename must not be able
+    // to rewrite the header carrying it.
+    assert.equal(asciiFileName('depósito "agosto".png'), "dep_sito _agosto_.png");
+    assert.equal(asciiFileName("back\\slash.pdf"), "back_slash.pdf");
+    // Two underscores per emoji: the regex works on UTF-16 code units, and an
+    // emoji is a surrogate pair. Lossy is fine here — the real name travels in
+    // the `filename*` parameter beside this one.
+    assert.equal(asciiFileName("💸💸💸"), "______");
+    assert.equal(asciiFileName("   "), "comprobante");
+  });
+
   it("refuses to treat anything but a generated key as a path", () => {
     assert.equal(isValidStorageKey(storageKeyFor("image/png")), true);
     assert.equal(isValidStorageKey("../../etc/passwd"), false);
@@ -117,7 +145,7 @@ describe("attaching proof of payment", () => {
     await app.close();
   });
 
-  it("serves the bytes back exactly, and never inline", async () => {
+  it("serves the bytes back for viewing, sandboxed rather than downloaded", async () => {
     const { app, ids } = await buildTestApp();
     const cookie = await login(app, "owner@test.hn", OWNER_PASSWORD);
     const receiptId = await issueReceipt(app, cookie, ids);
@@ -139,9 +167,39 @@ describe("attaching proof of payment", () => {
     assert.equal(file.statusCode, 200);
     assert.deepEqual(file.rawPayload, PNG_PIXEL);
 
-    // A stored PDF or SVG rendered inline would run in this app's origin.
-    assert.match(file.headers["content-disposition"] as string, /^attachment;/);
+    /*
+     * Inline, so looking at a comprobante does not drop a copy of somebody's
+     * bank slip into the Downloads folder of a shared office machine — the
+     * files live on the server so they stop living on devices.
+     *
+     * The risk that used to justify `attachment` — a stored PDF running script
+     * in this app's origin — is answered by the sandbox CSP instead, which is
+     * strictly stronger: it holds while the file is being VIEWED, where
+     * `attachment` only relocated the problem to a folder.
+     */
+    assert.match(file.headers["content-disposition"] as string, /^inline;/);
+    assert.match(file.headers["content-security-policy"] as string, /(^|;)\s*sandbox\s*(;|$)/);
     assert.equal(file.headers["x-content-type-options"], "nosniff");
+
+    // The accented name survives in the RFC 5987 parameter; the plain one
+    // beside it is ASCII so the header itself is never malformed.
+    const accented = multipartBody("depósito agosto.png", "image/png", PNG_PIXEL);
+    const second = await app.inject({
+      method: "POST",
+      url: `/api/receipts/${receiptId}/attachments`,
+      headers: { cookie, ...accented.headers },
+      payload: accented.payload,
+    });
+
+    const named = await app.inject({
+      method: "GET",
+      url: `/api/attachments/${second.json().attachment.id}/file`,
+      headers: { cookie },
+    });
+
+    const disposition = named.headers["content-disposition"] as string;
+    assert.match(disposition, /filename="dep_sito agosto\.png"/);
+    assert.match(disposition, /filename\*=UTF-8''dep%C3%B3sito%20agosto\.png/);
 
     await app.close();
   });
@@ -301,6 +359,75 @@ describe("attaching proof of payment", () => {
     });
 
     assert.equal(anonymous.statusCode, 401);
+
+    await app.close();
+  });
+
+  it("ties a comprobante to one lot, and refuses a lot from another receipt", async () => {
+    const { app, ids } = await buildTestApp();
+    const cookie = await login(app, "owner@test.hn", OWNER_PASSWORD);
+    const receiptId = await issueReceipt(app, cookie, ids);
+
+    const receipt = (
+      await app.inject({ method: "GET", url: `/api/receipts/${receiptId}`, headers: { cookie } })
+    ).json().receipt;
+    const paymentId = receipt.lines[0].paymentId as string;
+
+    const tagged = multipartBody("lote-a14.png", "image/png", PNG_PIXEL, { paymentId });
+    const upload = await app.inject({
+      method: "POST",
+      url: `/api/receipts/${receiptId}/attachments`,
+      headers: { cookie, ...tagged.headers },
+      payload: tagged.payload,
+    });
+
+    assert.equal(upload.statusCode, 201);
+    assert.equal(upload.json().attachment.paymentId, paymentId);
+
+    // A payment id that is not a line on THIS receipt would file one customer's
+    // bank slip under another's lot.
+    const foreign = multipartBody("ajeno.png", "image/png", PNG_PIXEL, {
+      paymentId: "00000000-0000-0000-0000-000000000000",
+    });
+    const refused = await app.inject({
+      method: "POST",
+      url: `/api/receipts/${receiptId}/attachments`,
+      headers: { cookie, ...foreign.headers },
+      payload: foreign.payload,
+    });
+
+    assert.equal(refused.statusCode, 400);
+    assert.equal(refused.json().error, "unknown_payment");
+
+    await app.close();
+  });
+
+  it("shows every transaction row the proof behind it", async () => {
+    const { app, ids } = await buildTestApp();
+    const cookie = await login(app, "owner@test.hn", OWNER_PASSWORD);
+    const receiptId = await issueReceipt(app, cookie, ids);
+
+    const { payload, headers } = multipartBody("slip.png", "image/png", PNG_PIXEL);
+    await app.inject({
+      method: "POST",
+      url: `/api/receipts/${receiptId}/attachments`,
+      headers: { cookie, ...headers },
+      payload,
+    });
+
+    const transactions = (
+      await app.inject({ method: "GET", url: "/api/transactions", headers: { cookie } })
+    ).json().transactions;
+
+    const row = transactions.find((entry: any) => entry.receiptId === receiptId);
+
+    // Metadata only — enough to draw a thumbnail and open the viewer. The bytes
+    // are fetched per file, lazily, so a long list is not a hundred photographs
+    // on the wire.
+    assert.equal(row.attachments.length, 1);
+    assert.equal(row.attachments[0].fileName, "slip.png");
+    assert.equal(row.attachments[0].paymentId, null);
+    assert.ok(!("storageKey" in row.attachments[0]));
 
     await app.close();
   });

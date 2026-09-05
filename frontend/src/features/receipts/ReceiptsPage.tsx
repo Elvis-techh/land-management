@@ -1,16 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { IconChevronDown, IconEdit, IconWhatsApp } from "../../components/Icons";
+import { readableSize } from "../../lib/documentFiles";
 import type { MoneyView } from "../../lib/money";
 import { cents, formatMoney } from "../../lib/money";
 import type { User } from "../../lib/permissions";
 import { can } from "../../lib/permissions";
 import { useIsMobile } from "../../lib/viewport";
 import type { Receipt, Transaction } from "../../types";
+import { ConfirmDialog } from "../../components/ConfirmDialog";
+import { DocumentViewer, DocumentThumb } from "../../components/DocumentViewer";
+import type { ViewerFile } from "../../components/DocumentViewer";
 import { ReceiptPaper } from "./ReceiptPaper";
+import { acceptProofFiles } from "./ProofDropzone";
 import { TransactionToolbar } from "./TransactionToolbar";
 import type { TransactionView } from "./TransactionToolbar";
-import { fetchReceipt } from "./api";
+import { deleteAttachment, fetchReceipt, storedProof, uploadAttachment } from "./api";
 import { receiptToPng } from "./receiptImage";
 import { copyGesture, pasteInstruction, receiptCaption, sendReceiptOnWhatsApp } from "./whatsapp";
 import type { TransactionFilters } from "./transactionFilters";
@@ -28,7 +33,18 @@ interface ReceiptsPageProps {
   user: User;
   onVoidReceipt: (receipt: Receipt) => void;
   onEditTransaction: (transaction: Transaction) => void;
+  /**
+   * Re-read the list after a comprobante is attached or removed.
+   *
+   * The thumbnails live on the transaction rows, which are the parent's data —
+   * so attaching a file from the receipt panel has to reach back up, or the row
+   * that prompted the upload keeps showing nothing.
+   */
+  onProofsChanged: () => void;
 }
+
+/** Matches MAX_ATTACHMENTS_PER_RECEIPT on the server, and `NewReceiptDialog`. */
+const MAX_PROOFS = 8;
 
 const METHOD_LABELS: Record<string, string> = {
   cash: "Efectivo",
@@ -55,6 +71,8 @@ interface RowProps {
   canEdit: boolean;
   onSelect: () => void;
   onEdit: () => void;
+  /** Show this row's comprobantes, without selecting the row. */
+  onOpenProof: (files: ViewerFile[], startId: string) => void;
   /** Hidden inside a customer group, where the name is already the heading. */
   showCustomer: boolean;
 }
@@ -64,7 +82,8 @@ interface RowProps {
  *
  * The row is a button so the whole thing is one keyboard-reachable target, with
  * the edit control beside it rather than inside it — a button inside a button
- * is invalid HTML and behaves unpredictably when clicked.
+ * is invalid HTML and behaves unpredictably when clicked. The thumbnail is
+ * outside it for the same reason.
  */
 function TransactionRow({
   transaction,
@@ -73,14 +92,52 @@ function TransactionRow({
   canEdit,
   onSelect,
   onEdit,
+  onOpenProof,
   showCustomer,
 }: RowProps) {
   const isReversed = transaction.reversedAt !== null;
+
+  /*
+   * This row's evidence, ready for the viewer.
+   *
+   * `storedProof` addresses each file by id on the server, so the thumbnail is
+   * the actual comprobante rather than a placeholder — and the browser fetches
+   * it lazily, only for rows scrolled into view.
+   */
+  const proofs = transaction.attachments.map((file) =>
+    storedProof(file, file.paymentId === null ? null : transaction.lotCode),
+  );
 
   return (
     <div
       className={`txn-row${isSelected ? " is-selected" : ""}${isReversed ? " is-void" : ""}`}
     >
+      {/*
+        The comprobante, at a glance and one click from being read.
+
+        Outside `txn-main` because it does something different from the row:
+        the row opens the RECEIPT — the document the office issued — and this
+        opens the SLIP the customer sent. Both are "look at this payment", and
+        confusing them is how somebody confirms a transfer against a document
+        the office wrote itself.
+      */}
+      {proofs.length > 0 && (
+        <button
+          type="button"
+          className="txn-proof"
+          onClick={() => onOpenProof(proofs, proofs[0]!.id)}
+          title={
+            proofs.length === 1
+              ? `Ver el comprobante: ${proofs[0]!.name}`
+              : `Ver ${proofs.length} comprobantes`
+          }
+          aria-label={`Ver el comprobante de ${transaction.customerName}`}
+        >
+          <DocumentThumb file={proofs[0]!} />
+          {proofs.length > 1 && <span className="txn-proof-count">{proofs.length}</span>}
+        </button>
+      )}
+
       <button type="button" className="txn-main" onClick={onSelect}>
         <span className="txn-date">{shortDate(transaction.paidOn)}</span>
 
@@ -143,6 +200,7 @@ export function ReceiptsPage({
   user,
   onVoidReceipt,
   onEditTransaction,
+  onProofsChanged,
 }: ReceiptsPageProps) {
   const [view, setView] = useState<TransactionView>("date");
   const [search, setSearch] = useState("");
@@ -152,6 +210,40 @@ export function ReceiptsPage({
   const [selectedReceiptId, setSelectedReceiptId] = useState<string | null>(null);
   const [detail, setDetail] = useState<Receipt | null>(null);
   const [isLoadingDetail, setLoadingDetail] = useState(false);
+
+  /*
+   * Whatever is being looked at, and where it came from.
+   *
+   * ONE viewer for every document this screen can show — a row's comprobante,
+   * the panel's comprobantes, and the receipt image itself. They are the same
+   * act (look at this, full size, without saving it anywhere), so only one can
+   * be open at a time.
+   *
+   * What is stored is the SOURCE, not the list. The panel's files are derived
+   * again on every render, so a receipt re-read underneath an open viewer —
+   * which a teammate's write makes routine, and which removing a file does on
+   * purpose — updates what is on screen instead of leaving it pointed at a
+   * file that is no longer there. A row's files are carried, because they may
+   * belong to a receipt that is not the one open in the panel.
+   */
+  const [viewing, setViewing] = useState<
+    | { source: "proofs"; startId: string }
+    | { source: "receipt" }
+    | { source: "row"; files: ViewerFile[]; startId: string }
+    | null
+  >(null);
+  /*
+   * The comprobante somebody has asked to remove, waiting on a second press.
+   *
+   * The same guard the contract documents have, and for the same reason: the
+   * remove control lives in a viewer that is opened to LOOK at things, so the
+   * press that destroys a file must never be the press that was aimed at
+   * dismissing one.
+   */
+  const [pendingRemoval, setPendingRemoval] = useState<ViewerFile | null>(null);
+  const [proofBusy, setProofBusy] = useState<string | null>(null);
+  const [proofError, setProofError] = useState<string | null>(null);
+  const proofInputRef = useRef<HTMLInputElement>(null);
 
   /*
    * The receipt as a PNG, prepared as soon as one is opened.
@@ -209,6 +301,9 @@ export function ReceiptsPage({
   // correcting rewrites a posted figure in place. See routes/transactions.ts.
   const canEdit = can(user, "payment:edit");
   const canVoid = can(user, "payment:reverse");
+  // Attaching the proof behind a payment is part of recording it, so it rides
+  // on the same capability rather than inventing a third.
+  const canRecord = can(user, "payment:record");
 
   const projectNames = useMemo(
     () => [...new Set(transactions.map((t) => t.projectName))].sort((a, b) => a.localeCompare(b, "es")),
@@ -345,18 +440,25 @@ export function ReceiptsPage({
       } else if (outcome.status === "manual") {
         const gesture = copyGesture();
 
+        // Neither the clipboard nor the share sheet was available, so the
+        // receipt is shown HERE to be copied by hand. Opening it in the app's
+        // own viewer rather than a new tab is the point: a blob in a tab is
+        // saved to disk by several browsers, and eaten by popup blockers in the
+        // rest.
+        openReceiptImage();
+
         setShareNote({
           tone: "info",
           /*
            * "insecure" is worth its own sentence. This device can almost
            * certainly do better — an Android phone on HTTPS gets the share
-           * sheet — and without being told, the tab reads as the feature being
-           * broken rather than as the address bar being http://.
+           * sheet — and without being told, the fallback reads as the feature
+           * being broken rather than as the address bar being http://.
            */
           text:
             outcome.reason === "insecure"
-              ? `Esta página está abierta por http://, y los navegadores solo permiten compartir por HTTPS. Ábrela por HTTPS y este botón enviará el recibo directamente. Por ahora se abrió en otra pestaña: ${gesture}.`
-              : `El recibo se abrió en otra pestaña. ${gesture[0]!.toUpperCase()}${gesture.slice(1)}.`,
+              ? `Esta página está abierta por http://, y los navegadores solo permiten compartir por HTTPS. Ábrela por HTTPS y este botón enviará el recibo directamente. Por ahora el recibo está abierto aquí: ${gesture}.`
+              : `El recibo está abierto aquí. ${gesture[0]!.toUpperCase()}${gesture.slice(1)}.`,
           chatUrl: outcome.chatUrl,
         });
       }
@@ -368,6 +470,212 @@ export function ReceiptsPage({
       setSharing(false);
     }
   };
+
+  /*
+   * The rendered receipt, addressable by the viewer.
+   *
+   * A `blob:` URL for the PNG that has already been rasterised for WhatsApp —
+   * the same bytes, shown rather than sent. Revoked when the receipt changes,
+   * because an object URL is held by the document until it is: without this,
+   * clicking through thirty receipts leaves thirty full-page images in memory.
+   *
+   * This is what "Ver" opens. It used to be that the only way to see the
+   * receipt at full size was the fallback path in whatsapp.ts, which opened a
+   * blob in a new tab — and in several browsers a new tab pointed at an image
+   * blob saves it instead of showing it. The document now stays inside Lindero.
+   */
+  const [shareImageUrl, setShareImageUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (shareImage === null) {
+      setShareImageUrl(null);
+      return;
+    }
+
+    const url = URL.createObjectURL(shareImage);
+    setShareImageUrl(url);
+
+    return () => URL.revokeObjectURL(url);
+  }, [shareImage]);
+
+  /**
+   * Show the rendered receipt, full size, inside the app.
+   *
+   * Shared by the Ver button and by the last-resort branch of Enviar, so the
+   * document appears in exactly one place however it was asked for.
+   */
+  const openReceiptImage = () => {
+    if (detail === null || shareImageUrl === null) {
+      return;
+    }
+
+    setViewing({ source: "receipt" });
+  };
+
+  /** Every comprobante on the open receipt, labelled with the lot it belongs to. */
+  const detailProofs: ViewerFile[] = useMemo(() => {
+    if (detail === null) {
+      return [];
+    }
+
+    return detail.attachments.map((file) =>
+      storedProof(
+        file,
+        detail.lines.find((line) => line.paymentId === file.paymentId)?.lotCode ?? null,
+      ),
+    );
+  }, [detail]);
+
+  /** Re-read the receipt, and the list behind it, after the files change. */
+  const refreshAfterProofChange = async (receiptId: string) => {
+    try {
+      setDetail(await fetchReceipt(receiptId));
+    } catch {
+      // The write succeeded; only the re-read did not. The parent reload below
+      // gets a second chance at it, and the panel is not wrong meanwhile.
+    }
+
+    onProofsChanged();
+  };
+
+  /**
+   * Attach more comprobantes to a receipt that already exists.
+   *
+   * The validation is `acceptProofFiles`, the same function the new-receipt
+   * dropzone uses, so a file refused there is refused here for the same reason
+   * in the same words. What differs is the timing: there is a receipt to belong
+   * to already, so these upload immediately rather than waiting for a save.
+   */
+  const addProofs = async (incoming: FileList | null) => {
+    if (detail === null || incoming === null || incoming.length === 0) {
+      return;
+    }
+
+    setProofError(null);
+
+    const { accepted, rejections } = acceptProofFiles(
+      Array.from(incoming),
+      detail.attachments.length,
+      MAX_PROOFS,
+    );
+
+    if (rejections.length > 0) {
+      setProofError(rejections[0]!);
+    }
+
+    for (const proof of accepted) {
+      setProofBusy(`Subiendo ${proof.file.name}…`);
+
+      try {
+        await uploadAttachment(detail.id, proof.file);
+      } catch (caught) {
+        setProofError(
+          caught instanceof Error ? caught.message : "No se pudo subir el comprobante.",
+        );
+      }
+
+      // Held only to validate and to name the file; nothing here previews it,
+      // so the object URL would otherwise leak one image per upload.
+      URL.revokeObjectURL(proof.previewUrl);
+    }
+
+    setProofBusy(null);
+
+    if (accepted.length > 0) {
+      await refreshAfterProofChange(detail.id);
+    }
+  };
+
+  /**
+   * Actually remove it. Only ever reached from the confirmation dialog.
+   *
+   * Throws rather than swallowing, so `ConfirmDialog` can stay open and show
+   * what went wrong — a prompt that closes on a failed delete looks exactly
+   * like one that closed on a successful delete.
+   */
+  const removeProof = async (attachmentId: string) => {
+    if (detail === null) {
+      return;
+    }
+
+    setProofError(null);
+    setProofBusy("Quitando el comprobante…");
+
+    try {
+      await deleteAttachment(attachmentId);
+      /*
+       * The viewer stays open, and re-reads.
+       *
+       * `refreshAfterProofChange` re-fetches the receipt, `detailProofs` is
+       * derived from it, and the viewer reads that list on every render — so
+       * the removed file simply leaves the strip and the neighbour takes its
+       * place. Removing several in a row is one gesture repeated rather than
+       * open-delete-close-reopen. The viewer closes itself once the last one
+       * is gone.
+       */
+      await refreshAfterProofChange(detail.id);
+    } finally {
+      setProofBusy(null);
+    }
+  };
+
+  /*
+   * What the viewer is actually showing, resolved from the source.
+   *
+   * Derived rather than stored, so the panel's comprobantes re-read themselves
+   * while the viewer is open — which is what makes deleting several in a row
+   * one gesture, and what stops a teammate's write leaving a dead URL on
+   * screen. Null when there is nothing to show, including the case where every
+   * file has just been removed.
+   */
+  const viewerFiles = useMemo((): { files: ViewerFile[]; startId: string } | null => {
+    if (viewing === null) {
+      return null;
+    }
+
+    if (viewing.source === "row") {
+      return { files: viewing.files, startId: viewing.startId };
+    }
+
+    if (viewing.source === "proofs") {
+      return detailProofs.length === 0
+        ? null
+        : { files: detailProofs, startId: viewing.startId };
+    }
+
+    if (detail === null || shareImageUrl === null) {
+      return null;
+    }
+
+    const id = `receipt-${detail.id}`;
+
+    return {
+      files: [
+        {
+          id,
+          name: `Recibo ${detail.code}`,
+          contentType: "image/png",
+          url: shareImageUrl,
+          caption: detail.customer.fullName,
+        },
+      ],
+      startId: id,
+    };
+  }, [viewing, detailProofs, detail, shareImageUrl]);
+
+  /*
+   * Nothing left to show means nothing left open.
+   *
+   * `viewerFiles` goes null when the last comprobante on the receipt is
+   * removed, or when the receipt it was showing is closed. Without this the
+   * viewer would merely stop rendering while `viewing` still said it was open,
+   * and attaching a new file afterwards would make it reappear unasked.
+   */
+  useEffect(() => {
+    if (viewing !== null && viewerFiles === null) {
+      setViewing(null);
+    }
+  }, [viewing, viewerFiles]);
 
   const toggleCustomer = (customerId: string) => {
     setExpanded((current) => {
@@ -436,6 +744,7 @@ export function ReceiptsPage({
               canEdit={canEdit}
               onSelect={() => select(transaction)}
               onEdit={() => onEditTransaction(transaction)}
+              onOpenProof={(files, startId) => setViewing({ source: "row", files, startId })}
               showCustomer
             />
           ))}
@@ -482,6 +791,9 @@ export function ReceiptsPage({
                         canEdit={canEdit}
                         onSelect={() => select(transaction)}
                         onEdit={() => onEditTransaction(transaction)}
+                        onOpenProof={(files, startId) =>
+                          setViewing({ source: "row", files, startId })
+                        }
                         showCustomer={false}
                       />
                     ))}
@@ -531,6 +843,18 @@ export function ReceiptsPage({
 
             <div className="receipt-actions">
               <div className="receipt-actions-main">
+                {/* The document at full size, inside Lindero. The preview
+                    beside the list is 320px of a sidebar and folds itself to
+                    fit; this is the A4 sheet the customer would be handed. */}
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  disabled={shareImageUrl === null}
+                  onClick={openReceiptImage}
+                >
+                  Ver
+                </button>
+
                 <button type="button" className="btn-secondary" onClick={() => window.print()}>
                   Imprimir
                 </button>
@@ -566,6 +890,71 @@ export function ReceiptsPage({
               )}
             </div>
 
+            {/*
+              The evidence, beside the document rather than on it.
+
+              It used to be printed under the note on `ReceiptPaper`, which put
+              the customer's own bank slip into the PNG sent back to them over
+              WhatsApp. It belongs here: a receipt is what the office issues,
+              and a comprobante is what the office keeps.
+            */}
+            <div className="receipt-proofs">
+              <div className="receipt-proofs-head">
+                <p className="receipt-preview-label">Comprobantes del cliente</p>
+
+                {canRecord && detail.attachments.length < MAX_PROOFS && (
+                  <button
+                    type="button"
+                    className="link-btn"
+                    disabled={proofBusy !== null}
+                    onClick={() => proofInputRef.current?.click()}
+                  >
+                    Agregar
+                  </button>
+                )}
+              </div>
+
+              {detail.attachments.length === 0 ? (
+                <p className="state-message">
+                  Este recibo no tiene comprobante adjunto
+                  {canRecord ? ". Puedes agregar la captura del depósito." : "."}
+                </p>
+              ) : (
+                <div className="proof-grid">
+                  {detailProofs.map((file) => (
+                    <button
+                      key={file.id}
+                      type="button"
+                      className="proof-tile"
+                      onClick={() => setViewing({ source: "proofs", startId: file.id })}
+                      title={`Ver ${file.name}`}
+                    >
+                      <DocumentThumb file={file} />
+                      <span className="proof-tile-name">{file.name}</span>
+                      {file.caption && <span className="proof-tile-lot">{file.caption}</span>}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {proofBusy && <p className="state-message">{proofBusy}</p>}
+              {proofError && <p className="form-error">{proofError}</p>}
+
+              {/* Off-screen, opened by the Agregar button. The same accept list
+                  the dropzone uses; the server's is the one that counts. */}
+              <input
+                ref={proofInputRef}
+                type="file"
+                multiple
+                className="proof-input"
+                accept="image/jpeg,image/png,image/webp,image/heic,image/heif,application/pdf,.heic,.heif"
+                onChange={(event) => {
+                  void addProofs(event.target.files);
+                  event.target.value = "";
+                }}
+              />
+            </div>
+
             {shareNote && (
               <p className={`receipt-share-note${shareNote.tone === "error" ? " is-error" : ""}`}>
                 {shareNote.text}
@@ -597,6 +986,49 @@ export function ReceiptsPage({
           </>
         )}
       </div>
+
+      {viewerFiles !== null && (
+        <DocumentViewer
+          files={viewerFiles.files}
+          startId={viewerFiles.startId}
+          onClose={() => setViewing(null)}
+          /*
+           * Removing is offered only for the open receipt's own comprobantes.
+           *
+           * Not for a thumbnail opened from a transaction ROW, whose files may
+           * belong to a receipt that is not the one in the panel — deleting
+           * there would leave the screen describing a receipt it had not
+           * re-read. Not for the receipt IMAGE either: it is drawn from the
+           * ledger every time it is opened, so there is nothing to remove.
+           */
+          onRemove={
+            canRecord && viewing?.source === "proofs" ? setPendingRemoval : undefined
+          }
+        />
+      )}
+
+      {pendingRemoval !== null && (
+        <ConfirmDialog
+          eyebrow="Quitar comprobante"
+          title={pendingRemoval.name}
+          description={
+            pendingRemoval.sizeBytes === undefined
+              ? undefined
+              : readableSize(pendingRemoval.sizeBytes)
+          }
+          confirmLabel="Quitar comprobante"
+          busyLabel="Quitando…"
+          onCancel={() => setPendingRemoval(null)}
+          onConfirm={async () => {
+            await removeProof(pendingRemoval.id);
+            setPendingRemoval(null);
+          }}
+        >
+          Esto borra el archivo del servidor para siempre. El pago y el recibo no cambian —
+          solo se pierde la prueba que envió el cliente, y si ya no está en el chat no hay
+          otra copia.
+        </ConfirmDialog>
+      )}
     </div>
   );
 }

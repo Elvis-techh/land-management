@@ -582,6 +582,26 @@ export const attachments = sqliteTable(
       .notNull()
       .references(() => receipts.id),
     /**
+     * The lot this file is evidence for, or null for the receipt as a whole.
+     *
+     * A receipt can cover three lots — the customer hands over one amount and
+     * it lands on three contracts — and the proofs behind it are not always one
+     * document either: two transfers on two days, or a slip per lot. Tying a
+     * file to the PAYMENT rather than only to the receipt is what lets the
+     * transactions list show each row the evidence for THAT row instead of
+     * every file on the paper.
+     *
+     * Nullable, and null is the common case: one slip for one payment needs no
+     * tagging, and everything uploaded before this column existed predates the
+     * question. A null file belongs to the whole receipt and shows on every one
+     * of its lines.
+     *
+     * The payment, not the contract. The contract is the lot's whole history;
+     * the payment is the one line on this receipt, which is what somebody
+     * looking at a transaction row is actually asking about.
+     */
+    paymentId: text("payment_id").references(() => payments.id),
+    /**
      * The file's name on disk, relative to the uploads directory.
      *
      * Generated, never the name the browser sent. A user-supplied filename is
@@ -600,7 +620,53 @@ export const attachments = sqliteTable(
       .references(() => users.id),
     createdAt: timestamp("created_at"),
   },
-  (table) => [index("attachments_receipt_idx").on(table.receiptId)],
+  (table) => [
+    index("attachments_receipt_idx").on(table.receiptId),
+    index("attachments_payment_idx").on(table.paymentId),
+  ],
+);
+
+/**
+ * The signed paperwork behind a contract.
+ *
+ * The actual legal document: the contract the customer put their name on,
+ * scanned or photographed, plus whatever came with it — an adenda, a copy of
+ * each party's identidad, the plano. Until now the app held everything ABOUT a
+ * contract (the price, the term, the cuotas, the balance) and nothing OF it,
+ * so the one artefact that decides a dispute lived in a filing cabinet and, in
+ * practice, in a folder on somebody's phone.
+ *
+ * Deliberately its own table rather than a nullable column on `attachments`.
+ * The two carry the same kind of bytes and nothing else: a comprobante is one
+ * customer's evidence for one payment and can be deleted when it is the wrong
+ * screenshot, while this is the legal instrument for a lot and its removal is
+ * an event worth explaining. Sharing a table would mean one nullable column
+ * deciding which of those a row is, and the day that column is wrong somebody's
+ * contract is filed under somebody else's receipt.
+ *
+ * The BYTES are on disk under `storageKey`, for the same reason as attachments:
+ * a database that is 40 MB of ledger and 4 GB of scans is one nobody can move.
+ */
+export const contractDocuments = sqliteTable(
+  "contract_documents",
+  {
+    id: text("id").primaryKey(),
+    contractId: text("contract_id")
+      .notNull()
+      .references(() => contracts.id),
+    /** Generated, never the uploaded name — see src/lib/storedFiles.ts. */
+    storageKey: text("storage_key").notNull(),
+    /** What the file was called when it arrived. Shown, never used as a path. */
+    fileName: text("file_name").notNull(),
+    /** Checked against an allow-list on upload — see src/lib/storedFiles.ts. */
+    contentType: text("content_type").notNull(),
+    byteSize: integer("byte_size").notNull(),
+    uploadedBy: text("uploaded_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: timestamp("created_at"),
+  },
+  (table) => [index("contract_documents_contract_idx").on(table.contractId)],
 );
 
 /**

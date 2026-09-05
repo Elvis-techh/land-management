@@ -1,7 +1,8 @@
 import { ApiError, api } from "../../lib/api";
+import type { ViewerFile } from "../../components/DocumentViewer";
 import { CLIENT_ID } from "../../lib/liveUpdates";
 import { cents } from "../../lib/money";
-import type { Receipt, ReceiptLine, Transaction } from "../../types";
+import type { Receipt, ReceiptAttachment, ReceiptLine, Transaction } from "../../types";
 
 /**
  * Exactly what the receipts endpoints send back. Money arrives as whole
@@ -27,13 +28,7 @@ interface ReceiptResponse {
   cumulativePaid: number;
   transactionCount: number;
   method: string | null;
-  attachments?: Array<{
-    id: string;
-    fileName: string;
-    contentType: string;
-    byteSize: number;
-    createdAt: string;
-  }>;
+  attachments?: ReceiptAttachment[];
   lines?: Array<{
     paymentId: string;
     contractId: string;
@@ -154,13 +149,6 @@ export function updateTransaction(transactionId: string, edit: TransactionEdit) 
 /* Proof of payment                                                            */
 /* -------------------------------------------------------------------------- */
 
-export interface UploadedAttachment {
-  id: string;
-  fileName: string;
-  contentType: string;
-  byteSize: number;
-}
-
 /**
  * Attach the customer's proof of transfer to a receipt.
  *
@@ -168,12 +156,32 @@ export interface UploadedAttachment {
  * has to be held in memory as one enormous string on both ends, where a
  * multipart body streams. The browser sets the Content-Type header itself — it
  * has to, because only it knows the boundary — so `api.post` is bypassed here.
+ *
+ * `paymentId` names the lot this slip is evidence for, on a receipt that covers
+ * several. Optional, and usually absent — one transfer for one payment needs no
+ * tagging.
  */
 export async function uploadAttachment(
   receiptId: string,
   file: File,
-): Promise<UploadedAttachment> {
+  paymentId?: string | null,
+): Promise<ReceiptAttachment> {
   const body = new FormData();
+
+  /*
+   * The field goes in BEFORE the file, and that order is load-bearing.
+   *
+   * FormData preserves insertion order on the wire, and the server reads its
+   * fields off the part it stops at — which is the file. A `paymentId` appended
+   * after it has not been parsed when the handler looks, so it would read as
+   * absent and the proof would be filed against the whole receipt instead of
+   * the lot somebody chose. Silently, and only on receipts with more than one
+   * lot. See routes/receipts.ts.
+   */
+  if (paymentId) {
+    body.append("paymentId", paymentId);
+  }
+
   body.append("file", file);
 
   const response = await fetch(`/api/receipts/${receiptId}/attachments`, {
@@ -193,16 +201,42 @@ export async function uploadAttachment(
     throw new ApiError(response.status, error?.message ?? "No se pudo subir el comprobante.");
   }
 
-  return (payload as { attachment: UploadedAttachment }).attachment;
+  return (payload as { attachment: ReceiptAttachment }).attachment;
 }
 
 export function deleteAttachment(attachmentId: string) {
   return api.delete<{ ok: true }>(`/api/attachments/${attachmentId}`);
 }
 
-/** Where the browser can fetch an attachment's bytes. Behind the session. */
+/**
+ * Where the browser can fetch an attachment's bytes. Behind the session.
+ *
+ * Served for VIEWING — inline, in an opaque origin — so putting this in an
+ * `<img>` or an `<iframe>` shows the document rather than saving a copy of a
+ * customer's bank slip to whatever machine is being used. See
+ * `DocumentViewer` for why that matters and routes/receipts.ts for how it is
+ * made safe.
+ */
 export function attachmentUrl(attachmentId: string): string {
   return `/api/attachments/${attachmentId}/file`;
+}
+
+/**
+ * A stored comprobante, in the shape the viewer and the thumbnails want.
+ *
+ * The one place that turns "a row in the attachments table" into "something on
+ * screen", so a file looks and behaves identically in the transactions list,
+ * the receipt panel and the viewer itself.
+ */
+export function storedProof(file: ReceiptAttachment, lotCode?: string | null): ViewerFile {
+  return {
+    id: file.id,
+    name: file.fileName,
+    contentType: file.contentType,
+    url: attachmentUrl(file.id),
+    caption: lotCode ?? null,
+    sizeBytes: file.byteSize,
+  };
 }
 
 /** One lot's line on a receipt being written. Amounts are in lempira centavos. */

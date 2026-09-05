@@ -7,7 +7,6 @@ import type { MoneyView } from "../../lib/money";
 import { cents, formatDocumentMoney } from "../../lib/money";
 import { formatPhone } from "../../lib/phone";
 import type { Receipt, ReceiptLine } from "../../types";
-import { attachmentUrl } from "./api";
 
 interface ReceiptPaperProps {
   receipt: Receipt;
@@ -319,31 +318,22 @@ export function ReceiptPaper({ receipt, money }: ReceiptPaperProps) {
 
       {receipt.note && <p className="receipt-note">{receipt.note}</p>}
 
-      {receipt.attachments.length > 0 && (
-        // The customer's own evidence, kept beside the payment it belongs to.
-        // Hidden when printing: the receipt is what gets handed over, and the
-        // deposit slip is already the customer's.
-        <div className="receipt-proofs">
-          <p className="receipt-section-label">Comprobante del cliente</p>
+      {/*
+        The customer's comprobantes are deliberately NOT on the document.
 
-          {receipt.attachments.map((file) => (
-            <a
-              key={file.id}
-              className="receipt-proof"
-              href={attachmentUrl(file.id)}
-              target="_blank"
-              rel="noreferrer"
-            >
-              {file.contentType.startsWith("image/") ? (
-                <img src={attachmentUrl(file.id)} alt={file.fileName} loading="lazy" />
-              ) : (
-                <span className="proof-thumb proof-thumb-pdf">PDF</span>
-              )}
-              <span className="receipt-proof-name">{file.fileName}</span>
-            </a>
-          ))}
-        </div>
-      )}
+        They used to be, tucked under the note, hidden from the printer. Two
+        things were wrong with that. The first is that this component is also
+        rasterised and sent to the customer over WhatsApp — so their own bank
+        slip, account number and all, was being embedded in the picture and
+        handed back to them, and would have been handed to anyone the message
+        was forwarded to. The second is smaller and still real: every proof had
+        to be inlined as a data URI before the PNG could be produced, which
+        made the one action people wait on slower and likelier to fail.
+
+        A receipt is what the office ISSUES. The evidence behind it is what the
+        office KEEPS, and it now lives beside the document in `ReceiptsPage`
+        rather than on it.
+      */}
 
       <footer className="receipt-footer">
         <div className="receipt-signature">

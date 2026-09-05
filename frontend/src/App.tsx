@@ -963,6 +963,9 @@ export default function App() {
               user={user}
               onVoidReceipt={setReceiptBeingVoided}
               onEditTransaction={setTransactionBeingEdited}
+              // The thumbnails hang off the transaction rows, so attaching a
+              // comprobante from the receipt panel has to re-read this list.
+              onProofsChanged={() => void reloadTransactions()}
             />
           )}
 
@@ -1198,6 +1201,9 @@ export default function App() {
           onEditContract={setContractBeingEdited}
           onCancelContract={setContractBeingCancelled}
           onDefaultContract={setContractBeingDefaulted}
+          // The list marks which contracts have their signed copy on file, so
+          // filing one from the panel has to re-read the list behind it.
+          onDocumentsChanged={() => void reloadContracts()}
         />
       )}
 

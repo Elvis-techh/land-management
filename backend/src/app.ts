@@ -143,7 +143,10 @@ export async function buildApp(config: AppConfig, db: Db) {
       await api.register(lotRoutes);
       await api.register(projectRoutes);
       await api.register(customerRoutes);
-      await api.register(contractRoutes, { timeZone: config.timeZone });
+      await api.register(contractRoutes, {
+        timeZone: config.timeZone,
+        uploadsPath: config.uploadsPath,
+      });
       await api.register(receiptRoutes, { uploadsPath: config.uploadsPath });
       await api.register(transactionRoutes);
       await api.register(permissionRoutes);

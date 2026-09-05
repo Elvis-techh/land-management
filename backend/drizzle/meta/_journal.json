@@ -78,6 +78,20 @@
       "when": 1788307834993,
       "tag": "0010_contract_settlement",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1788618486378,
+      "tag": "0011_attachment_payment",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1788620576206,
+      "tag": "0012_contract_documents",
+      "breakpoints": true
     }
   ]
 }

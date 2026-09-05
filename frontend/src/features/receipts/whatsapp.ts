@@ -26,13 +26,19 @@
  *     identidad to another. That is a privacy incident, not a typo.
  *  2. Share sheet, where the clipboard is unavailable but sharing is not. The
  *     image travels properly; the recipient is chosen by hand.
- *  3. Open the image in a tab — a browser with neither, which in practice means
- *     the app served over plain HTTP. Long-press or right-click to copy it.
+ *  3. Show the receipt in Lindero's own viewer — a browser with neither, which
+ *     in practice means the app served over plain HTTP. Long-press or
+ *     right-click the image to copy it into the chat.
  *
  * There is deliberately no "download it" step. Saving a 350 KB PNG per receipt
  * into somebody's Downloads folder, to be attached by hand and then swept up
  * later, is worse than any of the above — it is the manual screenshot workflow
  * with extra housekeeping.
+ *
+ * The third route used to be `window.open` on a `blob:` URL, which is nearly
+ * the same thing and worse in two ways: several browsers SAVE an image opened
+ * that way instead of showing it, and a popup blocker can eat the tab silently.
+ * The image now stays inside the app, in the same viewer the comprobantes use.
  */
 
 import type { Receipt } from "../../types";
@@ -72,7 +78,10 @@ export type ShareOutcome =
   | { status: "shared" }
   /** On the clipboard, and the chat is open. One paste away. */
   | { status: "copied"; chatUrl: string }
-  /** Open in a tab to be copied by hand. `chatUrl` is offered as a link. */
+  /**
+   * Neither route was available. The caller shows the receipt in the viewer to
+   * be copied by hand, and offers `chatUrl` as a link.
+   */
   | { status: "manual"; chatUrl: string; reason: "insecure" | "unsupported" }
   /** They backed out of the share sheet. A decision, not a failure. */
   | { status: "cancelled" };
@@ -175,17 +184,6 @@ async function copyToClipboard(file: File): Promise<boolean> {
   }
 }
 
-/** Show the image in a new tab. Nothing is written to disk. */
-function openInTab(file: File): void {
-  const url = URL.createObjectURL(file);
-
-  window.open(url, "_blank", "noopener,noreferrer");
-
-  // Released once the tab has certainly loaded it. Revoking immediately would
-  // leave the new tab pointing at nothing.
-  setTimeout(() => URL.revokeObjectURL(url), 60_000);
-}
-
 /**
  * Send the receipt.
  *
@@ -237,10 +235,14 @@ export async function sendReceiptOnWhatsApp(
     }
   }
 
-  // One `window.open` per branch, never two: a popup blocker stops the second
-  // one, and the tab it stops is silently missing rather than reported. So the
-  // image opens here and the chat is offered to the user as a link instead.
-  openInTab(file);
+  /*
+   * Nothing opened, and nothing was written anywhere.
+   *
+   * The caller shows the receipt in Lindero's viewer and offers the chat as a
+   * link. Deliberately no `window.open` on this path: a popup blocker would eat
+   * it silently, and the branches above have already spent the one navigation a
+   * click is allowed.
+   */
 
   /*
    * WHY we ended up here matters more than the fact that we did.

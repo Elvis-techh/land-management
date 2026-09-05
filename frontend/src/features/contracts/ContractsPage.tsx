@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
-import { IconChevronDown } from "../../components/Icons";
+import { IconChevronDown, IconPaperclip } from "../../components/Icons";
 import { getInitials } from "../../lib/initials";
 import type { MoneyView } from "../../lib/money";
 import { formatMoney, formatMoneyParts, subtractMoney } from "../../lib/money";
@@ -30,6 +30,40 @@ import {
 } from "./contractPresentation";
 import type { ContractSort } from "./contractSort";
 import { DEFAULT_SORT, groupByCustomer, sortContracts } from "./contractSort";
+
+/**
+ * "The signed copy is on file", at a glance down the list.
+ *
+ * Answers the question this whole feature exists for — which contracts have
+ * their paperwork and which are still only a row in a database — without
+ * opening four hundred of them one at a time. Marks presence rather than
+ * absence: every contract predating the feature has none, so flagging the gaps
+ * would put a warning on every row on day one.
+ *
+ * Not a button. The panel behind it is one click away on the same row, and a
+ * second target the width of an icon, inside a row that is already a link, is
+ * a way to open the wrong thing on a phone.
+ */
+function DocumentMark({ contract }: { contract: Contract }) {
+  return (
+    <span
+      className="contract-doc-mark"
+      title={
+        contract.documentCount === 1
+          ? "El contrato firmado está guardado"
+          : `${contract.documentCount} documentos guardados`
+      }
+      aria-label={
+        contract.documentCount === 1
+          ? "Tiene el contrato firmado guardado"
+          : `Tiene ${contract.documentCount} documentos guardados`
+      }
+    >
+      <IconPaperclip />
+      {contract.documentCount > 1 && <span>{contract.documentCount}</span>}
+    </span>
+  );
+}
 
 /** The empty state has to span every column. */
 const COLUMN_COUNT = 8;
@@ -283,6 +317,7 @@ export function ContractsPage({
                                 title={`Ver el contrato ${contract.code}`}
                               >
                                 <span className="code-badge">{contract.code}</span>
+                                {contract.documentCount > 0 && <DocumentMark contract={contract} />}
                                 <span className="contract-kind">
                                   {KIND_LABELS[contract.kind]} ·{" "}
                                   {SALE_TYPE_LABELS[contract.saleType]}
@@ -475,6 +510,7 @@ export function ContractsPage({
                   >
                     <div className="contract-card-top">
                       <span className="code-badge">{contract.code}</span>
+                      {contract.documentCount > 0 && <DocumentMark contract={contract} />}
                       <span className={stamp.stampClass}>{stamp.label}</span>
                     </div>
 

@@ -16,8 +16,13 @@ interface DialogProps {
    * something is a table rather than prose. Both are `min(…, 100%)`, so this
    * only ever grants a ceiling: a dialog that cannot have the room simply does
    * not take it, and the layout inside is what decides to stack instead.
+   *
+   * `"viewer"` is the odd one out: nearly the whole window, dark, and with no
+   * padding of its own. It exists for looking at a document — a comprobante or
+   * a receipt — where the thing being looked at is the entire point and any
+   * chrome around it is in the way. See `DocumentViewer`.
    */
-  size?: "default" | "wide";
+  size?: "default" | "wide" | "viewer";
   onClose: () => void;
   children: ReactNode;
 }
@@ -116,7 +121,7 @@ export function Dialog({ ariaLabel, size = "default", onClose, children }: Dialo
     >
       <div
         ref={panelRef}
-        className={size === "wide" ? "entity-modal is-wide" : "entity-modal"}
+        className={`entity-modal${size === "default" ? "" : ` is-${size}`}`}
         role="dialog"
         aria-modal="true"
         aria-label={ariaLabel}

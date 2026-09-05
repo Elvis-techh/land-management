@@ -1,11 +1,32 @@
 import { randomUUID } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
+import multipart from "@fastify/multipart";
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 
 import type { Db } from "../db/client.js";
-import { contracts, customers, lots, payments, projects, receipts } from "../db/schema.js";
+import {
+  contractDocuments,
+  contracts,
+  customers,
+  lots,
+  payments,
+  projects,
+  receipts,
+  users,
+} from "../db/schema.js";
+import {
+  MAX_DOCUMENTS_PER_CONTRACT,
+  MAX_DOCUMENT_BYTES,
+  isAllowedContentType,
+  removeStoredFile,
+  safeDisplayName,
+  sendStoredFile,
+  storageKeyFor,
+} from "../lib/storedFiles.js";
 import { splitEvenly } from "../lib/allocation.js";
 import { recordAudit } from "../lib/audit.js";
 import type { ContractTerms, SaleType } from "../lib/contracts.js";
@@ -32,6 +53,8 @@ import { businessToday } from "../lib/time.js";
 interface ContractRoutesOptions {
   /** IANA name — see `timeZone` in src/config/env.ts. */
   timeZone: string;
+  /** Where uploaded contract documents are written. See config/env.ts. */
+  uploadsPath: string;
 }
 
 /**
@@ -103,14 +126,87 @@ const contractsListQuery = (db: Db) =>
 type ContractRow = ReturnType<ReturnType<typeof contractsListQuery>["all"]>[number];
 
 /**
+ * How many documents each contract carries, for the whole list at once.
+ *
+ * A GROUP BY rather than a count per row: the Contratos screen shows every
+ * contract in the business, and asking the database once per row is the N+1
+ * that turns one screen into four hundred queries. Contracts with no paperwork
+ * are simply absent from the map, and the caller reads that as zero.
+ */
+function documentCountsFor(db: Db): Map<string, number> {
+  const rows = db
+    .select({
+      contractId: contractDocuments.contractId,
+      value: sql<number>`COUNT(*)`,
+    })
+    .from(contractDocuments)
+    .groupBy(contractDocuments.contractId)
+    .all();
+
+  return new Map(rows.map((row) => [row.contractId, row.value]));
+}
+
+/** One document as the API reports it. `storageKey` never leaves the server. */
+function presentDocument(row: {
+  id: string;
+  fileName: string;
+  contentType: string;
+  byteSize: number;
+  createdAt: string;
+  uploadedByName: string;
+}) {
+  return {
+    id: row.id,
+    fileName: row.fileName,
+    contentType: row.contentType,
+    byteSize: row.byteSize,
+    createdAt: row.createdAt,
+    /*
+     * Who put it there.
+     *
+     * Not shown for a comprobante, and shown here, because the question asked
+     * of a legal document six months later is "who filed this, and when" — the
+     * same question the audit log answers about everything else that matters.
+     */
+    uploadedBy: row.uploadedByName,
+  };
+}
+
+/** Every document on one contract, oldest first, with who uploaded each. */
+function documentsFor(db: Db, contractId: string) {
+  return db
+    .select({
+      id: contractDocuments.id,
+      fileName: contractDocuments.fileName,
+      contentType: contractDocuments.contentType,
+      byteSize: contractDocuments.byteSize,
+      createdAt: contractDocuments.createdAt,
+      uploadedByName: users.name,
+    })
+    .from(contractDocuments)
+    .innerJoin(users, eq(users.id, contractDocuments.uploadedBy))
+    .where(eq(contractDocuments.contractId, contractId))
+    // Oldest first: the signed contract is normally the first thing filed, and
+    // the adenda that follow read in the order they happened.
+    .orderBy(asc(contractDocuments.createdAt), asc(contractDocuments.id))
+    .all();
+}
+
+/**
  * A contract as the API reports it: what was signed, plus what follows from it.
  *
  * `signedOn` falls back to the day the row was created. Contracts written
  * before the signing date existed as a column were backfilled that way by
  * migration 0004, and this keeps the fallback in one place rather than letting
  * a null reach the arithmetic.
+ *
+ * `documentCount` is a COUNT and not the documents themselves. The list is
+ * every contract in the business and each one can carry a dozen scans; sending
+ * their metadata down on a screen that only needs to mark which contracts have
+ * their paperwork on file would be a page of JSON nobody reads. The panel asks
+ * for the actual list when a contract is opened.
  */
-function present(row: ContractRow, asOf: string) {
+function present(row: ContractRow, asOf: string, documentCount = 0) {
   const terms: ContractTerms = {
     saleType: row.saleType as SaleType,
     salePriceCents: row.salePriceCents,
@@ -194,6 +290,15 @@ function present(row: ContractRow, asOf: string) {
       settled: health.settled,
     },
     installmentCount: buildSchedule(terms).length,
+    /**
+     * How many files of signed paperwork this contract has.
+     *
+     * Zero is the answer for every contract written before this existed, which
+     * is why the screen marks the ones that HAVE their document rather than
+     * flagging the ones that do not: a red mark against the entire back
+     * catalogue on day one is noise, and noise is what gets ignored.
+     */
+    documentCount,
     closedAt: row.closedAt,
     closedReason: row.closedReason,
     /** "none" | "held" | "refunded" — what became of money paid, on cancellation. */
@@ -391,11 +496,13 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
   app.get("/contracts", { onRequest: app.requireUser }, async (_request, reply) => {
     const asOf = today();
 
+    const rows = contractsListQuery(app.db).orderBy(desc(contracts.code)).all();
+
+    // One grouped count for the whole screen rather than one query per row.
+    const documentCounts = documentCountsFor(app.db);
+
     return reply.send({
-      contracts: contractsListQuery(app.db)
-        .orderBy(desc(contracts.code))
-        .all()
-        .map((row) => present(row, asOf)),
+      contracts: rows.map((row) => present(row, asOf, documentCounts.get(row.id) ?? 0)),
     });
   });
 
@@ -984,5 +1091,262 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
     { onRequest: app.requireCapability("contract:default") },
     (request, reply) =>
       close(request, reply, { newStatus: "defaulted", action: "default", verb: "declarar incumplidos" }),
+  );
+
+  /* ---------------------------------------------------------------------- */
+  /* The signed paperwork                                                    */
+  /* ---------------------------------------------------------------------- */
+
+  /*
+   * Multipart, registered inside this plugin and with a ceiling of its own.
+   *
+   * `receiptRoutes` registers it too, separately, and that is the point of
+   * doing it here rather than app-wide: only the routes that are meant to take
+   * a file can take one, and each gets the limit that suits what it receives.
+   * 12 MB is right for a phone photograph of a deposit slip and wrong for a
+   * fifteen-page scanned contract, which is the document this whole section
+   * exists for.
+   *
+   * The limits are the real guard: Fastify refuses a body past `fileSize` while
+   * it is still streaming, so a hostile 4 GB upload is rejected before it can
+   * fill the disk rather than after.
+   */
+  await app.register(multipart, {
+    limits: {
+      fileSize: MAX_DOCUMENT_BYTES,
+      files: 1,
+      fields: 2,
+    },
+  });
+
+  /** Every document on one contract. Behind the session like the contract itself. */
+  app.get<{ Params: { id: string } }>(
+    "/contracts/:id/documents",
+    { onRequest: app.requireUser },
+    async (request, reply) => {
+      const contract = app.db
+        .select({ id: contracts.id })
+        .from(contracts)
+        .where(eq(contracts.id, request.params.id))
+        .get();
+
+      if (!contract) {
+        return reply.code(404).send({ error: "not_found", message: "Ese contrato no existe." });
+      }
+
+      return { documents: documentsFor(app.db, contract.id).map(presentDocument) };
+    },
+  );
+
+  /**
+   * File the signed contract against the contract record.
+   *
+   * `contract:create`, the same capability that writes the contract in the
+   * first place: scanning the signed copy and filing it is the last step of
+   * making one, not a separate privilege. Deleting it is NOT — see below.
+   *
+   * The bytes are written to disk under a generated name and the row records
+   * where they went; nothing the uploader chose ever reaches the filesystem.
+   * See src/lib/storedFiles.ts.
+   */
+  app.post<{ Params: { id: string } }>(
+    "/contracts/:id/documents",
+    { onRequest: app.requireCapability("contract:create") },
+    async (request, reply) => {
+      const contract = app.db
+        .select({ id: contracts.id, code: contracts.code })
+        .from(contracts)
+        .where(eq(contracts.id, request.params.id))
+        .get();
+
+      if (!contract) {
+        return reply.code(404).send({ error: "not_found", message: "Ese contrato no existe." });
+      }
+
+      const existing = app.db
+        .select({ value: sql<number>`COUNT(*)` })
+        .from(contractDocuments)
+        .where(eq(contractDocuments.contractId, contract.id))
+        .get();
+
+      if ((existing?.value ?? 0) >= MAX_DOCUMENTS_PER_CONTRACT) {
+        return reply.code(409).send({
+          error: "too_many_documents",
+          message: `Un contrato admite hasta ${MAX_DOCUMENTS_PER_CONTRACT} documentos.`,
+        });
+      }
+
+      let part;
+
+      try {
+        part = await request.file();
+      } catch {
+        // Thrown by @fastify/multipart when the body is not multipart at all.
+        return reply
+          .code(400)
+          .send({ error: "invalid_upload", message: "No se recibió ningún archivo." });
+      }
+
+      if (!part) {
+        return reply
+          .code(400)
+          .send({ error: "invalid_upload", message: "No se recibió ningún archivo." });
+      }
+
+      if (!isAllowedContentType(part.mimetype)) {
+        return reply.code(415).send({
+          error: "unsupported_type",
+          message: "Solo se aceptan PDF o imágenes (JPG, PNG, WEBP, HEIC) del contrato escaneado.",
+        });
+      }
+
+      const buffer = await part.toBuffer();
+
+      // `toBuffer` resolves even when the stream was truncated at the limit, so
+      // the flag has to be asked about explicitly. Without this a 40 MB scan
+      // would be stored silently as its first 30 MB — a contract missing its
+      // last pages, that looks like a successful upload.
+      if (part.file.truncated) {
+        return reply.code(413).send({
+          error: "file_too_large",
+          message: `El archivo supera el máximo de ${Math.round(MAX_DOCUMENT_BYTES / 1024 / 1024)} MB.`,
+        });
+      }
+
+      if (buffer.byteLength === 0) {
+        return reply.code(400).send({ error: "empty_file", message: "El archivo está vacío." });
+      }
+
+      const storageKey = storageKeyFor(part.mimetype);
+      const documentId = randomUUID();
+      const fileName = safeDisplayName(part.filename ?? "contrato");
+
+      await mkdir(options.uploadsPath, { recursive: true });
+      await writeFile(join(options.uploadsPath, storageKey), buffer);
+
+      let createdAt = "";
+
+      try {
+        app.db.transaction((tx) => {
+          createdAt =
+            tx
+              .insert(contractDocuments)
+              .values({
+                id: documentId,
+                contractId: contract.id,
+                storageKey,
+                fileName,
+                contentType: part.mimetype,
+                byteSize: buffer.byteLength,
+                uploadedBy: request.user!.id,
+              })
+              .returning({ createdAt: contractDocuments.createdAt })
+              .get()?.createdAt ?? "";
+
+          recordAudit(tx, {
+            actorId: request.user!.id,
+            entityType: "contract",
+            entityId: contract.id,
+            action: "update",
+            after: { attachedDocument: fileName, contractCode: contract.code },
+          });
+        });
+      } catch (error) {
+        // The row is what makes the file findable. If it could not be written,
+        // the bytes on disk are unreachable rubbish, so they go too rather than
+        // accumulating as orphans nobody will ever notice.
+        await removeStoredFile(options.uploadsPath, storageKey);
+        throw error;
+      }
+
+      return reply.code(201).send({
+        document: {
+          id: documentId,
+          fileName,
+          contentType: part.mimetype,
+          byteSize: buffer.byteLength,
+          createdAt,
+          uploadedBy: request.user!.name,
+        },
+      });
+    },
+  );
+
+  /**
+   * Serve one document, for viewing rather than for saving.
+   *
+   * Behind the session guard like everything else: a signed contract carries
+   * both parties' names, their identidades and what was agreed, and is nobody
+   * else's business. The id is a UUID rather than a guessable number for the
+   * same reason the receipt lookup code is random.
+   *
+   * The headers — inline, sandboxed into an opaque origin — are the shared
+   * implementation in src/lib/storedFiles.ts, the same one that serves a
+   * comprobante. Written once because every line of it is a security decision.
+   */
+  app.get<{ Params: { id: string } }>(
+    "/contract-documents/:id/file",
+    { onRequest: app.requireUser },
+    async (request, reply) => {
+      const row = app.db
+        .select()
+        .from(contractDocuments)
+        .where(eq(contractDocuments.id, request.params.id))
+        .get();
+
+      if (!row) {
+        return reply.code(404).send({ error: "not_found", message: "Ese archivo no existe." });
+      }
+
+      return sendStoredFile(reply, row, options.uploadsPath);
+    },
+  );
+
+  /**
+   * Remove a document.
+   *
+   * `contract:edit`, NOT the `contract:create` that uploading takes, and the
+   * gap between those two is deliberate. An associate who writes contracts
+   * should be able to file the signed copy — that is the job. Destroying the
+   * signed copy is a different act: this is the legal instrument for a lot, and
+   * unlike a wrongly-attached photograph of a deposit slip, there is no second
+   * copy of it in a chat somewhere. It is not something to be able to do by
+   * mistake on the way to doing something else.
+   *
+   * The row and the file both go, and the audit entry naming the file is what
+   * remains. Nothing else in this app deletes a record outright; the reason
+   * this one may is that the alternative — a contract permanently showing a
+   * document that turned out to belong to another lot — is worse.
+   */
+  app.delete<{ Params: { id: string } }>(
+    "/contract-documents/:id",
+    { onRequest: app.requireCapability("contract:edit") },
+    async (request, reply) => {
+      const row = app.db
+        .select()
+        .from(contractDocuments)
+        .where(eq(contractDocuments.id, request.params.id))
+        .get();
+
+      if (!row) {
+        return reply.code(404).send({ error: "not_found", message: "Ese archivo no existe." });
+      }
+
+      app.db.transaction((tx) => {
+        tx.delete(contractDocuments).where(eq(contractDocuments.id, row.id)).run();
+
+        recordAudit(tx, {
+          actorId: request.user!.id,
+          entityType: "contract",
+          entityId: row.contractId,
+          action: "update",
+          before: { removedDocument: row.fileName },
+        });
+      });
+
+      await removeStoredFile(options.uploadsPath, row.storageKey);
+
+      return { ok: true };
+    },
   );
 };

@@ -1,5 +1,9 @@
 import { useRef, useState } from "react";
 
+import { DocumentViewer, DocumentThumb } from "../../components/DocumentViewer";
+import type { ViewerFile } from "../../components/DocumentViewer";
+import { readableSize } from "../../lib/documentFiles";
+
 /**
  * What a proof of payment is allowed to be. Mirrors the server's allow-list in
  * backend/src/lib/attachments.ts, which is the one that counts — this copy only
@@ -21,8 +25,29 @@ export interface PendingProof {
   /** Stable across re-renders, so React keys and the remove button behave. */
   id: string;
   file: File;
-  /** An object URL for the thumbnail, or null for a PDF. Revoked on removal. */
-  previewUrl: string | null;
+  /**
+   * An object URL for this file, whatever its type. Revoked on removal.
+   *
+   * It used to be null for a PDF, because the only thing it fed was a
+   * thumbnail and a PDF has no thumbnail. It now also feeds the VIEWER, and the
+   * browser's PDF viewer reads a `blob:` URL perfectly well — which is what
+   * makes a bank's PDF checkable before it is uploaded rather than only after.
+   */
+  previewUrl: string;
+  /**
+   * The lot this slip is evidence for, or null for the receipt as a whole.
+   *
+   * A contract id rather than a payment id, because at this point the payments
+   * do not exist yet — the receipt has not been written. `NewReceiptDialog`
+   * translates it once the server answers with the lines it created.
+   */
+  contractId: string | null;
+}
+
+/** One lot a pending proof may be filed against. */
+export interface ProofLot {
+  contractId: string;
+  lotCode: string;
 }
 
 interface ProofDropzoneProps {
@@ -31,13 +56,13 @@ interface ProofDropzoneProps {
   /** Refused before anything is uploaded — wrong type, too big, too many. */
   onReject: (message: string) => void;
   maxFiles: number;
+  /**
+   * The lots this receipt covers. A picker appears per file only when there is
+   * more than one — with a single lot there is nothing to choose, and a select
+   * with one option in it is furniture.
+   */
+  lots?: ProofLot[];
   disabled?: boolean;
-}
-
-function readableSize(bytes: number): string {
-  return bytes < 1024 * 1024
-    ? `${Math.max(1, Math.round(bytes / 1024))} KB`
-    : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 /**
@@ -91,7 +116,8 @@ export function acceptProofFiles(
     accepted.push({
       id: `${file.name}-${file.size}-${file.lastModified}-${accepted.length}`,
       file,
-      previewUrl: file.type.startsWith("image/") ? URL.createObjectURL(file) : null,
+      previewUrl: URL.createObjectURL(file),
+      contractId: null,
     });
   }
 
@@ -117,9 +143,21 @@ export function ProofDropzone({
   onFilesChange,
   onReject,
   maxFiles,
+  lots = [],
   disabled = false,
 }: ProofDropzoneProps) {
   const [isDraggingOver, setDraggingOver] = useState(false);
+  /*
+   * Which file is open in the viewer, if any.
+   *
+   * The reason this exists at all: a comprobante arrives as a screenshot among
+   * a dozen others in a chat, and "did I attach the right one?" is a question
+   * with a wrong answer that only surfaces months later, when the payment is
+   * disputed and the slip on file turns out to be somebody else's. Checking it
+   * has to be possible BEFORE the receipt is written, not only after — which
+   * used to mean uploading it, then downloading it again to look.
+   */
+  const [viewing, setViewing] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   /**
@@ -161,6 +199,21 @@ export function ProofDropzone({
 
     onFilesChange(files.filter((entry) => entry.id !== id));
   };
+
+  const assignLot = (id: string, contractId: string | null) =>
+    onFilesChange(
+      files.map((entry) => (entry.id === id ? { ...entry, contractId } : entry)),
+    );
+
+  /** The pending files, as the viewer understands them. */
+  const viewerFiles: ViewerFile[] = files.map((entry) => ({
+    id: entry.id,
+    name: entry.file.name,
+    contentType: entry.file.type,
+    url: entry.previewUrl,
+    caption: lots.find((lot) => lot.contractId === entry.contractId)?.lotCode ?? null,
+    sizeBytes: entry.file.size,
+  }));
 
   return (
     <div className="proof-field">
@@ -229,18 +282,48 @@ export function ProofDropzone({
 
       {files.length > 0 && (
         <ul className="proof-list">
-          {files.map((entry) => (
+          {files.map((entry, at) => (
             <li key={entry.id} className="proof-item">
-              {entry.previewUrl ? (
-                <img src={entry.previewUrl} alt="" className="proof-thumb" />
-              ) : (
-                <span className="proof-thumb proof-thumb-pdf">PDF</span>
-              )}
+              {/* The thumbnail IS the way to look at it. A picture too small to
+                  read is an invitation to click, and clicking one used to do
+                  nothing at all — so the check that mattered never happened. */}
+              <button
+                type="button"
+                className="proof-open"
+                onClick={() => setViewing(entry.id)}
+                title="Ver este comprobante"
+                aria-label={`Ver ${entry.file.name}`}
+              >
+                <DocumentThumb file={viewerFiles[at]!} />
+              </button>
 
               <span className="proof-meta">
-                <span className="proof-name">{entry.file.name}</span>
+                <button
+                  type="button"
+                  className="proof-name link-btn"
+                  onClick={() => setViewing(entry.id)}
+                >
+                  {entry.file.name}
+                </button>
                 <span className="proof-size">{readableSize(entry.file.size)}</span>
               </span>
+
+              {/* Only where there is a choice to make. One lot, no picker. */}
+              {lots.length > 1 && (
+                <select
+                  className="proof-lot"
+                  value={entry.contractId ?? ""}
+                  aria-label={`Lote al que corresponde ${entry.file.name}`}
+                  onChange={(event) => assignLot(entry.id, event.target.value || null)}
+                >
+                  <option value="">Todo el recibo</option>
+                  {lots.map((lot) => (
+                    <option key={lot.contractId} value={lot.contractId}>
+                      {lot.lotCode}
+                    </option>
+                  ))}
+                </select>
+              )}
 
               <button
                 type="button"
@@ -253,6 +336,15 @@ export function ProofDropzone({
             </li>
           ))}
         </ul>
+      )}
+
+      {viewing !== null && (
+        <DocumentViewer
+          files={viewerFiles}
+          startId={viewing}
+          onClose={() => setViewing(null)}
+          onRemove={(file) => remove(file.id)}
+        />
       )}
     </div>
   );
