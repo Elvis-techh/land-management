@@ -74,6 +74,7 @@ import { ApiError } from "./lib/api";
 import type { Currency, MoneyView } from "./lib/money";
 import type { User } from "./lib/permissions";
 import { useLiveUpdates } from "./lib/liveUpdates";
+import { clearShareFromUrl, readShareRequest, takeSharedPayload } from "./lib/sharedIntake";
 import { isMobileViewport } from "./lib/viewport";
 import { can } from "./lib/permissions";
 import type { AreaUnit } from "./lib/area";
@@ -126,6 +127,10 @@ export default function App() {
   // cookie. This is what keeps you signed in after a refresh.
   const [session, setSession] = useState<Session>({ status: "checking" });
 
+  /* Captured on the first render and never re-read: by the time the effect
+     below runs, clearShareFromUrl has taken the marker back out of the URL. */
+  const pendingShare = useRef(readShareRequest(window.location.search));
+
   useEffect(() => {
     authApi
       .me()
@@ -162,6 +167,12 @@ export default function App() {
   const [customerBeingDeleted, setCustomerBeingDeleted] = useState<CustomerRecord | null>(null);
   const [isCreatingContract, setCreatingContract] = useState(false);
   const [isCreatingReceipt, setCreatingReceipt] = useState(false);
+
+  /* Comprobantes handed over by a share, waiting for the form to open with
+     them. Cleared when it closes, so pressing "Nuevo recibo" afterwards does
+     not reopen the form holding somebody else's photo. */
+  const [sharedFiles, setSharedFiles] = useState<File[] | null>(null);
+  const [shareNotice, setShareNotice] = useState<string | null>(null);
   const [receiptBeingVoided, setReceiptBeingVoided] = useState<Receipt | null>(null);
   const [transactionBeingEdited, setTransactionBeingEdited] = useState<Transaction | null>(null);
   const [contractBeingViewed, setContractBeingViewed] = useState<Contract | null>(null);
@@ -301,6 +312,53 @@ export default function App() {
     document.addEventListener("mousedown", handlePointerDown);
     return () => document.removeEventListener("mousedown", handlePointerDown);
   }, [isSidebarOpen, isSignedIn]);
+
+  /*
+   * A comprobante shared from WhatsApp.
+   *
+   * The service worker has already parked it in IndexedDB and redirected here
+   * with its id in the query string; this picks it up, opens the form with the
+   * image attached, and gets out of the way. See lib/sharedIntake.ts.
+   *
+   * Read into a ref on the FIRST render, before anything else can rewrite the
+   * URL, but acted on only once there is a session — sharing into an app you
+   * are signed out of is entirely normal, and the payload has to survive the
+   * login screen rather than being thrown away at the door.
+   */
+  useEffect(() => {
+    const request = pendingShare.current;
+
+    if (!request || session.status !== "signed-in") {
+      return;
+    }
+
+    // Claimed exactly once, whatever happens next. A retry would find nothing
+    // — takeSharedPayload deletes as it reads — and would reopen an empty form
+    // over whatever the user had moved on to.
+    pendingShare.current = null;
+    clearShareFromUrl();
+
+    setActiveTab("receipts");
+    setCreatingReceipt(true);
+
+    if (request === "failed") {
+      setShareNotice("No se pudo leer lo que compartiste. Adjunta el comprobante aquí abajo.");
+      return;
+    }
+
+    void takeSharedPayload(request.id).then((payload) => {
+      if (payload && payload.files.length > 0) {
+        setSharedFiles(payload.files);
+        return;
+      }
+
+      /* Text with no attachment is a real share — a forwarded bank
+         notification, say — and so is a payload that expired. Either way the
+         form is already open on the right screen, which is most of the value;
+         it just has nothing to attach. */
+      setShareNotice("Lo compartido no traía una imagen. Adjunta el comprobante aquí abajo.");
+    });
+  }, [session.status]);
 
   if (session.status === "checking") {
     return <div className="app-booting">Cargando…</div>;
@@ -954,9 +1012,17 @@ export default function App() {
             customers={customersState.customers}
             contracts={contractsState.contracts}
             money={money}
-            onClose={() => setCreatingReceipt(false)}
+            initialFiles={sharedFiles ?? undefined}
+            initialNotice={shareNotice ?? undefined}
+            onClose={() => {
+              setCreatingReceipt(false);
+              setSharedFiles(null);
+              setShareNotice(null);
+            }}
             onIssued={() => {
               setCreatingReceipt(false);
+              setSharedFiles(null);
+              setShareNotice(null);
               // Everything that counts money has to be re-read, not just the
               // receipts: a payment moves the contract's balance, the lot's
               // paid-to-date and the customer's totals, all of which are

@@ -41,6 +41,64 @@ function readableSize(bytes: number): string {
 }
 
 /**
+ * Which of these files may be attached, and what to say about the rest.
+ *
+ * Extracted from the dropzone rather than left inside it because a comprobante
+ * no longer arrives only by drag or file picker: one shared from WhatsApp goes
+ * straight into the form without this component ever rendering (see
+ * lib/sharedIntake.ts). Both paths have to refuse the same files for the same
+ * reasons, and two copies of these rules would drift — the shared path would
+ * quietly start accepting a 40 MB video that the server then rejects, AFTER
+ * the payment has already been recorded.
+ *
+ * Pure, and returns its complaints instead of reporting them, so the caller
+ * decides whether they become a toast, an inline error, or nothing at all.
+ */
+export function acceptProofFiles(
+  incoming: File[],
+  alreadyHeld: number,
+  maxFiles: number,
+): { accepted: PendingProof[]; rejections: string[] } {
+  const accepted: PendingProof[] = [];
+  const rejections: string[] = [];
+
+  for (const file of incoming) {
+    if (alreadyHeld + accepted.length >= maxFiles) {
+      rejections.push(`Puedes adjuntar hasta ${maxFiles} comprobantes por recibo.`);
+      break;
+    }
+
+    // A HEIC straight off an iPhone sometimes arrives with an empty type, so
+    // the extension is accepted as a fallback rather than refusing a file the
+    // server would have taken.
+    const isHeicByName = /\.hei[cf]$/i.test(file.name);
+
+    if (!ACCEPTED.includes(file.type) && !(file.type === "" && isHeicByName)) {
+      rejections.push(`«${file.name}» no es una imagen ni un PDF.`);
+      continue;
+    }
+
+    if (file.size === 0) {
+      rejections.push(`«${file.name}» está vacío.`);
+      continue;
+    }
+
+    if (file.size > MAX_BYTES) {
+      rejections.push(`«${file.name}» pesa ${readableSize(file.size)}; el máximo es 12 MB.`);
+      continue;
+    }
+
+    accepted.push({
+      id: `${file.name}-${file.size}-${file.lastModified}-${accepted.length}`,
+      file,
+      previewUrl: file.type.startsWith("image/") ? URL.createObjectURL(file) : null,
+    });
+  }
+
+  return { accepted, rejections };
+}
+
+/**
  * Drag a screenshot in, or pick one.
  *
  * Built for exactly one gesture: the customer sends the deposit slip on
@@ -74,48 +132,21 @@ export function ProofDropzone({
    */
   const dragDepth = useRef(0);
 
+  const alreadyHeld = files.length;
+
   const accept = (incoming: FileList | null) => {
     if (!incoming || incoming.length === 0) {
       return;
     }
 
-    const next: PendingProof[] = [];
+    const { accepted, rejections } = acceptProofFiles(Array.from(incoming), alreadyHeld, maxFiles);
 
-    for (const file of Array.from(incoming)) {
-      if (files.length + next.length >= maxFiles) {
-        onReject(`Puedes adjuntar hasta ${maxFiles} comprobantes por recibo.`);
-        break;
-      }
-
-      // A HEIC straight off an iPhone sometimes arrives with an empty type, so
-      // the extension is accepted as a fallback rather than refusing a file the
-      // server would have taken.
-      const isHeicByName = /\.hei[cf]$/i.test(file.name);
-
-      if (!ACCEPTED.includes(file.type) && !(file.type === "" && isHeicByName)) {
-        onReject(`«${file.name}» no es una imagen ni un PDF.`);
-        continue;
-      }
-
-      if (file.size === 0) {
-        onReject(`«${file.name}» está vacío.`);
-        continue;
-      }
-
-      if (file.size > MAX_BYTES) {
-        onReject(`«${file.name}» pesa ${readableSize(file.size)}; el máximo es 12 MB.`);
-        continue;
-      }
-
-      next.push({
-        id: `${file.name}-${file.size}-${file.lastModified}-${next.length}`,
-        file,
-        previewUrl: file.type.startsWith("image/") ? URL.createObjectURL(file) : null,
-      });
+    for (const message of rejections) {
+      onReject(message);
     }
 
-    if (next.length > 0) {
-      onFilesChange([...files, ...next]);
+    if (accepted.length > 0) {
+      onFilesChange([...files, ...accepted]);
     }
   };
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Dialog } from "../../components/Dialog";
 import { IconClose } from "../../components/Icons";
@@ -10,7 +10,7 @@ import type { MoneyView } from "../../lib/money";
 import { cents, formatMoney, parseMoneyInput, toMoneyInput } from "../../lib/money";
 import type { Contract, CustomerRecord, Receipt } from "../../types";
 import type { PendingProof } from "./ProofDropzone";
-import { ProofDropzone } from "./ProofDropzone";
+import { ProofDropzone, acceptProofFiles } from "./ProofDropzone";
 import type { ReceiptDraft, ReceiptDraftLine } from "./api";
 import { createReceipt, fetchCustomerSplit, uploadAttachment } from "./api";
 
@@ -20,6 +20,25 @@ interface NewReceiptDialogProps {
   money: MoneyView;
   onClose: () => void;
   onIssued: (receipt: Receipt) => void;
+  /**
+   * Comprobantes the form should open with already attached.
+   *
+   * Set when the dialog was opened by sharing an image from WhatsApp rather
+   * than by pressing "Nuevo recibo" — see lib/sharedIntake.ts. They go through
+   * exactly the same validation the dropzone applies, because the server's
+   * rules do not soften for a file that arrived by a different route.
+   */
+  initialFiles?: File[];
+  /**
+   * A line to show above the form the moment it opens.
+   *
+   * Only used when a share arrived but carried no usable image — the worker
+   * could not read it, or it was text only. It reuses the dialog's own error
+   * line rather than introducing a notification system for one message, and it
+   * is placed there deliberately: somebody who just shared a photo and finds
+   * an empty dropzone needs the explanation where they are already looking.
+   */
+  initialNotice?: string;
 }
 
 type Method = "cash" | "transfer" | "card";
@@ -80,6 +99,8 @@ export function NewReceiptDialog({
   money,
   onClose,
   onIssued,
+  initialFiles,
+  initialNotice,
 }: NewReceiptDialogProps) {
   const [customerId, setCustomerId] = useState("");
   const [paidOn, setPaidOn] = useState(businessToday);
@@ -88,8 +109,17 @@ export function NewReceiptDialog({
   const [note, setNote] = useState("");
   const [totalText, setTotalText] = useState("");
   const [amountByContract, setAmountByContract] = useState<Record<string, string>>({});
-  const [proofs, setProofs] = useState<PendingProof[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  /*
+   * Seeded once, from the lazy initialiser, and deliberately not from an
+   * effect. Creating the object URLs during the first render means the
+   * thumbnail is on screen in the same paint as the form — a share that
+   * appeared to open empty and then filled in a moment later would read as a
+   * glitch on exactly the flow this feature exists to make feel instant.
+   */
+  const [proofs, setProofs] = useState<PendingProof[]>(
+    () => acceptProofFiles(initialFiles ?? [], 0, MAX_PROOFS).accepted,
+  );
+  const [error, setError] = useState<string | null>(initialNotice ?? null);
   const [overpaymentPrompt, setOverpaymentPrompt] = useState<string | null>(null);
   const [splitNote, setSplitNote] = useState<string | null>(null);
   const [isSplitting, setSplitting] = useState(false);
@@ -115,17 +145,27 @@ export function NewReceiptDialog({
 
   const isMultiLot = payable.length > 1;
 
-  // Object URLs live until revoked. Leaving the form with images still attached
-  // would otherwise hold every one of them in memory for the life of the page.
+  /*
+   * Object URLs live until revoked, so the form releases them when it closes.
+   *
+   * Through a ref rather than reading `proofs` directly. An unmount cleanup
+   * with an empty dependency array closes over the FIRST render's value — an
+   * empty array here — so the previous version revoked nothing at all and
+   * every attached image stayed in memory for the life of the page. The ref is
+   * re-pointed on every render, so the cleanup always sees what is actually
+   * held at the moment of closing.
+   */
+  const proofsRef = useRef(proofs);
+  proofsRef.current = proofs;
+
   useEffect(() => {
     return () => {
-      for (const proof of proofs) {
+      for (const proof of proofsRef.current) {
         if (proof.previewUrl) {
           URL.revokeObjectURL(proof.previewUrl);
         }
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const lines: ReceiptDraftLine[] = useMemo(() => {

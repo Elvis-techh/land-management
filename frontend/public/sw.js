@@ -60,15 +60,138 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(self.clients.claim());
 });
 
-/*
- * Empty on purpose. See the top of this file.
+/* ==========================================================================
+ * The share target.
  *
- * The listener must exist — Chrome checks for a registered `fetch` handler when
- * deciding whether the app is installable — but it must not answer. Returning
- * without calling `event.respondWith()` hands the request straight to the
- * network, which is the behaviour of a page with no worker at all.
+ * Sharing a comprobante from WhatsApp arrives here as a POST to /compartir,
+ * made by the BROWSER on another app's behalf. Two things about that shape the
+ * code below.
+ *
+ * First, it must not go to the server. A share POST is a cross-app navigation,
+ * and a `SameSite=Lax` session cookie is not reliably attached to it — so the
+ * upload would arrive unauthenticated and be refused. Handling it here keeps
+ * the request on the device entirely; the 303 that follows is an ordinary
+ * same-origin GET, which carries the session normally.
+ *
+ * Second, a redirect cannot carry a file. So the file is parked in IndexedDB
+ * under a one-time id and the redirect carries only that id. The page picks it
+ * up and deletes it — see src/lib/sharedIntake.ts.
+ * ========================================================================== */
+
+const SHARE_PATH = "/compartir";
+const DB_NAME = "lindero-share";
+const DB_VERSION = 1;
+const STORE = "incoming";
+
+/* A share left unclaimed — the redirect never followed, the app force-closed —
+ * would otherwise sit in IndexedDB holding a photo forever. Anything older than
+ * this is swept on the next share. Generous, because the only cost of keeping
+ * one too long is a few megabytes, while sweeping one too early loses a
+ * customer's proof of payment. */
+const STALE_AFTER_MS = 24 * 60 * 60 * 1000;
+
+function openDatabase() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains(STORE)) {
+        request.result.createObjectStore(STORE, { keyPath: "id" });
+      }
+    };
+
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+function storePayload(db, payload) {
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(STORE, "readwrite");
+    const store = transaction.objectStore(STORE);
+
+    store.put(payload);
+
+    // Sweep stale entries inside the SAME transaction, so a share is never
+    // half-written next to a half-deleted one.
+    const cursorRequest = store.openCursor();
+
+    cursorRequest.onsuccess = () => {
+      const cursor = cursorRequest.result;
+
+      if (!cursor) {
+        return;
+      }
+
+      if (payload.receivedAt - (cursor.value.receivedAt ?? 0) > STALE_AFTER_MS) {
+        cursor.delete();
+      }
+
+      cursor.continue();
+    };
+
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error);
+  });
+}
+
+async function receiveShare(request) {
+  const id =
+    self.crypto && typeof self.crypto.randomUUID === "function"
+      ? self.crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+  try {
+    const form = await request.formData();
+
+    /* `getAll`, not `get`: WhatsApp can share several images at once, and the
+     * manifest declares the field so the browser may deliver more than one.
+     * Empty entries are filtered because some Android builds include a
+     * zero-byte placeholder when the user shares text with no attachment. */
+    const files = form.getAll("comprobante").filter((entry) => entry instanceof File && entry.size > 0);
+
+    /* Text matters as much as the files. Plenty of confirmations arrive as a
+     * forwarded message rather than a screenshot — the BAC notification, for
+     * one — and the reference number is in that text. It is carried through
+     * even though nothing reads it yet, because dropping it here would mean
+     * the share had to be repeated later to get it back. */
+    const text = String(form.get("text") ?? "");
+    const title = String(form.get("title") ?? "");
+
+    const database = await openDatabase();
+
+    await storePayload(database, { id, files, text, title, receivedAt: Date.now() });
+    database.close();
+
+    return Response.redirect(`/?compartido=${encodeURIComponent(id)}`, 303);
+  } catch (error) {
+    /* Land in the app regardless, with a flag rather than a payload.
+     *
+     * The alternative is an error page owned by nobody, reached from inside
+     * WhatsApp, on a phone. Better to open Lindero and say the share did not
+     * arrive — from there the file is still in the chat, and the dropzone is
+     * two taps away. */
+    return Response.redirect("/?compartido=error", 303);
+  }
+}
+
+/*
+ * One branch, and everything else falls through to the network.
+ *
+ * The listener must exist even for requests it ignores — Chrome checks for a
+ * registered `fetch` handler when deciding whether the app is installable.
+ * Returning without calling `event.respondWith()` hands the request straight to
+ * the network, which is the behaviour of a page with no worker at all.
  */
-self.addEventListener("fetch", () => {
-  // Intentionally does nothing. Phase 2 adds ONE branch here, for the share
-  // target POST, and leaves everything else falling through to the network.
+self.addEventListener("fetch", (event) => {
+  if (event.request.method !== "POST") {
+    return;
+  }
+
+  const url = new URL(event.request.url);
+
+  if (url.origin === self.location.origin && url.pathname === SHARE_PATH) {
+    event.respondWith(receiveShare(event.request));
+  }
 });
