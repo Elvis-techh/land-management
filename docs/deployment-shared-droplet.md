@@ -200,14 +200,37 @@ sudo git clone https://github.com/Elvis-techh/land-management.git /opt/lindero
 sudo chown -R lindero:lindero /opt/lindero
 
 cd /opt/lindero
-sudo -u lindero /opt/node22/bin/npm ci --omit=dev
-sudo -u lindero mkdir -p backend/data backend/backups
+sudo -u lindero -H env "PATH=/opt/node22/bin:$PATH" /opt/node22/bin/npm ci --omit=dev
+sudo -u lindero -H mkdir -p backend/data backend/backups
 ```
 
-`npm ci --omit=dev` run through `/opt/node22/bin/npm` is what makes
-`better-sqlite3` fetch (or build) a binary for the right Node. If it falls back
-to compiling, `sudo apt install -y python3 build-essential` first; the swap from
-step 2 is what lets that finish.
+**`PATH` is not optional here, and naming `/opt/node22/bin/npm` is not enough.**
+That file is a symlink to `npm-cli.js`, whose shebang is `#!/usr/bin/env node`
+— so it does not run under the Node beside it, it asks `PATH` for "node" and
+finds bascula-central's v20. npm then reports `EBADENGINE ... current: node
+v20.20.2`, node-gyp fetches v20 headers, and because `better-sqlite3@13`
+requires Node >=22 it publishes no prebuilt binary for that ABI, so the install
+falls back to compiling from source. Putting `/opt/node22/bin` first fixes all
+of it. **If you see any `EBADENGINE` warning, stop** — the binary that install
+produces is for the wrong ABI and the service will fail to load it.
+
+`-H` matters too: without it npm can inherit root's `HOME` and try to write its
+cache to `/root/.npm`, failing with an error that reads like a network problem.
+
+Install the toolchain first anyway, as insurance for the times a prebuilt
+binary genuinely is unavailable; the swap from step 2 is what lets a compile
+finish:
+
+```bash
+sudo apt install -y python3 build-essential
+```
+
+Then prove the native module matches the interpreter that will run it:
+
+```bash
+sudo -u lindero -H /opt/node22/bin/node \
+  -e "require('/opt/lindero/node_modules/better-sqlite3'); console.log('ok')"
+```
 
 ### 5. `backend/.env`
 
@@ -405,8 +428,8 @@ rsync -av --delete backend/dist/  root@<IP>:/opt/lindero/backend/dist/
 
 # droplet
 cd /opt/lindero
-sudo -u lindero git pull
-sudo -u lindero /opt/node22/bin/npm ci --omit=dev
+sudo -u lindero -H git pull
+sudo -u lindero -H env "PATH=/opt/node22/bin:$PATH" /opt/node22/bin/npm ci --omit=dev
 sudo systemctl restart lindero-api        # migrations run on restart
 ```
 
