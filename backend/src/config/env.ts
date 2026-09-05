@@ -32,7 +32,7 @@ export type AppConfig = {
    * lets a visitor pick their own bucket by forging a header (`true`,
    * without a proxy actually enforcing what reaches this process).
    */
-  trustProxy: boolean | number | string;
+  trustProxy: boolean | string;
   /**
    * The timezone the BUSINESS keeps its calendar in — an IANA name.
    *
@@ -70,15 +70,25 @@ const DEVELOPMENT_COOKIE_SECRET = "lindero-development-cookie-secret-change-me";
 /**
  * `false` (unset) trusts nothing: `request.ip` is the direct TCP peer, which
  * is correct with no proxy in front — local development, or a server reached
- * directly. A bare number is how many proxy hops to trust, counted back from
- * that peer; one Nginx or Caddy on the same host in front of this process is
- * `1`. A string (or `"ip,ip/cidr"`) pins trust to that proxy's own address
- * instead of merely counting hops, which still protects `request.ip` if this
- * process is ever reachable directly — Fastify's own deployment guide
- * recommends this over a bare count. `true` trusts every hop in whatever
- * `X-Forwarded-For` chain arrives, including a prefix an attacker attached
- * themselves; only use it if nothing can reach this process except through
- * one proxy you control.
+ * directly. A string (or `"ip,ip/cidr"`) pins trust to the proxy's own
+ * address, which still protects `request.ip` if this process is ever
+ * reachable directly. `true` trusts every hop in whatever `X-Forwarded-For`
+ * chain arrives, including a prefix an attacker attached themselves; only use
+ * it if nothing can reach this process except through one proxy you control.
+ *
+ * A BARE NUMBER IS REFUSED, and that is a deliberate narrowing rather than an
+ * oversight. Counting hops back from the peer says nothing about who that peer
+ * is, so a request arriving directly — this port reachable without passing
+ * Nginx — has its own forged `X-Forwarded-For` counted as the trusted hop, and
+ * `request.ip` becomes whatever the caller wrote. That is CVE GHSA-3m5p-2c4r-
+ * xxw2, and Fastify 5.12.3 removed the form from its own types in response. It
+ * matters here because `request.ip` is what the login rate limit counts and
+ * what the audit trail records: a spoofable one turns "10 attempts a minute"
+ * into no limit at all, and signs somebody else's address to an action.
+ *
+ * Throwing rather than quietly substituting a safe value is the point. This is
+ * read once at boot, and a security setting that silently does something other
+ * than what the operator wrote is worse than one that refuses to start.
  */
 function parseTrustProxy(raw: string | undefined): AppConfig["trustProxy"] {
   if (raw === undefined || raw.trim() === "") {
@@ -93,7 +103,15 @@ function parseTrustProxy(raw: string | undefined): AppConfig["trustProxy"] {
     return false;
   }
 
-  return /^\d+$/.test(raw) ? Number(raw) : raw;
+  if (/^\d+$/.test(raw)) {
+    throw new Error(
+      `TRUST_PROXY=${raw} counts proxy hops, which is spoofable if this port ` +
+        "is ever reachable without passing the proxy. Name the proxy instead " +
+        "— TRUST_PROXY=127.0.0.1 for an Nginx on the same host.",
+    );
+  }
+
+  return raw;
 }
 
 export function loadConfig(environment = process.env): AppConfig {
