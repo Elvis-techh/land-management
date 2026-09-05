@@ -33,6 +33,57 @@ Stated first, because scope creep here costs money rather than time.
   covered; if iPhone support is ever needed the intake half is replaced by an
   iOS Shortcut posting to the same endpoint, and nothing else changes.
 
+## Revised order (decided 2026-09-05, after Phase 0 shipped)
+
+The AI phases are **deferred, not cancelled**, at Elvis's call: under ~100
+receipts a month, reading an amount and typing it is cheap, and the extractor
+is worth building when there is enough real data to prove it works.
+
+| Phase | Status |
+|---|---|
+| 0 — HTTPS, domain, first deploy | **Done.** Enviar verified on Android and Linux. |
+| 1 — PWA, installable | Build now |
+| 2 — Share target into the prefilled dialog | Build now — *the one that changes the day* |
+| 5a — Duplicate-reference warning | Build now, promoted from Phase 5 |
+| 3 — AI extraction | Deferred |
+| 4 — Wiring extraction into the dialog | Deferred with it |
+| 5b — Provenance table | Deferred with it |
+
+Two things about that deferral are worth being exact about, because both were
+initially misunderstood and both change what gets built.
+
+**Duplicate detection is not an AI feature.** Asking whether a confirmation
+number is already in the ledger is an exact match against `payments.reference`
+— instant, free, and exactly right. AI's only contribution would be reading the
+number off the photo so nobody types it. Those are separate jobs and only the
+first one is deferred. The check ships now.
+
+It needs a fallback, because plenty of confirmations carry no reference at all
+— the "Envío confirmado" screenshot has no number, no date and no payer. Where
+there is no reference, warn on customer + amount + date instead: softer, more
+false alarms, but it is the combination that actually bit (two L 7,000.00
+payments to the same account on 29/08/2026, hours apart).
+
+**The model does not learn from these receipts.** Every API call starts from
+zero and nothing sent to it improves it. An extractor with no mechanism behind
+it reads exactly as well in year three as on day one. What accumulates is built
+deliberately:
+
+- *A labelled test set, for free.* Every shared comprobante is stored as an
+  attachment, and the amount and reference a human typed sit beside it on the
+  payment. Image plus verified answer. Two hundred of those make it possible to
+  *measure* whether a change to the extractor helps — which seven images cannot.
+- *Examples in the prompt.* A new bank format that reads badly gets added to the
+  instructions. This is the actual mechanism behind "it handles the odd ones
+  better over time".
+- *A known-payers table.* Told once that a particular sender pays for a
+  particular contract, remembered permanently — a database row, not model
+  memory.
+
+So Phase 2 builds Phase 3's foundation at no cost, from the first shared
+receipt. That is the strongest argument for this ordering: waiting does not
+just defer the bill, it buys a materially better extractor.
+
 ## Ground rules for building this without breaking anything
 
 1. **Work on `feat/comprobante-intake`, never on `main`.** Each phase below is
