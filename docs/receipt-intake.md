@@ -42,12 +42,16 @@ is worth building when there is enough real data to prove it works.
 | Phase | Status |
 |---|---|
 | 0 — HTTPS, domain, first deploy | **Done.** Enviar verified on Android and Linux. |
-| 1 — PWA, installable | Build now |
-| 2 — Share target into the prefilled dialog | Build now — *the one that changes the day* |
-| 5a — Duplicate-reference warning | Build now, promoted from Phase 5 |
+| 1 — PWA, installable | **Done.** Installed on Android from the home screen. |
+| 2 — Share target into the prefilled dialog | **Done.** WhatsApp → share → form opens with the image attached. |
+| 5a — Duplicate warning | **Done.** By reference, and by customer/date/total where there is none. |
 | 3 — AI extraction | Deferred |
 | 4 — Wiring extraction into the dialog | Deferred with it |
 | 5b — Provenance table | Deferred with it |
+
+**This round is complete.** What remains before real use: wipe the droplet's
+test data and bootstrap the real first account (see "Your data question" —
+`rm` the database, uploads, and re-run `dist/db/bootstrap.js`).
 
 Two things about that deferral are worth being exact about, because both were
 initially misunderstood and both change what gets built.
