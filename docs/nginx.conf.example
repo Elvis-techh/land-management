@@ -76,6 +76,22 @@ server {
         try_files $uri $uri/ /index.html;
     }
 
+    # nginx's packaged mime.types has no entry for .webmanifest, so without
+    # this the manifest is served as application/octet-stream and the browser
+    # may refuse to treat the app as installable — which would take the
+    # WhatsApp share target with it, since the OS share sheet only lists
+    # installed apps.
+    #
+    # Deliberately `default_type` in an exact-match location rather than a
+    # `types { }` block. A `types` block at server level REPLACES the inherited
+    # map instead of extending it, so adding one entry would silently strip the
+    # types for CSS, JavaScript and images — a much larger breakage than the
+    # one being fixed. `default_type` only applies where the extension is
+    # unknown, which is exactly this case.
+    location = /manifest.webmanifest {
+        default_type application/manifest+json;
+    }
+
     # Everything the API needs — including downloading a receipt's proof of
     # payment — goes through this one block. There is deliberately no
     # separate `location` serving UPLOADS_PATH as static files: attachments

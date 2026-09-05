@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 
 import App from "./App";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { registerServiceWorker } from "./lib/serviceWorker";
 import "./styles.css";
 
 const rootElement = document.getElementById("root");
@@ -10,6 +11,13 @@ const rootElement = document.getElementById("root");
 if (!rootElement) {
   throw new Error("No se encontró el elemento #root en index.html");
 }
+
+/*
+ * Before rendering, and deliberately not awaited: registration is fire-and-
+ * forget, defers its own work to the `load` event, and nothing on screen
+ * depends on whether it succeeds. See lib/serviceWorker.ts.
+ */
+registerServiceWorker();
 
 createRoot(rootElement).render(
   <StrictMode>

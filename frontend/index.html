@@ -5,6 +5,18 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Lindero</title>
+
+  <!-- Makes the app installable to a phone's home screen, which is what the
+       WhatsApp share target needs: the OS share sheet only lists installed
+       apps. See public/manifest.webmanifest and docs/receipt-intake.md. -->
+  <link rel="manifest" href="/manifest.webmanifest">
+  <!-- Tints the Android status bar to match the page behind it. Same value as
+       --paper in styles.css, which is the body background. -->
+  <meta name="theme-color" content="#FCF9F5">
+  <!-- iOS ignores the manifest's icons. It cannot install a share target
+       either, so this is only so a home-screen bookmark looks right. -->
+  <link rel="apple-touch-icon" href="/icons/icon-192.png">
+
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link
