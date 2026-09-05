@@ -546,6 +546,183 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
     },
   );
 
+  /**
+   * Has this payment already been recorded?
+   *
+   * Answered BEFORE the receipt is issued, so the person at the keyboard can
+   * decide, rather than after — a duplicate payment is not something an error
+   * message can undo. It is reported, never enforced: a customer paying the
+   * same amount twice in a day is unusual but entirely legal, and a check that
+   * blocked it would be wrong more often than the mistake it prevents.
+   *
+   * A DUPLICATE IS A RECEIPT, NOT A PAYMENT, and that distinction is the whole
+   * reason this is not a one-line query. One receipt carries one reference and
+   * splits across as many lines as the customer has lots — so L 30,000 across
+   * three lots is three payments of L 10,000, same customer, same date, same
+   * reference. Compared payment by payment, every multi-lot receipt in the
+   * database would report itself as three duplicates of itself.
+   *
+   * Two questions, because real comprobantes fall into two kinds:
+   *
+   *  - BY REFERENCE, the strong signal. The bank's confirmation number is
+   *    unique to a transaction, so a second one carrying it is the same money
+   *    arriving twice. This is the one worth trusting.
+   *  - BY CUSTOMER, DATE AND TOTAL, for the confirmations that carry no
+   *    reference at all — a BAC agent slip names no depositor, and a remittance
+   *    app's "Envío confirmado" screenshot has no number, no date and no payer.
+   *    Weaker and noisier, but it is the shape that actually caused trouble:
+   *    two payments of L 7,000.00 to the same account on 2026-08-29, hours
+   *    apart, which nothing about the amount or the day can tell apart.
+   *
+   * A receipt already reversed or voided is still reported. "You entered this
+   * and then cancelled it" is exactly what somebody about to enter it again
+   * needs to know, and hiding it would make the second entry look novel.
+   *
+   * No index on `payments.reference` yet, deliberately. A reference match is a
+   * table scan, which on a few thousand payments SQLite does in well under a
+   * millisecond; add `index("payments_reference_idx")` when this database holds
+   * tens of thousands of rows, not before.
+   */
+  app.get<{
+    Querystring: {
+      reference?: string;
+      customerId?: string;
+      paidOn?: string;
+      amountCents?: string;
+    };
+  }>("/receipts/duplicates", { onRequest: app.requireUser }, async (request) => {
+    const reference = (request.query.reference ?? "").trim();
+    const customerId = (request.query.customerId ?? "").trim();
+    const paidOn = (request.query.paidOn ?? "").trim();
+    const amountCents = Number(request.query.amountCents);
+
+    const wantsAmountCheck =
+      customerId !== "" &&
+      /^\d{4}-\d{2}-\d{2}$/.test(paidOn) &&
+      Number.isInteger(amountCents) &&
+      amountCents > 0;
+
+    if (reference === "" && !wantsAmountCheck) {
+      return { matches: [] };
+    }
+
+    /** Every payment that could belong to a match, with its context. */
+    const candidates = (where: ReturnType<typeof eq> | ReturnType<typeof and>) =>
+      app.db
+        .select({
+          paymentId: payments.id,
+          receiptId: payments.receiptId,
+          amountCents: payments.amountCents,
+          paidOn: payments.paidOn,
+          reference: payments.reference,
+          reversedAt: payments.reversedAt,
+          receiptCode: receipts.code,
+          receiptVoidedAt: receipts.voidedAt,
+          customerName: customers.fullName,
+          lotCode: lots.code,
+        })
+        .from(payments)
+        .innerJoin(contracts, eq(contracts.id, payments.contractId))
+        .innerJoin(lots, eq(lots.id, contracts.lotId))
+        .innerJoin(customers, eq(customers.id, contracts.customerId))
+        .leftJoin(receipts, eq(receipts.id, payments.receiptId))
+        .where(where)
+        .all();
+
+    type Row = ReturnType<typeof candidates>[number];
+
+    /**
+     * Fold payments into the receipts they belong to.
+     *
+     * Keyed by receipt, falling back to the payment's own id for the payments
+     * that have none — money recorded without issuing a document is real and
+     * counts in every balance, so it must be able to report a duplicate too.
+     */
+    const fold = (rows: Row[], reason: "reference" | "amount") => {
+      const grouped = new Map<
+        string,
+        {
+          reason: "reference" | "amount";
+          receiptId: string | null;
+          receiptCode: string | null;
+          paidOn: string;
+          amountCents: number;
+          reference: string | null;
+          customerName: string;
+          lotCodes: string[];
+          /** Voided as a document, or every one of its payments reversed. */
+          cancelled: boolean;
+        }
+      >();
+
+      for (const row of rows) {
+        const key = row.receiptId ?? `payment:${row.paymentId}`;
+        const existing = grouped.get(key);
+
+        // Reversed money is excluded from the total but not from the report:
+        // the receipt still shows up, marked cancelled.
+        const live = row.reversedAt === null ? row.amountCents : 0;
+
+        if (!existing) {
+          grouped.set(key, {
+            reason,
+            receiptId: row.receiptId,
+            receiptCode: row.receiptCode,
+            paidOn: row.paidOn,
+            amountCents: live,
+            reference: row.reference,
+            customerName: row.customerName,
+            lotCodes: [row.lotCode],
+            cancelled: row.receiptVoidedAt !== null || row.reversedAt !== null,
+          });
+
+          continue;
+        }
+
+        existing.amountCents += live;
+        existing.lotCodes.push(row.lotCode);
+        // Cancelled only when EVERY line is: a receipt with one reversed line
+        // out of three is still a live receipt.
+        existing.cancelled = existing.cancelled && (row.reversedAt !== null);
+      }
+
+      return [...grouped.values()];
+    };
+
+    const byReference =
+      reference === ""
+        ? []
+        : fold(
+            candidates(sql`lower(trim(${payments.reference})) = lower(trim(${reference}))`),
+            "reference",
+          );
+
+    let byAmount: ReturnType<typeof fold> = [];
+
+    if (wantsAmountCheck) {
+      // Narrow in SQL to one customer on one day, then compare receipt TOTALS
+      // in memory. The comparison cannot be pushed into the WHERE clause: the
+      // figure being matched is a sum across a receipt's lines, not a column.
+      const sameDay = fold(
+        candidates(and(eq(contracts.customerId, customerId), eq(payments.paidOn, paidOn))!),
+        "amount",
+      );
+
+      byAmount = sameDay.filter((match) => match.amountCents === amountCents);
+    }
+
+    // A receipt matching on both is one finding, reported under the stronger
+    // reason. Listing it twice would read as two separate prior payments.
+    const seen = new Set(byReference.map((match) => match.receiptId ?? match.receiptCode));
+
+    return {
+      matches: [
+        ...byReference,
+        ...byAmount.filter((match) => !seen.has(match.receiptId ?? match.receiptCode)),
+      ],
+    };
+  });
+
   app.get<{ Params: { id: string } }>(
     "/receipts/:id",
     { onRequest: app.requireUser },

@@ -266,3 +266,59 @@ export async function voidReceipt(receiptId: string, reason: string): Promise<Re
 
   return toReceipt(response.receipt);
 }
+
+/** One receipt that may be this payment, already recorded. */
+export interface DuplicateMatch {
+  /**
+   * Why this turned up. `reference` is the bank's own confirmation number and
+   * is close to proof; `amount` is a coincidence of customer, day and total,
+   * which is a real signal but also a real source of false alarms.
+   */
+  reason: "reference" | "amount";
+  receiptId: string | null;
+  receiptCode: string | null;
+  paidOn: string;
+  amountCents: number;
+  reference: string | null;
+  customerName: string;
+  lotCodes: string[];
+  /** Voided, or every one of its payments reversed. Still worth showing. */
+  cancelled: boolean;
+}
+
+/**
+ * Ask whether this payment is already in the ledger.
+ *
+ * A question, never a verdict — the answer is shown to whoever is filling in
+ * the form and they decide. Deliberately cheap to call and safe to call often:
+ * with neither a reference nor a complete customer/date/amount, the server
+ * returns an empty list without touching the payments table.
+ */
+export async function fetchDuplicates(query: {
+  reference?: string;
+  customerId?: string;
+  paidOn?: string;
+  amountCents?: number;
+}): Promise<DuplicateMatch[]> {
+  const search = new URLSearchParams();
+
+  if (query.reference && query.reference.trim() !== "") {
+    search.set("reference", query.reference.trim());
+  }
+
+  if (query.customerId && query.paidOn && query.amountCents && query.amountCents > 0) {
+    search.set("customerId", query.customerId);
+    search.set("paidOn", query.paidOn);
+    search.set("amountCents", String(query.amountCents));
+  }
+
+  if ([...search.keys()].length === 0) {
+    return [];
+  }
+
+  const response = await api.get<{ matches: DuplicateMatch[] }>(
+    `/api/receipts/duplicates?${search.toString()}`,
+  );
+
+  return response.matches;
+}

@@ -12,7 +12,8 @@ import type { Contract, CustomerRecord, Receipt } from "../../types";
 import type { PendingProof } from "./ProofDropzone";
 import { ProofDropzone, acceptProofFiles } from "./ProofDropzone";
 import type { ReceiptDraft, ReceiptDraftLine } from "./api";
-import { createReceipt, fetchCustomerSplit, uploadAttachment } from "./api";
+import { createReceipt, fetchCustomerSplit, fetchDuplicates, uploadAttachment } from "./api";
+import type { DuplicateMatch } from "./api";
 
 interface NewReceiptDialogProps {
   customers: CustomerRecord[];
@@ -120,6 +121,7 @@ export function NewReceiptDialog({
     () => acceptProofFiles(initialFiles ?? [], 0, MAX_PROOFS).accepted,
   );
   const [error, setError] = useState<string | null>(initialNotice ?? null);
+  const [duplicates, setDuplicates] = useState<DuplicateMatch[]>([]);
   const [overpaymentPrompt, setOverpaymentPrompt] = useState<string | null>(null);
   const [splitNote, setSplitNote] = useState<string | null>(null);
   const [isSplitting, setSplitting] = useState(false);
@@ -144,6 +146,9 @@ export function NewReceiptDialog({
   );
 
   const isMultiLot = payable.length > 1;
+
+  /** Near-proof, rather than a coincidence of amount and day. */
+  const hasReferenceMatch = duplicates.some((match) => match.reason === "reference");
 
   /*
    * Object URLs live until revoked, so the form releases them when it closes.
@@ -191,6 +196,63 @@ export function NewReceiptDialog({
   }, [payable, amountByContract]);
 
   const total = lines.reduce((sum, line) => sum + line.amountCents, 0);
+
+  /*
+   * Is this payment already in the ledger?
+   *
+   * Asked while the form is being filled in rather than when it is submitted,
+   * because a duplicate payment is not something an error afterwards can undo —
+   * it has a receipt, it moved a balance, and unwinding it means a reversal
+   * that will be visible in the customer's history forever. The point is to be
+   * told BEFORE, while changing your mind is free.
+   *
+   * Debounced, because a confirmation number is long and this would otherwise
+   * fire on every keystroke of it. 400ms is after a pause in typing but before
+   * the hand reaches the next field.
+   *
+   * A failure is swallowed on purpose. This is an advisory question, and an
+   * error banner because a helpful check could not run would be worse than the
+   * check silently not running — the receipt itself is unaffected either way.
+   */
+  useEffect(() => {
+    const trimmedReference = reference.trim();
+    const canAskByAmount = customerId !== "" && total > 0;
+
+    if (trimmedReference === "" && !canAskByAmount) {
+      setDuplicates([]);
+
+      return;
+    }
+
+    let abandoned = false;
+
+    const timer = setTimeout(() => {
+      void fetchDuplicates({
+        reference: trimmedReference,
+        customerId,
+        paidOn,
+        amountCents: total,
+      })
+        .then((matches) => {
+          // The answer to a question the form has since moved on from must not
+          // land: without this, an answer for an old amount can arrive after a
+          // newer request and overwrite it.
+          if (!abandoned) {
+            setDuplicates(matches);
+          }
+        })
+        .catch(() => {
+          if (!abandoned) {
+            setDuplicates([]);
+          }
+        });
+    }, 400);
+
+    return () => {
+      abandoned = true;
+      clearTimeout(timer);
+    };
+  }, [reference, customerId, paidOn, total]);
 
   /**
    * Divide the typed total across everything this customer is paying on.
@@ -538,6 +600,37 @@ export function NewReceiptDialog({
           </div>
         )}
       </div>
+
+      {duplicates.length > 0 && (
+        /*
+         * Red when the bank's own confirmation number matches, amber when it is
+         * only customer, day and total. The second is a genuine signal — it is
+         * the shape of the two L 7,000 payments hours apart that caused trouble
+         * — but it is also how a customer paying the same installment twice in
+         * a day looks, so it must not shout as loudly as near-proof does.
+         */
+        <div className={hasReferenceMatch ? "form-warning" : "form-blocked"}>
+          <strong>
+            {hasReferenceMatch
+              ? "Ese número de confirmación ya está registrado."
+              : "Ya hay un recibo de este cliente por el mismo monto y la misma fecha."}
+          </strong>
+          <ul className="duplicate-matches">
+            {duplicates.map((match) => (
+              <li key={match.receiptId ?? `${match.paidOn}-${match.amountCents}`}>
+                {match.receiptCode ? `Recibo ${match.receiptCode}` : "Pago sin recibo"}
+                {" · "}
+                {formatMoney(cents(match.amountCents), money)}
+                {" · "}
+                {match.paidOn}
+                {match.lotCodes.length > 0 && ` · ${match.lotCodes.join(", ")}`}
+                {match.cancelled && " · ANULADO"}
+              </li>
+            ))}
+          </ul>
+          Revísalo antes de continuar. Si de verdad es un segundo pago, puedes registrarlo igual.
+        </div>
+      )}
 
       <div className="modal-actions">
         <button type="button" className="btn-secondary" onClick={onClose} disabled={isSaving}>

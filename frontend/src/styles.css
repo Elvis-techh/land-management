@@ -6798,3 +6798,19 @@ button.dash-tile.is-open {
     height: 34px;
   }
 }
+
+/* The receipts that may already be this payment, listed inside the duplicate
+   warning. Compact and unbulleted: it is evidence to scan, not prose to read,
+   and it sits inside a box that has already said what it means. */
+.duplicate-matches {
+  margin: 8px 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.duplicate-matches li {
+  font-size: 0.8125rem;
+}
