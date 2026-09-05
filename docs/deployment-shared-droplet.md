@@ -391,18 +391,76 @@ missing rules.
 
 ### 11. Backups, off the machine
 
+**This unit needs the same interpreter drop-in as step 7, for the same reason
+— and forgetting it here is much quieter.** `lindero-api.service` fails to
+start and you find out in seconds; this one runs at 02:15, so `better-sqlite3`
+built for a different Node ABI surfaces as backups that have silently not
+happened for a month.
+
+Create the Space and its credentials first, in the DigitalOcean panel: a
+**private** Space (`lindero-backups`, same region as the droplet), and a
+**separate Spaces access key** from bascula-central's. One leaked key must not
+expose both businesses' records. If they must share a bucket, at least give
+Lindero its own prefix.
+
+```bash
+sudo apt install -y rclone
+
+sudo -u lindero -H tee /opt/lindero/backend/rclone.conf >/dev/null <<'EOF'
+[spaces]
+type = s3
+provider = DigitalOcean
+endpoint = nyc3.digitaloceanspaces.com
+acl = private
+EOF
+
+sudo -u lindero -H rclone --config /opt/lindero/backend/rclone.conf \
+  config update spaces access_key_id <KEY> secret_access_key <SECRET>
+
+sudo chmod 600 /opt/lindero/backend/rclone.conf   # it holds the secret key
+```
+
 ```bash
 sudo cp /opt/lindero/deploy/lindero-backup.{service,timer} /etc/systemd/system/
+sudo mkdir -p /etc/systemd/system/lindero-backup.service.d
+```
+
+`/etc/systemd/system/lindero-backup.service.d/droplet.conf`:
+
+```ini
+[Service]
+# As in step 7: the unit ships /usr/bin/node, which here is bascula-central's.
+ExecStart=
+ExecStart=/opt/node22/bin/node scripts/backup.mjs
+
+# The unit ships this line commented out. Setting it here keeps the shipped
+# file generic and puts the destination with the rest of this droplet's
+# specifics.
+ExecStartPost=/usr/bin/rclone --config /opt/lindero/backend/rclone.conf copy /opt/lindero/backend/backups spaces:lindero-backups
+```
+
+```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now lindero-backup.timer
 sudo systemctl start lindero-backup
+journalctl -u lindero-backup -n 30 --no-pager
 ls -la /opt/lindero/backend/backups
 ```
 
-Then uncomment the `ExecStartPost` rclone line in the service and point it at
-Spaces. Prefer a **separate access key and bucket** from bascula-central's: one
-leaked key should not expose both businesses' records. If they must share a
-bucket, at least give Lindero its own prefix.
+**Then prove the copy left the machine.** This is the step people skip, and the
+only one that decides whether you have backups:
+
+```bash
+sudo -u lindero -H rclone --config /opt/lindero/backend/rclone.conf ls spaces:lindero-backups
+```
+
+A `.db` listed there is a backup. An empty result means a nightly job writing
+files onto the same disk as the database it is meant to protect, which survives
+nothing that actually happens to disks.
+
+`readonly: true` in `scripts/backup.mjs` is what lets this run under
+`ProtectSystem=strict` with only `backups/` writable — `VACUUM INTO` reads the
+live database and writes a defragmented copy elsewhere, with no downtime.
 
 ### 12. Verify both applications
 

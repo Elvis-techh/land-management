@@ -16,6 +16,18 @@ User=lindero
 Group=lindero
 WorkingDirectory=/opt/lindero/backend
 EnvironmentFile=-/opt/lindero/backend/.env
+
+# /usr/bin/node is correct where Lindero has the machine to itself and the
+# system Node is 22+. It is WRONG on a droplet shared with an application
+# pinned to an older Node, where deployment-shared-droplet.md installs 22
+# separately and leaves /usr/bin/node alone — there, override this with a
+# drop-in exactly as lindero-api.service does.
+#
+# Getting it wrong here is quieter than getting it wrong on the API. The API
+# fails to start and you see it immediately; this unit only runs at 02:15, so
+# a better-sqlite3 built for a different Node ABI surfaces as a backup that
+# has silently not happened for weeks. Run `systemctl start lindero-backup`
+# once by hand after install and read the log — that is the whole check.
 ExecStart=/usr/bin/node scripts/backup.mjs
 
 # Uncomment once an off-machine destination is set up — a backup that only ever

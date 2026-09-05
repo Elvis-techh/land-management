@@ -39,6 +39,10 @@ WorkingDirectory=/opt/lindero/backend
 # the check that matters.
 EnvironmentFile=-/opt/lindero/backend/.env
 
+# Correct where the system Node is 22+. On a droplet shared with an
+# application pinned to an older Node, override with a drop-in — see
+# docs/deployment-shared-droplet.md, which installs Node 22 at /opt/node22 and
+# deliberately leaves /usr/bin/node as the neighbour found it.
 ExecStart=/usr/bin/node dist/server.js
 Restart=on-failure
 RestartSec=5
