@@ -9,6 +9,12 @@ This is deliberately modest — see the "Database: SQLite, deliberately" section
 [architecture.md](architecture.md) for why, and for what it costs (one process,
 one machine).
 
+**Sharing the server with another application?** This document assumes Lindero
+has the droplet to itself, and parts of it — the firewall rules below in
+particular — will take the other application down. Read
+[deployment-shared-droplet.md](deployment-shared-droplet.md) first; it covers
+what changes.
+
 ## Layout on the server
 
 ```
@@ -88,6 +94,10 @@ sudo -u lindero npm run db:bootstrap --workspace @lindero/backend
 Two independent things keep the API off the public internet, and it wants both:
 `HOST=127.0.0.1` above, so it only ever binds loopback, and a firewall, so a
 future misconfiguration is not immediately reachable.
+
+These rules close every port except SSH and Nginx. If anything else on this
+machine serves traffic of its own, `ufw enable` cuts off its users mid-sentence
+— see [deployment-shared-droplet.md](deployment-shared-droplet.md).
 
 ```bash
 sudo ufw default deny incoming
