@@ -2616,6 +2616,13 @@ body.modal-open {
   border-color: var(--red);
 }
 
+/* The amounts in the split table sit in a `<td>`, not a `.form-field`, so the
+   rule above never reaches them — and the amount is the field most often
+   missing when a receipt will not submit. */
+.split-table input[aria-invalid="true"] {
+  border-color: var(--red);
+}
+
 /* ---------- lotes: ordenar y filtrar ---------- */
 
 .lots-toolbar {

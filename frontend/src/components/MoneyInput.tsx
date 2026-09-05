@@ -17,6 +17,14 @@ interface MoneyInputProps {
    * style, instead of a field that silently swallows what is typed into it.
    */
   readOnly?: boolean;
+  /**
+   * Mark the field as the one a validation notice is pointing at.
+   *
+   * `aria-invalid` rather than a class: it is what a screen reader announces
+   * when the caret lands here, and the stylesheet already colours the border
+   * from it, so the visual and the spoken cue cannot drift apart.
+   */
+  invalid?: boolean;
 }
 
 /** Where the caret should sit to be after the same `digits` characters as before. */
@@ -53,7 +61,14 @@ function caretAfterDigits(text: string, digits: number): number {
  * many DIGITS precede it — a position that survives commas appearing and
  * disappearing around it — and restored after the value is rewritten.
  */
-export function MoneyInput({ id, value, onChange, placeholder, readOnly }: MoneyInputProps) {
+export function MoneyInput({
+  id,
+  value,
+  onChange,
+  placeholder,
+  readOnly,
+  invalid,
+}: MoneyInputProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [digitsBeforeCaret, setDigitsBeforeCaret] = useState<number | null>(null);
 
@@ -78,6 +93,7 @@ export function MoneyInput({ id, value, onChange, placeholder, readOnly }: Money
         autoComplete="off"
         placeholder={placeholder}
         readOnly={readOnly}
+        aria-invalid={invalid}
         value={value}
         onChange={(event) => {
           const caret = event.target.selectionStart ?? event.target.value.length;

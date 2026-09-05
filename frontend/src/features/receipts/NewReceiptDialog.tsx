@@ -14,6 +14,7 @@ import { ProofDropzone, acceptProofFiles } from "./ProofDropzone";
 import type { ReceiptDraft, ReceiptDraftLine } from "./api";
 import { createReceipt, fetchCustomerSplit, fetchDuplicates, uploadAttachment } from "./api";
 import type { DuplicateMatch } from "./api";
+import { receiptBlocker } from "./receiptBlocker";
 
 interface NewReceiptDialogProps {
   customers: CustomerRecord[];
@@ -367,7 +368,36 @@ export function NewReceiptDialog({
     }
   };
 
-  const canSubmit = customerId !== "" && lines.length > 0 && !isSaving;
+  /*
+   * What stops this receipt from being issued, and which field fixes it.
+   *
+   * Derived rather than stored, so the notice clears itself the moment the
+   * missing value is typed instead of sitting there until the next click. The
+   * rule itself lives in `receiptBlocker` where it can be tested; see the note
+   * there for why the button no longer just goes dead.
+   */
+  const blocker = useMemo(
+    () =>
+      receiptBlocker({
+        customerId,
+        payable,
+        lineCount: lines.length,
+        amountByContract,
+        totalText,
+      }),
+    [customerId, payable, lines, amountByContract, totalText],
+  );
+
+  /*
+   * Held back until the first press of the button.
+   *
+   * A form that turns red before it has been filled in is nagging, not
+   * helping — every receipt would open already complaining about the monto
+   * nobody has had a chance to type yet.
+   */
+  const [attempted, setAttempted] = useState(false);
+
+  const invalidField = attempted && blocker ? blocker.focus : null;
 
   return (
     <Dialog ariaLabel="Registrar una transacción" onClose={onClose}>
@@ -392,6 +422,7 @@ export function NewReceiptDialog({
           </label>
           <select
             id="receipt-customer"
+            aria-invalid={invalidField === "receipt-customer"}
             value={customerId}
             onChange={(event) => {
               setCustomerId(event.target.value);
@@ -484,6 +515,7 @@ export function NewReceiptDialog({
                   value={totalText}
                   onChange={setTotalText}
                   placeholder="Ej. 25,000"
+                  invalid={invalidField === "receipt-total"}
                 />
               </div>
 
@@ -534,6 +566,7 @@ export function NewReceiptDialog({
                   <td className="col-money">
                     <MoneyInput
                       id={`receipt-amount-${contract.id}`}
+                      invalid={invalidField === `receipt-amount-${contract.id}`}
                       value={amountByContract[contract.id] ?? ""}
                       onChange={(formatted) =>
                         setAmountByContract((current) => ({
@@ -583,6 +616,14 @@ export function NewReceiptDialog({
         </div>
 
         {error && <p className="form-error full-width">{error}</p>}
+
+        {attempted && blocker && (
+          // `role="alert"` so it is spoken the moment it appears: the press
+          // that reveals it moves the caret to the offending field, not here.
+          <p className="form-error full-width" role="alert">
+            {blocker.message}
+          </p>
+        )}
 
         {overpaymentPrompt && (
           <div className="form-warning full-width">
@@ -639,8 +680,19 @@ export function NewReceiptDialog({
         <button
           type="button"
           className="btn-primary modal-submit"
-          disabled={!canSubmit}
-          onClick={() => void submit(false)}
+          disabled={isSaving}
+          onClick={() => {
+            if (blocker) {
+              // Say it, then put the caret where it can be fixed. Announcing
+              // without moving leaves the user hunting a field in a form long
+              // enough to scroll.
+              setAttempted(true);
+              document.getElementById(blocker.focus)?.focus();
+              return;
+            }
+
+            void submit(false);
+          }}
         >
           {savingStep ?? "Registrar y emitir recibo"}
         </button>
