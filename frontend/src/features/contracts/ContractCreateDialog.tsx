@@ -1,5 +1,5 @@
 import type { FormEvent } from "react";
-import { useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { Dialog } from "../../components/Dialog";
 import { IconClose } from "../../components/Icons";
@@ -10,6 +10,10 @@ import { cents, formatMoney, parseMoneyInput, toMoneyInput } from "../../lib/mon
 import type { Contract, CustomerRecord, HoldingKind, Lot, SaleType } from "../../types";
 import type { AreaUnit } from "../../lib/area";
 import type { ContractCreateDraft } from "./api";
+import { uploadContractDocument } from "./api";
+import type { PendingDocument } from "./ContractDocumentDropzone";
+import { ContractDocumentDropzone, holdContractFiles } from "./ContractDocumentDropzone";
+import { screenContractFiles } from "./contractFiles";
 import { CustomerPicker, LotPicker } from "./ContractPartyPickers";
 import { KIND_LABELS, SALE_TYPE_LABELS, formatDate } from "./contractPresentation";
 import {
@@ -24,6 +28,21 @@ import {
 /** Two questions, asked one at a time — see the note on the component. */
 type Step = "parties" | "terms";
 
+/**
+ * What to say when the contract was written but a scan of it was not.
+ *
+ * Worded around the half that succeeded, because that is the half with
+ * consequences: the lot has left the inventory and the customer owes money on
+ * it. Somebody who reads "no se pudo" and closes the form must not go looking
+ * for the contract they think they failed to create.
+ */
+function uploadFailure(code: string, names: string[]): string {
+  return (
+    `El contrato quedó creado como ${code}, pero no se pudo subir ${names.join(", ")}. ` +
+    "Vuelve a intentarlo, o adjúntalo después desde el contrato."
+  );
+}
+
 interface ContractCreateDialogProps {
   customers: CustomerRecord[];
   /** Every lot; the picker narrows it to what can actually be sold. */
@@ -32,9 +51,32 @@ interface ContractCreateDialogProps {
   contracts: Contract[];
   unitByProject: Map<string, AreaUnit>;
   money: MoneyView;
+  /**
+   * Paperwork the form was opened with — a scan dropped anywhere on the
+   * Contratos tab. Attached on mount and filed once the contract exists.
+   */
+  initialFiles?: File[];
   onCancel: () => void;
-  /** Rejects when the server refuses; the message is shown in the dialog. */
-  onCreate: (draft: ContractCreateDraft) => Promise<void>;
+  /**
+   * Write the contract and answer with what the server assigned it.
+   *
+   * The id comes back because the documents are uploaded from here, and a
+   * document needs a contract to belong to: the code is for saying WHICH
+   * contract survived when one of those uploads does not.
+   *
+   * Rejects when the server refuses; the message is shown in the dialog.
+   */
+  onCreate: (draft: ContractCreateDraft) => Promise<{ id: string; code: string }>;
+  /**
+   * The contract exists and nothing more is owed to it — close and re-read.
+   *
+   * Separate from `onCreate` because the two moments stopped being the same
+   * one: between them sit the uploads, and the dialog has to still be on
+   * screen for those. It is also what closing after a FAILED upload calls, so
+   * the list behind refreshes either way — the contract is there regardless of
+   * what became of its scan.
+   */
+  onCreated: () => void;
 }
 
 /**
@@ -66,8 +108,10 @@ export function ContractCreateDialog({
   contracts,
   unitByProject,
   money,
+  initialFiles,
   onCancel,
   onCreate,
+  onCreated,
 }: ContractCreateDialogProps) {
   const [step, setStep] = useState<Step>("parties");
 
@@ -94,8 +138,89 @@ export function ContractCreateDialog({
   const [firstDueOn, setFirstDueOn] = useState("");
   const [notes, setNotes] = useState("");
 
+  /**
+   * The signed paperwork, held until there is a contract to file it against.
+   *
+   * The reason it is collected HERE rather than only from the contract's panel
+   * afterwards: the scan and the terms are read off the same piece of paper in
+   * the same minute. Filing it used to mean saving the contract, finding it in
+   * the list, opening its panel and adding the file there — four screens for
+   * one document, which is how a business ends up with the terms in Lindero and
+   * the contracts in a folder on somebody's phone.
+   */
+  const [documents, setDocuments] = useState<PendingDocument[]>([]);
+
+  /**
+   * What the server assigned, once it has assigned it.
+   *
+   * The guard against creating the same sale twice. The uploads happen AFTER
+   * the contract is written, so a failure in one of them leaves a form on
+   * screen whose Crear button would otherwise write a second contract — and
+   * unlike a receipt there is no idempotency key on this route to catch it.
+   * Set the instant the server answers; from then on this form only retries
+   * uploads.
+   */
+  const [created, setCreated] = useState<{ id: string; code: string } | null>(null);
+
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setSaving] = useState(false);
+  /** What the save is doing right now — a contract, or the third of five scans. */
+  const [savingStep, setSavingStep] = useState<string | null>(null);
+
+  /* Read by the unmount cleanup below, which must see what is held at the
+     moment it runs rather than what was held when it was registered. */
+  const documentsRef = useRef(documents);
+  documentsRef.current = documents;
+
+  /*
+   * Attach the files the form was opened with — dropped anywhere on the
+   * Contratos tab. See lib/useFileDrop.ts and lib/windowDropTarget.ts.
+   *
+   * A LAYOUT effect for the reason `NewReceiptDialog` spells out at length: the
+   * object URLs must be created by something whose own cleanup revokes them, or
+   * React's development StrictMode remount leaves the form holding a `blob:`
+   * URL that has already been revoked — and the document cannot be previewed,
+   * while the identical file added through the dropzone a second later is fine.
+   * Running before paint keeps the thumbnail arriving with the form.
+   */
+  useLayoutEffect(() => {
+    if (initialFiles === undefined || initialFiles.length === 0) {
+      return;
+    }
+
+    const { accepted, rejections } = screenContractFiles(initialFiles, 0);
+    const held = holdContractFiles(accepted);
+
+    setDocuments(held);
+
+    /* A file that arrived with the form and could not be taken says so. Dropped
+       silently, somebody would create the contract believing the scan was on
+       it — and a .docx draft dropped by mistake looks exactly like a PDF that
+       landed. */
+    if (rejections[0] !== undefined) {
+      setError((current) => current ?? rejections[0] ?? null);
+    }
+
+    return () => {
+      for (const document of held) {
+        URL.revokeObjectURL(document.previewUrl);
+      }
+    };
+    // Mount only. `initialFiles` is what the form was OPENED with; re-running
+    // this because the prop changed identity would wipe out files added since.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* Everything still held when the form closes, which is more than the effect
+     above releases: the files added through the dropzone since. Revoking twice
+     is a no-op, so the overlap between the two costs nothing. */
+  useEffect(() => {
+    return () => {
+      for (const document of documentsRef.current) {
+        URL.revokeObjectURL(document.previewUrl);
+      }
+    };
+  }, []);
 
   const isFinanced = saleType === "financed";
   const isDonation = saleType === "donation";
@@ -125,7 +250,11 @@ export function ContractCreateDialog({
   const salePrice = priceOverride ?? (lot === null ? "" : toMoneyInput(lot.basePrice));
 
   const priceNumber = isDonation ? 0 : parseMoneyInput(salePrice);
-  const downNumber = isDonation || downPayment.trim() === "" ? 0 : parseMoneyInput(downPayment);
+  // A prima is a piece of the price held back from what gets financed, so it
+  // only means anything on a credit sale. Contado is settled in full at
+  // signing and a donation is settled at zero; neither has a remainder for a
+  // prima to reduce, so neither shows the field and neither sends a number.
+  const downNumber = !isFinanced || downPayment.trim() === "" ? 0 : parseMoneyInput(downPayment);
   const priceCents = Number.isFinite(priceNumber) ? Math.round(priceNumber * 100) : 0;
   const downCents = Number.isFinite(downNumber) ? Math.round(downNumber * 100) : 0;
   const financed = financedCents(priceCents, downCents);
@@ -183,6 +312,22 @@ export function ContractCreateDialog({
     setError(null);
   };
 
+  /*
+   * Escape, the backdrop and the X all lead here.
+   *
+   * Once the contract exists, closing is not cancelling: the lists behind have
+   * to be re-read whether or not the scan made it, or the Contratos screen sits
+   * there without the sale that was just written on it.
+   */
+  const close = () => {
+    if (created === null) {
+      onCancel();
+      return;
+    }
+
+    onCreated();
+  };
+
   const submitParties = () => {
     if (customer === null) {
       setError("Elige el cliente que firma este contrato.");
@@ -197,8 +342,63 @@ export function ContractCreateDialog({
     setStep("terms");
   };
 
+  /**
+   * File the held documents against the contract that now exists.
+   *
+   * Each one that lands is dropped from `documents` as it goes, so pressing
+   * Reintentar after a failed upload sends only what is still missing rather
+   * than filing the first three scans a second time.
+   *
+   * Returns the names it could not send. The contract is already written by
+   * this point, so a failure here must NOT read as a failed save.
+   */
+  const fileDocuments = async (contractId: string): Promise<string[]> => {
+    const pending = [...documents];
+    const failures: string[] = [];
+
+    for (const [index, held] of pending.entries()) {
+      setSavingStep(
+        pending.length === 1
+          ? `Subiendo ${held.file.name}…`
+          : `Subiendo documento ${index + 1} de ${pending.length}…`,
+      );
+
+      try {
+        await uploadContractDocument(contractId, held.file);
+        URL.revokeObjectURL(held.previewUrl);
+        setDocuments((current) => current.filter((entry) => entry.id !== held.id));
+      } catch {
+        failures.push(held.file.name);
+      }
+    }
+
+    setSavingStep(null);
+
+    return failures;
+  };
+
   const submitTerms = async () => {
     setError(null);
+
+    /*
+     * The contract already exists and only its paperwork is outstanding, so
+     * this press retries the uploads and nothing else — the terms above are
+     * settled and no longer on screen to change.
+     */
+    if (created !== null) {
+      setSaving(true);
+
+      const failures = await fileDocuments(created.id);
+
+      if (failures.length > 0) {
+        setError(uploadFailure(created.code, failures));
+        setSaving(false);
+        return;
+      }
+
+      onCreated();
+      return;
+    }
 
     if (customer === null || lot === null) {
       setStep("parties");
@@ -212,6 +412,9 @@ export function ContractCreateDialog({
         setError("Escribe el precio de venta en lempiras.");
         return;
       }
+    }
+
+    if (isFinanced) {
       if (!Number.isFinite(downNumber) || downNumber < 0) {
         setError("Escribe la prima en lempiras.");
         return;
@@ -220,9 +423,6 @@ export function ContractCreateDialog({
         setError("La prima no puede ser mayor que el precio de venta.");
         return;
       }
-    }
-
-    if (isFinanced) {
       if (!hasTerm) {
         setError("Un contrato a crédito necesita el plazo en meses.");
         return;
@@ -267,9 +467,12 @@ export function ContractCreateDialog({
     }
 
     setSaving(true);
+    setSavingStep("Creando el contrato…");
+
+    let contract: { id: string; code: string };
 
     try {
-      await onCreate({
+      contract = await onCreate({
         customerId: customer.id,
         lotId: lot.id,
         kind,
@@ -278,7 +481,7 @@ export function ContractCreateDialog({
         // lot's history has to say what became of it, and "no aparece" is not
         // an answer.
         salePriceCents: isDonation ? 0 : priceCents,
-        downPaymentCents: isDonation ? 0 : downCents,
+        downPaymentCents: isFinanced ? downCents : 0,
         termMonths: isFinanced ? months : null,
         monthlyPaymentCents: isFinanced ? monthlyCents : null,
         dueDay: isFinanced ? day : null,
@@ -295,9 +498,25 @@ export function ContractCreateDialog({
       // also the only one that can see whether somebody else took this lot
       // thirty seconds ago — so that refusal surfaces here too.
       setError(caught instanceof Error ? caught.message : "No se pudo crear el contrato.");
-    } finally {
       setSaving(false);
+      setSavingStep(null);
+      return;
     }
+
+    // From here the contract EXISTS, whatever happens to its documents.
+    // Recorded before the uploads are attempted so that a failure in one of
+    // them cannot be answered by writing the sale a second time.
+    setCreated(contract);
+
+    const failures = await fileDocuments(contract.id);
+
+    if (failures.length > 0) {
+      setError(uploadFailure(contract.code, failures));
+      setSaving(false);
+      return;
+    }
+
+    onCreated();
   };
 
   const handleSubmit = (event: FormEvent) => {
@@ -312,16 +531,26 @@ export function ContractCreateDialog({
   };
 
   return (
-    <Dialog ariaLabel="Nuevo contrato" onClose={onCancel}>
+    <Dialog ariaLabel="Nuevo contrato" onClose={close}>
       <form onSubmit={handleSubmit}>
         <div className="modal-header">
           <div>
             <p className="modal-eyebrow">
-              Nuevo contrato · Paso {step === "parties" ? 1 : 2} de 2
+              {created === null
+                ? `Nuevo contrato · Paso ${step === "parties" ? 1 : 2} de 2`
+                : `Contrato ${created.code} creado`}
             </p>
-            <h2>{step === "parties" ? "Cliente y lote" : "Términos de la venta"}</h2>
+            <h2>
+              {created !== null
+                ? isSaving
+                  ? "Guardando el contrato firmado"
+                  : "Falta el contrato firmado"
+                : step === "parties"
+                  ? "Cliente y lote"
+                  : "Términos de la venta"}
+            </h2>
             <p className="modal-description">
-              {step === "parties" ? (
+              {created === null && step === "parties" ? (
                 "Un contrato es una persona y un lote. El número se asigna solo al guardar."
               ) : customer && lot ? (
                 <>
@@ -332,13 +561,33 @@ export function ContractCreateDialog({
               )}
             </p>
           </div>
-          <button type="button" className="modal-close" onClick={onCancel} aria-label="Cerrar">
+          <button type="button" className="modal-close" onClick={close} aria-label="Cerrar">
             <IconClose />
           </button>
         </div>
 
-        {step === "parties" && (
+        {created === null && step === "parties" && (
           <div className="modal-form-grid">
+            {/* Where the file went.
+
+                A drop on the Contratos tab opens this form at step 1, which is
+                a screen with no dropzone on it — so without this, the gesture
+                that carried a scan in ends on a page showing no sign of it. */}
+            {documents.length > 0 && (
+              <p className="form-note full-width">
+                {documents.length === 1 ? (
+                  <>
+                    Se adjuntará <strong>{documents[0]!.file.name}</strong> al contrato.
+                  </>
+                ) : (
+                  <>
+                    Se adjuntarán <strong>{documents.length} archivos</strong> al contrato.
+                  </>
+                )}{" "}
+                Elige el cliente y el lote para continuar.
+              </p>
+            )}
+
             <div className="form-field full-width">
               {/* A <p> rather than a <label>: a label has to name one control,
                   and the picker below is a search box that disappears the
@@ -401,7 +650,7 @@ export function ContractCreateDialog({
           </div>
         )}
 
-        {step === "terms" && lot && (
+        {created === null && step === "terms" && lot && (
           <div className="modal-form-grid">
             <div className="form-field">
               <label htmlFor="new-contract-kind">Tipo</label>
@@ -435,11 +684,12 @@ export function ContractCreateDialog({
                 ))}
               </select>
               <span className="field-hint">
-                Solo el crédito lleva plazo, cuota y día de pago.
+                Solo el crédito lleva prima, plazo, cuota y día de pago. Lo de contado se paga
+                completo al firmar.
               </span>
             </div>
 
-            {/* A donation has no price and no prima by definition, so the
+            {/* A donation has no price and no prima by definition, so both
                 fields are gone rather than sitting there waiting to be zeroed
                 and then refused. */}
             {isDonation ? (
@@ -448,49 +698,56 @@ export function ContractCreateDialog({
                 igual que con una venta, y su historial dice a quién se entregó.
               </p>
             ) : (
-              <>
-                <div className="form-field">
-                  <label htmlFor="new-contract-price">
-                    Precio de venta<span className="required-mark" aria-hidden="true"> *</span>
-                  </label>
-                  <MoneyInput
-                    id="new-contract-price"
-                    value={salePrice}
-                    onChange={setPriceOverride}
-                    placeholder="0.00"
-                  />
-                  <span className="field-hint">
-                    {priceCents === lot.basePrice ? (
-                      <>Precio de lista del lote. Es negociable: escribe lo que se acordó.</>
-                    ) : (
-                      <>
-                        El lote está en lista a {formatMoney(lot.basePrice, money)}.{" "}
-                        <button
-                          type="button"
-                          className="link-btn"
-                          onClick={() => setPriceOverride(null)}
-                        >
-                          Volver al precio de lista
-                        </button>
-                      </>
-                    )}
-                  </span>
-                </div>
+              <div className="form-field">
+                <label htmlFor="new-contract-price">
+                  Precio de venta<span className="required-mark" aria-hidden="true"> *</span>
+                </label>
+                <MoneyInput
+                  id="new-contract-price"
+                  value={salePrice}
+                  onChange={setPriceOverride}
+                  placeholder="0.00"
+                />
+                <span className="field-hint">
+                  {priceCents === lot.basePrice ? (
+                    <>Precio de lista del lote. Es negociable: escribe lo que se acordó.</>
+                  ) : (
+                    <>
+                      El lote está en lista a {formatMoney(lot.basePrice, money)}.{" "}
+                      <button
+                        type="button"
+                        className="link-btn"
+                        onClick={() => setPriceOverride(null)}
+                      >
+                        Volver al precio de lista
+                      </button>
+                    </>
+                  )}
+                </span>
+              </div>
+            )}
 
-                <div className="form-field">
-                  <label htmlFor="new-contract-down">Prima acordada</label>
-                  <MoneyInput
-                    id="new-contract-down"
-                    value={downPayment}
-                    onChange={setDownPayment}
-                    placeholder="0.00"
-                  />
-                  <span className="field-hint">
-                    Lo acordado, no lo cobrado. La prima que entra se registra después como un
-                    pago, y hasta entonces la lista lo dirá.
-                  </span>
-                </div>
-              </>
+            {/* Only on a credit sale. A prima is the part of the price that is
+                NOT financed, so on a venta de contado — where the whole price
+                is due at signing — there is nothing for it to hold back. The
+                field used to sit here for every forma de pago, and a number
+                typed into it on a contado sale did nothing except leave the
+                contract owing a prima that the Panel General then listed as
+                pendiente forever. */}
+            {isFinanced && (
+              <div className="form-field">
+                <label htmlFor="new-contract-down">Prima acordada</label>
+                <MoneyInput
+                  id="new-contract-down"
+                  value={downPayment}
+                  onChange={setDownPayment}
+                  placeholder="0.00"
+                />
+                <span className="field-hint">
+                  Lo acordado, no lo cobrado. La prima que entra se registra después como un
+                  pago, y hasta entonces la lista lo dirá.
+                </span>
+              </div>
             )}
 
             {isFinanced && (
@@ -633,6 +890,23 @@ export function ContractCreateDialog({
               </span>
             </div>
 
+            {/* Asked for here rather than only from the contract's panel
+                afterwards. The scan and the terms come off the same piece of
+                paper, in the same minute — see `ContractDocumentDropzone`. */}
+            <div className="form-field full-width">
+              <label>Contrato firmado</label>
+              <ContractDocumentDropzone
+                files={documents}
+                onFilesChange={setDocuments}
+                onReject={setError}
+                disabled={isSaving}
+              />
+              <span className="field-hint">
+                Opcional ahora. Se sube en cuanto el contrato existe, y también puede adjuntarse
+                después desde el contrato.
+              </span>
+            </div>
+
             {/* The schedule as it really comes out, not as the two numbers
                 above suggest. The last cuota absorbs the rounding, so an agreed
                 figure over an agreed term routinely produces a final payment
@@ -666,8 +940,56 @@ export function ContractCreateDialog({
           </div>
         )}
 
+        {/*
+          The sale is written and only its paperwork is outstanding.
+
+          The form above is gone rather than merely disabled: those fields no
+          longer describe anything this dialog can change, and a price still
+          sitting in an editable box next to a button reading "Reintentar" is a
+          promise that pressing it would save the new number.
+        */}
+        {created !== null && (
+          <div className="modal-form-grid">
+            {/* The same panel carries the upload itself and what is left of it
+                if the upload fails, because they are the same situation seen a
+                moment apart — the sale is written either way. Only the tone
+                changes: nothing has gone wrong while the files are still
+                going up. */}
+            {isSaving ? (
+              <p className="form-note full-width">
+                El contrato <strong>{created.code}</strong> ya está guardado. Falta subir el
+                archivo; no cierres esta ventana.
+              </p>
+            ) : (
+              <p className="form-warning full-width">
+                El contrato <strong>{created.code}</strong> quedó creado y el lote ya salió del
+                inventario. Lo único que falta es el archivo; los términos están guardados y se
+                corrigen desde el contrato, no aquí.
+              </p>
+            )}
+
+            <div className="form-field full-width">
+              <label>Contrato firmado</label>
+              <ContractDocumentDropzone
+                files={documents}
+                onFilesChange={setDocuments}
+                onReject={setError}
+                disabled={isSaving}
+              />
+            </div>
+
+            {error && <p className="form-error full-width">{error}</p>}
+          </div>
+        )}
+
         <div className="modal-actions">
-          {step === "terms" ? (
+          {created !== null ? (
+            /* Not "Cancelar": there is nothing left to cancel. It closes the
+               form and leaves the contract standing, with or without its scan. */
+            <button type="button" className="btn-secondary" onClick={close} disabled={isSaving}>
+              Cerrar
+            </button>
+          ) : step === "terms" ? (
             <button type="button" className="btn-secondary" onClick={goBack} disabled={isSaving}>
               Atrás
             </button>
@@ -680,16 +1002,20 @@ export function ContractCreateDialog({
           <button
             type="submit"
             className="btn-primary modal-submit"
-            disabled={isSaving || (step === "parties" && (customer === null || lot === null))}
+            disabled={isSaving || (created === null && step === "parties" && (customer === null || lot === null))}
           >
             <span>
-              {step === "parties"
-                ? "Continuar"
-                : isSaving
-                  ? "Creando…"
-                  : isReservation
-                    ? "Crear reserva"
-                    : "Crear contrato"}
+              {isSaving
+                ? (savingStep ?? "Guardando…")
+                : created !== null
+                  ? documents.length === 0
+                    ? "Listo"
+                    : "Reintentar"
+                  : step === "parties"
+                    ? "Continuar"
+                    : isReservation
+                      ? "Crear reserva"
+                      : "Crear contrato"}
             </span>
           </button>
         </div>

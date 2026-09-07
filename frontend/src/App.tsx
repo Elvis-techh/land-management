@@ -77,6 +77,7 @@ import type { User } from "./lib/permissions";
 import { useLiveUpdates } from "./lib/liveUpdates";
 import { clearShareFromUrl, readShareRequest, takeSharedPayload } from "./lib/sharedIntake";
 import { useWindowFileDrop } from "./lib/useFileDrop";
+import { windowDropTarget } from "./lib/windowDropTarget";
 import { isMobileViewport } from "./lib/viewport";
 import { can } from "./lib/permissions";
 import type { AreaUnit } from "./lib/area";
@@ -176,6 +177,13 @@ export default function App() {
      does not reopen the form holding somebody else's photo. */
   const [intakeFiles, setIntakeFiles] = useState<File[] | null>(null);
   const [intakeNotice, setIntakeNotice] = useState<string | null>(null);
+
+  /* The same thing for the contract form: a scan dropped on the Contratos tab,
+     waiting for "Nuevo contrato" to open around it. Kept apart from
+     `intakeFiles` because the two forms take different files under different
+     rules — 30 MB of scanned contract is not a comprobante — and a leftover in
+     one must never surface in the other. */
+  const [contractIntakeFiles, setContractIntakeFiles] = useState<File[] | null>(null);
   const [receiptBeingVoided, setReceiptBeingVoided] = useState<Receipt | null>(null);
   const [transactionBeingEdited, setTransactionBeingEdited] = useState<Transaction | null>(null);
   const [contractBeingViewed, setContractBeingViewed] = useState<Contract | null>(null);
@@ -364,7 +372,7 @@ export default function App() {
   }, [session.status]);
 
   /*
-   * Drop a comprobante anywhere on the window.
+   * Drop a file anywhere on the window and the form that wants it opens.
    *
    * The same destination as a share and the same reason for existing: the slip
    * arrives in a chat window next to this one, and the fewer steps between
@@ -374,7 +382,10 @@ export default function App() {
    * file picker, and no need to hit any particular part of the screen.
    *
    * Deliberately not gated on the Recibos tab being open. The whole point is
-   * that it works from wherever you happen to be looking.
+   * that it works from wherever you happen to be looking — with ONE exception,
+   * which is Contratos: there the same gesture opens "Nuevo contrato" with the
+   * scan attached instead, because a file dropped while looking at contracts is
+   * a contract. See `dropTarget` below.
    */
   const isDialogOpen = useAnyDialogOpen();
 
@@ -400,8 +411,42 @@ export default function App() {
   const isReceiptDataMissing =
     contractsState.status === "error" || customersState.status === "error";
 
+  /* The same pair for the contract form. It needs the lots too — a contract is
+     a customer and a lot — so it has one more first load that can fail. */
+  const canFileContract = session.status === "signed-in" && can(session.user, "contract:create");
+
+  const isContractDataMissing =
+    contractsState.status === "error" ||
+    customersState.status === "error" ||
+    lotsState.status === "error";
+
+  /*
+   * Where a dropped file goes, given the screen it landed on.
+   *
+   * A dropped file does not say what it is: the same JPG is a comprobante on
+   * one screen and a photographed contract on another. Recibos and everywhere
+   * else mean "record a payment"; Contratos means "write a contract", because
+   * somebody filing paperwork is looking at the paperwork screen. The rule
+   * itself lives in lib/windowDropTarget.ts where it can be read and tested.
+   */
+  const dropTarget = windowDropTarget({
+    tab: activeTab,
+    canRecordPayment,
+    canFileContract,
+    isReceiptDataMissing,
+    isContractDataMissing,
+    isDialogOpen,
+  });
+
   const { isDraggingFiles, isWindowTarget } = useWindowFileDrop(
     (files) => {
+      if (dropTarget === "contract") {
+        setActiveTab("contracts");
+        setContractIntakeFiles(files);
+        setCreatingContract(true);
+        return;
+      }
+
       setActiveTab("receipts");
       setIntakeNotice(null);
       setIntakeFiles(files);
@@ -426,9 +471,10 @@ export default function App() {
      * Not while a dialog is up, either. The receipt form has a dropzone of its
      * own for a second slip, and everything else on top of the page is a form
      * with typing in it or a document being read — none of which should be
-     * swept away by a file landing on the window behind them.
+     * swept away by a file landing on the window behind them. That, and the
+     * rest of the rule, is `windowDropTarget` above.
      */
-    !canRecordPayment || isReceiptDataMissing || isDialogOpen,
+    dropTarget === null,
   );
 
   /*
@@ -659,17 +705,32 @@ export default function App() {
     setContractBeingDefaulted(null);
   };
 
+  /**
+   * Write the contract and hand back what the server named it.
+   *
+   * It deliberately does NOT close the form or re-read anything. The signed
+   * paperwork is uploaded from inside the dialog once the contract exists —
+   * a document needs a contract to belong to — so the dialog has to still be on
+   * screen after this resolves. Closing and reloading is `handleContractCreated`
+   * below, which the dialog calls when it is really finished.
+   */
   const handleCreateContract = async (draft: ContractCreateDraft) => {
-    await createContract(draft).catch(handleApiError);
+    const { contract } = await createContract(draft).catch(handleApiError);
+
+    return contract;
+  };
+
+  const handleContractCreated = () => {
+    setCreatingContract(false);
+    setContractIntakeFiles(null);
 
     // All three lists move, and none of them can be patched by hand. The new
     // contract carries a balance and a payment health only the server computes;
     // the lot it names has just left the available inventory; and the customer
     // is now holding something they were not holding a second ago.
-    await reloadContracts();
-    await reloadLots();
-    await reloadCustomers();
-    setCreatingContract(false);
+    void reloadContracts();
+    void reloadLots();
+    void reloadCustomers();
   };
 
   const handleCreateLot = async (lot: {
@@ -1185,8 +1246,13 @@ export default function App() {
             contracts={contractsState.contracts}
             unitByProject={lotsState.data.unitByProject}
             money={money}
-            onCancel={() => setCreatingContract(false)}
+            initialFiles={contractIntakeFiles ?? undefined}
+            onCancel={() => {
+              setCreatingContract(false);
+              setContractIntakeFiles(null);
+            }}
             onCreate={handleCreateContract}
+            onCreated={handleContractCreated}
           />
         )}
 
@@ -1362,9 +1428,16 @@ export default function App() {
       {isWindowTarget && (
         <div className="window-drop" aria-hidden="true">
           <div className="window-drop-card">
-            <p className="window-drop-title">Suelta el comprobante</p>
+            {/* Named for the tab, because the tab is what decides where the
+                file lands. Saying "comprobante" on the Contratos screen would
+                promise the wrong form. */}
+            <p className="window-drop-title">
+              {dropTarget === "contract" ? "Suelta el contrato firmado" : "Suelta el comprobante"}
+            </p>
             <p className="window-drop-hint">
-              Se abre una transacción nueva con la imagen adjunta.
+              {dropTarget === "contract"
+                ? "Se abre un contrato nuevo con el documento adjunto."
+                : "Se abre una transacción nueva con la imagen adjunta."}
             </p>
           </div>
         </div>

@@ -1672,7 +1672,18 @@ tbody tr:hover {
   to { opacity: 1; }
 }
 
-/* ---------- proof of payment ---------- */
+/* ---------- a file waiting to be uploaded ---------- */
+
+/*
+ * Two things wear these classes, and they are the same thing to a browser: the
+ * comprobante a customer sends for a payment, and the scan of a signed
+ * contract. Both are picked or dragged in, held while the record they belong to
+ * is written, and listed with a thumbnail until then — so the zone, the list and
+ * the rows are one set of rules rather than two that drift apart.
+ *
+ * The `proof-` prefix is older than the second use and kept for it. See
+ * `ProofDropzone` and `ContractDocumentDropzone`.
+ */
 
 .proof-field {
   display: flex;

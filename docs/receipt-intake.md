@@ -46,6 +46,7 @@ is worth building when there is enough real data to prove it works.
 | 2 — Share target into the prefilled dialog | **Done.** WhatsApp → share → form opens with the image attached. |
 | 2b — Reading the comprobantes back | **Done.** Several per receipt, taggable per lot, thumbnails on the transaction rows, viewed in the app instead of downloaded. |
 | 2c — Dropping onto the window | **Done.** Drag a slip anywhere on the app and the transaction form opens around it. The desktop counterpart of the share target. |
+| 2d — The same gesture for contracts | **Done.** Drop on Contratos and the *contract* form opens instead, with the scan attached. The signed PDF can be filed while the contract is being written. |
 | 5a — Duplicate warning | **Done.** By reference, and by customer/date/total where there is none. |
 | 3 — AI extraction | Deferred |
 | 4 — Wiring extraction into the dialog | Deferred with it |
@@ -198,6 +199,59 @@ file had been aimed deliberately at a share sheet, and is not now that one can
 arrive by landing anywhere on the window — a `.docx` dropped by mistake would
 have opened the form, attached nothing, and let somebody record the payment
 believing the comprobante was on it.
+
+## 2d — The same gesture, for the signed contract (added 2026-09-07)
+
+Two things were wrong at once, and one fix answers both.
+
+The first: the **only** way to file the signed contract was to save the
+contract, find it in the list, open its panel and add the file there. Four
+screens for one document — and the scan and the terms are read off the same
+piece of paper, in the same minute. That is how a business ends up with the
+terms in Lindero and the contracts in a folder on somebody's phone. "Nuevo
+contrato · Paso 2 de 2" now asks for the file where it asks for everything else,
+with the same dropzone the receipt form uses, dashed outline and all.
+
+The second: 2c sent **every** window drop to the transaction form, from every
+screen. Dropping a scanned contract while looking at Contratos opened a payment
+form with a legal document attached to it as a comprobante.
+
+A dropped file does not say what it is — the same JPG is a deposit slip on one
+screen and a photographed contract on another — so the screen decides, in
+`windowDropTarget` (`frontend/src/lib/windowDropTarget.ts`), tested there:
+
+- **Contratos means a contract.** The tab comes forward with "Nuevo contrato"
+  open and the file held for it.
+- **Everywhere else still means a comprobante**, including Recibos. That is the
+  gesture 2c was built around and it is unchanged.
+- **The override only applies when the tab can act on it.** A cashier who may
+  record payments but not write contracts keeps the app-wide behaviour on
+  Contratos rather than losing the gesture on one screen: the override is the
+  tab having somewhere *better* to put the file, and a tab that cannot take it
+  has nowhere better.
+- **Nothing behind a dialog answers a drop**, exactly as before.
+
+The full-window outline names what it would open — "Suelta el contrato firmado"
+rather than "Suelta el comprobante" — because promising the wrong form is worse
+than promising nothing.
+
+Two details worth keeping in mind if this is touched again:
+
+- **The contract does not exist yet when the file arrives.** So the files are
+  held, exactly as the receipt form holds comprobantes, and uploaded the moment
+  the server answers with an id. Abandoning the form uploads nothing.
+- **A failed upload must not read as a failed save.** The contract is written
+  first; if a scan then fails to go up, the dialog says the contract was created
+  as CT-…, drops the terms form, and offers only Reintentar. `created` is
+  recorded *before* the uploads are attempted, so a second press cannot write
+  the sale twice — unlike a receipt, this route has no idempotency key, and the
+  duplicate would be refused with an error that reads exactly like the first
+  save having failed.
+
+The screening rules moved to `frontend/src/features/contracts/contractFiles.ts`
+for the ordinary reason: two screens apply them now, and the copy that drifts is
+the one that offers a file the server refuses — after the contract has been
+created.
 
 ## Ground rules for building this without breaking anything
 

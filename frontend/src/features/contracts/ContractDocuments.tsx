@@ -13,27 +13,11 @@ import {
   storedDocument,
   uploadContractDocument,
 } from "./api";
-
-/**
- * What a contract document is allowed to be. Mirrors the server's allow-list in
- * backend/src/lib/storedFiles.ts, which is the one that counts — this copy only
- * exists so a wrong file is refused instantly instead of after an upload of a
- * fifteen-page scan.
- */
-const ACCEPTED = [
-  "application/pdf",
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-  "image/heic",
-  "image/heif",
-];
-
-/** 30 MB, the same ceiling the server enforces — see MAX_DOCUMENT_BYTES. */
-const MAX_BYTES = 30 * 1024 * 1024;
-
-/** Matches MAX_DOCUMENTS_PER_CONTRACT on the server. */
-const MAX_DOCUMENTS = 12;
+import {
+  CONTRACT_DOCUMENT_ACCEPT,
+  MAX_CONTRACT_DOCUMENTS,
+  screenContractFiles,
+} from "./contractFiles";
 
 interface ContractDocumentsProps {
   contractId: string;
@@ -127,35 +111,21 @@ export function ContractDocuments({ contractId, user, onCountChanged }: Contract
 
     setError(null);
 
-    const held = documents?.length ?? 0;
+    /* Screened in one pass before anything is sent, by the same rules the
+       Nuevo contrato form applies to a file dropped on it — see
+       contractFiles.ts for why they live in one place now. */
+    const { accepted, rejections } = screenContractFiles(
+      Array.from(incoming),
+      documents?.length ?? 0,
+    );
+
+    if (rejections[0] !== undefined) {
+      setError(rejections[0]);
+    }
+
     let filed = 0;
 
-    for (const file of Array.from(incoming)) {
-      if (held + filed >= MAX_DOCUMENTS) {
-        setError(`Un contrato admite hasta ${MAX_DOCUMENTS} documentos.`);
-        break;
-      }
-
-      // A HEIC straight off an iPhone sometimes arrives with an empty type, so
-      // the extension is accepted as a fallback rather than refusing a file the
-      // server would have taken.
-      const isHeicByName = /\.hei[cf]$/i.test(file.name);
-
-      if (!ACCEPTED.includes(file.type) && !(file.type === "" && isHeicByName)) {
-        setError(`«${file.name}» no es un PDF ni una imagen escaneada.`);
-        continue;
-      }
-
-      if (file.size === 0) {
-        setError(`«${file.name}» está vacío.`);
-        continue;
-      }
-
-      if (file.size > MAX_BYTES) {
-        setError(`«${file.name}» pesa ${readableSize(file.size)}; el máximo es 30 MB.`);
-        continue;
-      }
-
+    for (const file of accepted) {
       setBusy(`Subiendo ${file.name}…`);
 
       try {
@@ -213,7 +183,7 @@ export function ContractDocuments({ contractId, user, onCountChanged }: Contract
       <div className="cp-docs-head">
         <h3 className="cp-section-title">Documentos del contrato</h3>
 
-        {canFile && (documents?.length ?? 0) < MAX_DOCUMENTS && (
+        {canFile && (documents?.length ?? 0) < MAX_CONTRACT_DOCUMENTS && (
           <button
             type="button"
             className="link-btn"
@@ -289,7 +259,7 @@ export function ContractDocuments({ contractId, user, onCountChanged }: Contract
         type="file"
         multiple
         className="proof-input"
-        accept={`${ACCEPTED.join(",")},.heic,.heif`}
+        accept={CONTRACT_DOCUMENT_ACCEPT}
         onChange={(event) => {
           void add(event.target.files);
           // Cleared so choosing the SAME file twice in a row still fires a
