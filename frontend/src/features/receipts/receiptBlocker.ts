@@ -10,6 +10,8 @@
  * saved without saying so.
  */
 
+import { parseMoneyInput } from "../../lib/money";
+
 /** Just enough of a payable contract to decide, so tests need no fixtures. */
 export interface BlockerContract {
   id: string;
@@ -21,10 +23,16 @@ export interface BlockerInput {
   payable: BlockerContract[];
   /** How many lines the draft actually produced (amount typed and above zero). */
   lineCount: number;
-  /** The raw text in each lot's amount field, by contract id. */
+  /**
+   * The raw text in each lot's "Recibe" field, by contract id.
+   *
+   * Only populated with several lots. One lot has no per-lot field at all —
+   * `amountText` is that lot's amount, and there is nothing for it to disagree
+   * with.
+   */
   amountByContract: Record<string, string>;
-  /** The raw text in "Total entregado". Only shown when there are several lots. */
-  totalText: string;
+  /** The raw text in "Monto": the whole payment, for one lot or for five. */
+  amountText: string;
 }
 
 export interface Blocker {
@@ -35,7 +43,7 @@ export interface Blocker {
 }
 
 export const CUSTOMER_FIELD = "receipt-customer";
-export const TOTAL_FIELD = "receipt-total";
+export const AMOUNT_FIELD = "receipt-amount";
 
 /** The DOM id `NewReceiptDialog` gives one lot's amount input. */
 export function amountFieldId(contractId: string): string {
@@ -49,7 +57,7 @@ export function amountFieldId(contractId: string): string {
  * names the one the user would reach first rather than the last one checked.
  */
 export function receiptBlocker(input: BlockerInput): Blocker | null {
-  const { customerId, payable, lineCount, amountByContract, totalText } = input;
+  const { customerId, payable, lineCount, amountByContract, amountText } = input;
 
   if (customerId === "") {
     return { message: "Elige el cliente que está pagando.", focus: CUSTOMER_FIELD };
@@ -67,30 +75,46 @@ export function receiptBlocker(input: BlockerInput): Blocker | null {
     return null;
   }
 
-  const firstAmount = amountFieldId(payable[0]!.id);
   const isMultiLot = payable.length > 1;
 
-  // Typed, but nothing a receipt can be made of — a lone "0", or a field
-  // cleared back to empty after having been filled in.
-  if (payable.some((contract) => (amountByContract[contract.id] ?? "").trim() !== "")) {
-    return { message: "El monto tiene que ser mayor que cero.", focus: firstAmount };
+  if (amountText.trim() === "") {
+    return { message: "Falta el monto que está pagando el cliente.", focus: AMOUNT_FIELD };
   }
 
-  // The total is filled in but never divided, so every line is still empty.
-  // Worth its own sentence: the form looks complete from across the counter,
-  // and the fix is one button away.
-  if (isMultiLot && totalText.trim() !== "") {
+  // Typed, but nothing a receipt can be made of — a lone "0", or a field
+  // cleared back to a stray separator. Checked before the split, because a
+  // zero at the top is not a distribution problem and saying "falta repartir"
+  // would send somebody to press a button that cannot help them.
+  const typed = parseMoneyInput(amountText);
+
+  if (Number.isNaN(typed) || typed <= 0) {
+    return { message: "El monto tiene que ser mayor que cero.", focus: AMOUNT_FIELD };
+  }
+
+  // From here the amount is real, so with one lot there would already be a
+  // line: anything left is about the division.
+  const firstAmount = amountFieldId(payable[0]!.id);
+
+  if (payable.some((contract) => (amountByContract[contract.id] ?? "").trim() !== "")) {
     return {
-      message:
-        "Falta repartir el total entregado. Pulsa «Repartir entre los lotes», o escribe el monto lote por lote.",
+      message: "Ningún lote está recibiendo dinero. Escribe cuánto recibe al menos uno.",
       focus: firstAmount,
     };
   }
 
-  return isMultiLot
-    ? {
-        message: "Falta el monto. Escribe el total entregado y repártelo, o llena cada lote.",
-        focus: TOTAL_FIELD,
-      }
-    : { message: "Falta el monto que está pagando el cliente.", focus: firstAmount };
+  // The amount is filled in but never divided, so every line is still empty.
+  // Worth its own sentence: the form looks complete from across the counter,
+  // and the fix is one button away.
+  if (isMultiLot) {
+    return {
+      message:
+        "Falta repartir el monto. Pulsa «Repartir el monto entre los lotes», o escribe cuánto recibe cada lote.",
+      focus: firstAmount,
+    };
+  }
+
+  /* One lot, a positive amount and still no line is not reachable through the
+     form — it would mean `lines` and this disagreed about the same figure. Say
+     something true rather than nothing. */
+  return { message: "Falta el monto que está pagando el cliente.", focus: AMOUNT_FIELD };
 }

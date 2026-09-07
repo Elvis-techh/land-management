@@ -3,6 +3,7 @@ import { useRef, useState } from "react";
 import { DocumentViewer, DocumentThumb } from "../../components/DocumentViewer";
 import type { ViewerFile } from "../../components/DocumentViewer";
 import { readableSize } from "../../lib/documentFiles";
+import { useFileDrop } from "../../lib/useFileDrop";
 
 /**
  * What a proof of payment is allowed to be. Mirrors the server's allow-list in
@@ -20,6 +21,29 @@ const ACCEPTED = [
 
 /** 12 MB, the same ceiling the server enforces. */
 const MAX_BYTES = 12 * 1024 * 1024;
+
+/**
+ * What to put in a file input's `accept`, so the picker offers the same things
+ * a drop would be allowed to carry.
+ *
+ * Exported because the correction dialog opens its own picker: written out
+ * again there, the two lists drifted the first time this one changed, and the
+ * screen with the stale copy is the one that offers a file the server refuses.
+ * The `.heic`/`.heif` extensions are appended for the same reason `ACCEPTED`
+ * tolerates an empty type below.
+ */
+export const PROOF_ACCEPT = `${ACCEPTED.join(",")},.heic,.heif`;
+
+/**
+ * How many comprobantes one receipt holds. Matches MAX_ATTACHMENTS_PER_RECEIPT
+ * in backend/src/lib/storedFiles.ts, which is the number that counts.
+ *
+ * Exported from here rather than declared per screen. It was written out in
+ * `NewReceiptDialog` and again in `ReceiptsPage`, and a third screen that can
+ * attach a proof — the edit dialog — is a third chance for the copies to drift
+ * apart from the server and from each other.
+ */
+export const MAX_PROOFS = 8;
 
 export interface PendingProof {
   /** Stable across re-renders, so React keys and the remove button behave. */
@@ -146,7 +170,6 @@ export function ProofDropzone({
   lots = [],
   disabled = false,
 }: ProofDropzoneProps) {
-  const [isDraggingOver, setDraggingOver] = useState(false);
   /*
    * Which file is open in the viewer, if any.
    *
@@ -159,16 +182,6 @@ export function ProofDropzone({
    */
   const [viewing, setViewing] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-
-  /**
-   * Counts enter/leave rather than toggling a boolean.
-   *
-   * `dragleave` fires every time the pointer crosses into a CHILD element, so a
-   * plain boolean makes the highlight flicker off as soon as the cursor passes
-   * over the icon or the text inside the zone. Depth reaches zero only when the
-   * pointer has genuinely left.
-   */
-  const dragDepth = useRef(0);
 
   const alreadyHeld = files.length;
 
@@ -205,6 +218,8 @@ export function ProofDropzone({
       files.map((entry) => (entry.id === id ? { ...entry, contractId } : entry)),
     );
 
+  const { isDraggingOver, dropHandlers } = useFileDrop(accept, disabled);
+
   /** The pending files, as the viewer understands them. */
   const viewerFiles: ViewerFile[] = files.map((entry) => ({
     id: entry.id,
@@ -221,33 +236,7 @@ export function ProofDropzone({
         className={`proof-dropzone${isDraggingOver ? " is-over" : ""}${
           disabled ? " is-disabled" : ""
         }`}
-        onDragEnter={(event) => {
-          event.preventDefault();
-          dragDepth.current += 1;
-          setDraggingOver(true);
-        }}
-        onDragOver={(event) => {
-          // Without preventDefault the browser navigates to the dropped file,
-          // which loses the form and everything typed into it.
-          event.preventDefault();
-        }}
-        onDragLeave={(event) => {
-          event.preventDefault();
-          dragDepth.current -= 1;
-          if (dragDepth.current <= 0) {
-            dragDepth.current = 0;
-            setDraggingOver(false);
-          }
-        }}
-        onDrop={(event) => {
-          event.preventDefault();
-          dragDepth.current = 0;
-          setDraggingOver(false);
-
-          if (!disabled) {
-            accept(event.dataTransfer.files);
-          }
-        }}
+        {...dropHandlers}
       >
         <p className="proof-dropzone-title">Arrastra el comprobante aquí</p>
         <p className="proof-dropzone-hint">
@@ -269,7 +258,7 @@ export function ProofDropzone({
           type="file"
           multiple
           className="proof-input"
-          accept={`${ACCEPTED.join(",")},.heic,.heif`}
+          accept={PROOF_ACCEPT}
           onChange={(event) => {
             accept(event.target.files);
             // Cleared so choosing the SAME file twice in a row still fires a

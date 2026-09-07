@@ -12,7 +12,9 @@ import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { DocumentViewer, DocumentThumb } from "../../components/DocumentViewer";
 import type { ViewerFile } from "../../components/DocumentViewer";
 import { ReceiptPaper } from "./ReceiptPaper";
-import { acceptProofFiles } from "./ProofDropzone";
+import { useFileDrop } from "../../lib/useFileDrop";
+import { paymentTypeLabel } from "./paymentType";
+import { MAX_PROOFS, PROOF_ACCEPT, acceptProofFiles } from "./ProofDropzone";
 import { TransactionToolbar } from "./TransactionToolbar";
 import type { TransactionView } from "./TransactionToolbar";
 import { deleteAttachment, fetchReceipt, storedProof, uploadAttachment } from "./api";
@@ -42,9 +44,6 @@ interface ReceiptsPageProps {
    */
   onProofsChanged: () => void;
 }
-
-/** Matches MAX_ATTACHMENTS_PER_RECEIPT on the server, and `NewReceiptDialog`. */
-const MAX_PROOFS = 8;
 
 const METHOD_LABELS: Record<string, string> = {
   cash: "Efectivo",
@@ -156,6 +155,11 @@ function TransactionRow({
               sin recibo
             </span>
           )}
+          {/* Beside the receipt number, because "what kind of money was this"
+              is read together with "which paper is it on". Until now the type
+              was invisible everywhere except inside the correction dialog, so
+              telling a prima from a cuota meant opening payments one by one. */}
+          <span className="txn-type">{paymentTypeLabel(transaction.type)}</span>
           <span className="txn-method">
             {METHOD_LABELS[transaction.method] ?? transaction.method}
           </span>
@@ -586,6 +590,16 @@ export function ReceiptsPage({
     }
   };
 
+  /*
+   * Dropping is the same act as choosing, so it goes through the same
+   * function — the rules, the sequential upload and the re-read afterwards all
+   * live in `addProofs` already.
+   */
+  const { isDraggingOver, dropHandlers } = useFileDrop(
+    (files) => void addProofs(files),
+    proofBusy !== null,
+  );
+
   /**
    * Actually remove it. Only ever reached from the confirmation dialog.
    *
@@ -901,25 +915,52 @@ export function ReceiptsPage({
             <div className="receipt-proofs">
               <div className="receipt-proofs-head">
                 <p className="receipt-preview-label">Comprobantes del cliente</p>
+              </div>
 
-                {canRecord && detail.attachments.length < MAX_PROOFS && (
+              {/* The same zone the receipt form and the correction dialog
+                  offer. Three screens can attach a comprobante and the gesture
+                  has to be one gesture — a picker here and a drag there is how
+                  somebody concludes the app "sometimes" takes dropped files. */}
+              {canRecord && detail.attachments.length < MAX_PROOFS && (
+                <div
+                  className={`proof-dropzone is-compact${isDraggingOver ? " is-over" : ""}${
+                    proofBusy ? " is-disabled" : ""
+                  }`}
+                  {...dropHandlers}
+                >
+                  <p className="proof-dropzone-title">Arrastra el comprobante aquí</p>
+                  <p className="proof-dropzone-hint">
+                    La captura del depósito, directo desde WhatsApp.
+                  </p>
+
                   <button
                     type="button"
-                    className="link-btn"
+                    className="btn-secondary"
                     disabled={proofBusy !== null}
                     onClick={() => proofInputRef.current?.click()}
                   >
-                    Agregar
+                    Elegir archivo
                   </button>
-                )}
-              </div>
+                </div>
+              )}
 
-              {detail.attachments.length === 0 ? (
+              {/* Only where there is no dropzone above already saying it by
+                  being empty. */}
+              {detail.attachments.length === 0 && !canRecord && (
+                <p className="state-message">Este recibo no tiene comprobante adjunto.</p>
+              )}
+
+              {/* The zone is gone and the reason is not obvious: without this,
+                  being at the limit looks exactly like having lost the
+                  permission to attach. */}
+              {canRecord && detail.attachments.length >= MAX_PROOFS && (
                 <p className="state-message">
-                  Este recibo no tiene comprobante adjunto
-                  {canRecord ? ". Puedes agregar la captura del depósito." : "."}
+                  Este recibo ya tiene los {MAX_PROOFS} comprobantes que caben. Quita uno para
+                  poder agregar otro.
                 </p>
-              ) : (
+              )}
+
+              {detail.attachments.length > 0 && (
                 <div className="proof-grid">
                   {detailProofs.map((file) => (
                     <button
@@ -940,14 +981,15 @@ export function ReceiptsPage({
               {proofBusy && <p className="state-message">{proofBusy}</p>}
               {proofError && <p className="form-error">{proofError}</p>}
 
-              {/* Off-screen, opened by the Agregar button. The same accept list
-                  the dropzone uses; the server's is the one that counts. */}
+              {/* Off-screen, opened by "Elegir archivo". The dropzone's own
+                  accept list, imported rather than written out again; the
+                  server's is the one that counts. */}
               <input
                 ref={proofInputRef}
                 type="file"
                 multiple
                 className="proof-input"
-                accept="image/jpeg,image/png,image/webp,image/heic,image/heif,application/pdf,.heic,.heif"
+                accept={PROOF_ACCEPT}
                 onChange={(event) => {
                   void addProofs(event.target.files);
                   event.target.value = "";

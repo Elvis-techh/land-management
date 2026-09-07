@@ -45,6 +45,7 @@ is worth building when there is enough real data to prove it works.
 | 1 — PWA, installable | **Done.** Installed on Android from the home screen. |
 | 2 — Share target into the prefilled dialog | **Done.** WhatsApp → share → form opens with the image attached. |
 | 2b — Reading the comprobantes back | **Done.** Several per receipt, taggable per lot, thumbnails on the transaction rows, viewed in the app instead of downloaded. |
+| 2c — Dropping onto the window | **Done.** Drag a slip anywhere on the app and the transaction form opens around it. The desktop counterpart of the share target. |
 | 5a — Duplicate warning | **Done.** By reference, and by customer/date/total where there is none. |
 | 3 — AI extraction | Deferred |
 | 4 — Wiring extraction into the dialog | Deferred with it |
@@ -130,6 +131,73 @@ deliberately:
 So Phase 2 builds Phase 3's foundation at no cost, from the first shared
 receipt. That is the strongest argument for this ordering: waiting does not
 just defer the bill, it buys a materially better extractor.
+
+## 2c — Dropping a comprobante onto the window (added 2026-09-07)
+
+Sharing into an installed app is Chromium-on-Android only, and that left the
+office desktops — Windows and Linux, where a good half of the receipts are
+actually written — with the old path: open Recibos, press "Nueva transacción",
+find the file, pick it. The equivalent gesture there is dragging, and there was
+nothing to drag onto except a dropzone inside a form you had not opened yet.
+
+The whole window is now that target. Drop an image or a PDF anywhere on Lindero
+and the Recibos tab comes forward with the transaction form open and the file
+already attached — the same destination a share arrives at, reached the same
+way, with the same validation. There is nothing on screen to aim at and nothing
+to discover in a menu: an outline appears under the file as it crosses the
+window and says what letting go will do.
+
+Three rules keep it from being a nuisance, all decided in `windowDropAction`
+(`frontend/src/lib/useFileDrop.ts`) and tested there:
+
+- **A drag carrying no files is left completely alone.** The dashboard's
+  section bars are `draggable`; taking over every drag would have broken
+  reordering them.
+- **A dropzone nearer the pointer wins.** The receipt panel's own zone files a
+  slip against the receipt already on screen. One drop must not both do that
+  and open a form to record the payment a second time.
+- **A drop it cannot use is still swallowed.** Dropping a file on a page that
+  does not handle it makes the browser *navigate to that file* — the app
+  replaced by a JPEG, and a receipt form with an amount typed into it gone with
+  it. So drops are blocked while a dialog is open even though nothing is done
+  with them.
+- **A drop is accepted before the screen is ready for it.** The gate here is the
+  permission to record a payment, and deliberately not also "the contracts and
+  customers have arrived", which is what the "Nueva transacción" button waits
+  for. A button can afford to wait to be pressed; a drop cannot, because it
+  carries the comprobante with it and the gesture is *open Lindero and drag the
+  slip straight in* — which lands squarely in the second or two the app spends
+  loading. The drop is held and the form opens the moment the lists land, the
+  same way a share already behaved. The one case that is refused outright is a
+  first load that failed, where waiting provably will not help.
+
+On the Recibos tab there are two answers at once — the window opens a new
+transaction, and the receipt panel's own zone files the slip against the receipt
+already on screen — so the drag says which is which as it moves. Every zone that
+could take the file outlines itself in clay for as long as a file is over the
+window (`body.is-dragging-file`), and the full-window invitation steps aside the
+moment the pointer reaches one of them, leaving that zone to show it is the one
+that would receive the drop. Before this, the window's "Suelta el comprobante"
+stayed up while hovering the panel's zone, promising a new transaction over a
+target that was about to do something else entirely.
+
+Two things changed underneath. The files a form is *opened* with are now
+attached from a layout effect rather than seeded during render. That looks like
+a stylistic preference and is not: `acceptProofFiles` creates a `blob:` URL per
+file, the form revokes those when it closes, and creating them during render
+left the two unpaired — so React's development StrictMode, which mounts every
+component twice on purpose to find exactly this, revoked the URLs the form was
+still holding. The comprobante that had just been dropped could not be
+previewed ("el navegador no puede mostrarlo aquí") while the same file added a
+second later through the dropzone was fine. It bit the drop path first only
+because that is the one being used on a laptop; the share target opens the form
+the same way.
+
+And a file arriving with the form that the rules refuse now says so. That screening was silent, which was survivable while every
+file had been aimed deliberately at a share sheet, and is not now that one can
+arrive by landing anywhere on the window — a `.docx` dropped by mistake would
+have opened the form, attached nothing, and let somebody record the payment
+believing the comprobante was on it.
 
 ## Ground rules for building this without breaking anything
 

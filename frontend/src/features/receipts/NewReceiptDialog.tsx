@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { Dialog } from "../../components/Dialog";
 import { IconClose } from "../../components/Icons";
@@ -9,12 +9,14 @@ import { hasIdentification } from "../../lib/identification";
 import type { MoneyView } from "../../lib/money";
 import { cents, formatMoney, parseMoneyInput, toMoneyInput } from "../../lib/money";
 import type { Contract, CustomerRecord, Receipt } from "../../types";
+import type { PaymentType } from "./paymentType";
+import { PAYMENT_TYPE_OPTIONS, outstandingDownPayment, suggestPaymentType } from "./paymentType";
 import type { PendingProof, ProofLot } from "./ProofDropzone";
-import { ProofDropzone, acceptProofFiles } from "./ProofDropzone";
+import { MAX_PROOFS, ProofDropzone, acceptProofFiles } from "./ProofDropzone";
 import type { ReceiptDraft, ReceiptDraftLine } from "./api";
 import { createReceipt, fetchCustomerSplit, fetchDuplicates, uploadAttachment } from "./api";
 import type { DuplicateMatch } from "./api";
-import { receiptBlocker } from "./receiptBlocker";
+import { AMOUNT_FIELD, receiptBlocker } from "./receiptBlocker";
 
 interface NewReceiptDialogProps {
   customers: CustomerRecord[];
@@ -50,9 +52,6 @@ const METHODS: Array<{ value: Method; label: string }> = [
   { value: "transfer", label: "Transferencia" },
   { value: "card", label: "Tarjeta" },
 ];
-
-/** Matches MAX_ATTACHMENTS_PER_RECEIPT on the server. */
-const MAX_PROOFS = 8;
 
 /**
  * A key unique to one open form.
@@ -109,18 +108,40 @@ export function NewReceiptDialog({
   const [method, setMethod] = useState<Method>("cash");
   const [reference, setReference] = useState("");
   const [note, setNote] = useState("");
-  const [totalText, setTotalText] = useState("");
+  /*
+   * What the customer handed over, as one figure.
+   *
+   * The whole receipt's amount, for one lot or for five. When there are
+   * several, this is what "Repartir entre los lotes" divides into
+   * `amountByContract`; when there is one, it IS that lot's amount and no
+   * per-lot field exists to disagree with it.
+   */
+  const [amountText, setAmountText] = useState("");
+  /** Only meaningful with several lots: how the amount above was divided. */
   const [amountByContract, setAmountByContract] = useState<Record<string, string>>({});
   /*
-   * Seeded once, from the lazy initialiser, and deliberately not from an
-   * effect. Creating the object URLs during the first render means the
-   * thumbnail is on screen in the same paint as the form — a share that
-   * appeared to open empty and then filled in a moment later would read as a
-   * glitch on exactly the flow this feature exists to make feel instant.
+   * The type chosen in the field at the top, or `null` while the form's own
+   * answer stands.
+   *
+   * Null rather than the resolved value, so "nobody has touched this" and "the
+   * user picked exactly what was suggested" stay distinguishable: the first
+   * has to keep following the customer being changed, and the second must
+   * survive it. Storing the resolved type would make the suggestion stop
+   * working the moment anyone glanced at the field.
    */
-  const [proofs, setProofs] = useState<PendingProof[]>(
-    () => acceptProofFiles(initialFiles ?? [], 0, MAX_PROOFS).accepted,
-  );
+  const [chosenType, setChosenType] = useState<PaymentType | null>(null);
+  /*
+   * A type chosen for ONE lot, overriding everything above.
+   *
+   * Only reachable with several lots, and it exists because they genuinely
+   * disagree: somebody who bought a second lot last month is settling its
+   * prima while still paying cuotas on the first, and one type for the whole
+   * receipt would record one of the two wrongly. A prima filed as a cuota
+   * leaves `downPaymentPaid` short for the life of the contract, and nothing
+   * on any screen says so.
+   */
+  const [typeByContract, setTypeByContract] = useState<Record<string, PaymentType>>({});
+  const [proofs, setProofs] = useState<PendingProof[]>([]);
   const [error, setError] = useState<string | null>(initialNotice ?? null);
   const [duplicates, setDuplicates] = useState<DuplicateMatch[]>([]);
   const [overpaymentPrompt, setOverpaymentPrompt] = useState<string | null>(null);
@@ -148,6 +169,21 @@ export function NewReceiptDialog({
 
   const isMultiLot = payable.length > 1;
 
+  /*
+   * What kind of money this lot is receiving.
+   *
+   * Most specific answer wins: the lot's own picker, then the one field at the
+   * top of the form, then what the contract itself implies. Which of the two
+   * controls is on screen follows the same rule the rest of this form does —
+   * facts about the whole payment live at the top, anything that varies per
+   * lot lives in the table.
+   */
+  const typeFor = (contract: Contract): PaymentType =>
+    typeByContract[contract.id] ?? chosenType ?? suggestPaymentType(contract);
+
+  /** The lot the top field speaks for, when there is exactly one. */
+  const soleLot = payable.length === 1 ? payable[0]! : null;
+
   /** Near-proof, rather than a coincidence of amount and day. */
   const hasReferenceMatch = duplicates.some((match) => match.reason === "reference");
 
@@ -164,6 +200,70 @@ export function NewReceiptDialog({
   const proofsRef = useRef(proofs);
   proofsRef.current = proofs;
 
+  /*
+   * Attach the files the form was opened with — shared in from WhatsApp, or
+   * dropped anywhere on the window. See lib/sharedIntake.ts and useFileDrop.ts.
+   *
+   * A LAYOUT effect, and that is the entire point of it. This used to seed
+   * `proofs` from a lazy `useState` initialiser so the thumbnail landed in the
+   * same paint as the form, which reads as instant — but that creates the
+   * object URLs during RENDER, while the only thing that revokes them is the
+   * unmount cleanup below. The two are then not symmetric, and React's
+   * development StrictMode mounts, unmounts and remounts every component
+   * precisely to catch that: the cleanup ran, the URLs it revoked were the ones
+   * held in state, and a `useState` initialiser does not re-run on the remount.
+   * The form came back up holding a revoked `blob:` URL, so the comprobante it
+   * had just accepted could not be previewed — "el navegador no puede
+   * mostrarlo aquí" — while the identical file added through the dropzone a
+   * second later was fine, because that URL is created in an event handler and
+   * nothing had unmounted since.
+   *
+   * Creating them HERE makes the pair symmetric: whatever this effect creates,
+   * its own cleanup revokes, and a remount creates fresh ones. `useLayoutEffect`
+   * rather than `useEffect` keeps what the initialiser was for — it runs before
+   * the browser paints, so the thumbnail still arrives with the form rather
+   * than a frame after it.
+   */
+  useLayoutEffect(() => {
+    if (initialFiles === undefined || initialFiles.length === 0) {
+      return;
+    }
+
+    const { accepted, rejections } = acceptProofFiles(initialFiles, 0, MAX_PROOFS);
+
+    setProofs(accepted);
+
+    /*
+     * A file that arrived with the form and could not be taken says so.
+     *
+     * The screening used to keep what it accepted and drop what it refused on
+     * the floor, which was survivable while every file came from a share sheet
+     * somebody had aimed deliberately. It is not survivable now that a file can
+     * arrive by being dropped anywhere on the window: a PDF too large or a
+     * .docx dropped by mistake would open this form, attach nothing, and give
+     * no hint that anything had been refused — leaving somebody to record the
+     * payment believing the comprobante was on it.
+     *
+     * It does not overwrite `initialNotice`, which is the more specific
+     * complaint when both exist.
+     */
+    if (rejections[0] !== undefined) {
+      setError((current) => current ?? rejections[0] ?? null);
+    }
+
+    return () => {
+      for (const proof of accepted) {
+        URL.revokeObjectURL(proof.previewUrl);
+      }
+    };
+    // Mount only. `initialFiles` is what the form was OPENED with; re-running
+    // this because the prop changed identity would wipe out files added since.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* Everything still held when the form closes, which is more than the effect
+     above releases: the files added through the dropzone since. Revoking twice
+     is a no-op, so the overlap between the two costs nothing. */
   useEffect(() => {
     return () => {
       for (const proof of proofsRef.current) {
@@ -178,7 +278,14 @@ export function NewReceiptDialog({
     const drafts: ReceiptDraftLine[] = [];
 
     for (const contract of payable) {
-      const typed = parseMoneyInput(amountByContract[contract.id] ?? "");
+      /*
+       * One lot takes the amount straight from the top of the form; several
+       * take their share of it. Deliberately NOT mirrored into
+       * `amountByContract` for the single-lot case: two fields holding the
+       * same figure is two fields that can drift, and the one the user cannot
+       * see is the one that wins.
+       */
+      const typed = parseMoneyInput(isMultiLot ? (amountByContract[contract.id] ?? "") : amountText);
 
       if (Number.isNaN(typed) || typed <= 0) {
         continue;
@@ -187,16 +294,30 @@ export function NewReceiptDialog({
       drafts.push({
         contractId: contract.id,
         amountCents: Math.round(typed * 100),
-        // The prima is its own kind of money: it is the term of the contract
-        // the customer is settling, not one of the cuotas that follow it.
-        type: contract.downPaymentPaid < contract.terms.downPayment ? "down_payment" : "installment",
+        type: typeByContract[contract.id] ?? chosenType ?? suggestPaymentType(contract),
       });
     }
 
     return drafts;
-  }, [payable, amountByContract]);
+  }, [payable, isMultiLot, amountByContract, amountText, typeByContract, chosenType]);
 
   const total = lines.reduce((sum, line) => sum + line.amountCents, 0);
+
+  /**
+   * Saldo actual − Monto, across the lots this receipt actually puts money on.
+   *
+   * Over the LINES rather than over `payable`, so a customer with three lots
+   * who is paying one is told what that lot will owe, not a figure blended
+   * with two contracts this receipt never touches.
+   */
+  const balanceAfter = useMemo(() => {
+    const balances = new Map<string, number>(payable.map((contract) => [contract.id, contract.balance]));
+
+    return lines.reduce(
+      (sum, line) => sum + ((balances.get(line.contractId) ?? 0) - line.amountCents),
+      0,
+    );
+  }, [payable, lines]);
 
   /*
    * Is this payment already in the ledger?
@@ -268,10 +389,10 @@ export function NewReceiptDialog({
    * line stays editable afterwards. It is a proposal, never a decision.
    */
   const distribute = async () => {
-    const typed = parseMoneyInput(totalText);
+    const typed = parseMoneyInput(amountText);
 
     if (Number.isNaN(typed) || typed <= 0) {
-      setError("Escribe el total que entregó el cliente.");
+      setError("Escribe el monto que entregó el cliente.");
       return;
     }
 
@@ -421,9 +542,9 @@ export function NewReceiptDialog({
         payable,
         lineCount: lines.length,
         amountByContract,
-        totalText,
+        amountText,
       }),
-    [customerId, payable, lines, amountByContract, totalText],
+    [customerId, payable, lines, amountByContract, amountText],
   );
 
   /*
@@ -467,7 +588,11 @@ export function NewReceiptDialog({
               // Amounts belong to the previous person's lots; keeping them
               // would file one customer's money against another's contract.
               setAmountByContract({});
-              setTotalText("");
+              // Same for a type chosen by hand: "Prima" was decided about the
+              // lot that is no longer on screen.
+              setChosenType(null);
+              setTypeByContract({});
+              setAmountText("");
               setSplitNote(null);
               setOverpaymentPrompt(null);
             }}
@@ -483,6 +608,74 @@ export function NewReceiptDialog({
             ))}
           </select>
         </div>
+
+        {/*
+          Monto and Tipo sit with Cliente, Fecha and Forma de pago because they
+          are the same kind of fact: one answer about the whole payment. What is
+          left below is the part that genuinely varies per lot.
+        */}
+        <div className="form-field">
+          <label htmlFor="receipt-amount">
+            Monto <span className="required-mark">*</span>
+          </label>
+          <MoneyInput
+            id="receipt-amount"
+            value={amountText}
+            onChange={setAmountText}
+            placeholder="Ej. 5,000"
+            invalid={invalidField === AMOUNT_FIELD}
+          />
+          {isMultiLot && (
+            <span className="field-hint">
+              El total que entregó, para repartir abajo entre sus {payable.length} lotes.
+            </span>
+          )}
+        </div>
+
+        {/*
+          Only while this receipt is about one lot.
+
+          With several, the type moves into the table beside each lot, because
+          that is where it stops being one answer: a customer who bought a
+          second lot last month is settling its prima and paying a cuota on the
+          first, in the same payment. A single control here would have to pick
+          one of the two and be wrong about the other — silently, and in the
+          field the contract's prima is summed from.
+        */}
+        {!isMultiLot && (
+          <div className="form-field">
+            <label htmlFor="receipt-type">Tipo</label>
+            <select
+              id="receipt-type"
+              value={soleLot ? typeFor(soleLot) : (chosenType ?? "installment")}
+              onChange={(event) => setChosenType(event.target.value as PaymentType)}
+            >
+              {PAYMENT_TYPE_OPTIONS.map((entry) => (
+                <option key={entry.value} value={entry.value}>
+                  {entry.label}
+                </option>
+              ))}
+            </select>
+            {/* Why it says what it says, so it can be checked rather than
+                trusted. Only where there is something to check: "es una cuota
+                porque no es nada más" is noise on every receipt. */}
+            {soleLot && outstandingDownPayment(soleLot) > 0 && (
+              <span className="field-hint">
+                Faltan {formatMoney(cents(outstandingDownPayment(soleLot)), money)} de la prima.
+              </span>
+            )}
+            {soleLot && chosenType !== null && chosenType !== suggestPaymentType(soleLot) && (
+              <span className="field-hint">
+                Sugerido:{" "}
+                {
+                  PAYMENT_TYPE_OPTIONS.find(
+                    (entry) => entry.value === suggestPaymentType(soleLot),
+                  )?.label
+                }
+              </span>
+            )}
+          </div>
+        )}
 
         <div className="form-field">
           <label htmlFor="receipt-date">
@@ -538,42 +731,32 @@ export function NewReceiptDialog({
 
       {payable.length > 0 && (
         <div className="split-preview">
-          <p className="cp-section-title">
-            {isMultiLot ? `Repartir entre sus ${payable.length} lotes` : "Monto"}
-          </p>
-
+          {/* No heading for a single lot: the money was already named "Monto"
+              above, and a section title over one row of a table is furniture.
+              Several lots still need to say what the table is doing. */}
           {isMultiLot && (
-            // The fast path: the customer hands over one figure for three lots
-            // and nobody wants to do the division at the window.
-            <div className="split-total-row">
-              <div className="form-field">
-                <label htmlFor="receipt-total">Total entregado</label>
-                <MoneyInput
-                  id="receipt-total"
-                  value={totalText}
-                  onChange={setTotalText}
-                  placeholder="Ej. 25,000"
-                  invalid={invalidField === "receipt-total"}
-                />
+            <>
+              <p className="cp-section-title">Repartir entre sus {payable.length} lotes</p>
+
+              {/* The fast path: the customer hands over one figure for three
+                  lots and nobody wants to do the division at the window. */}
+              <div className="split-total-row">
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  disabled={isSplitting || amountText.trim() === ""}
+                  onClick={() => void distribute()}
+                >
+                  {isSplitting ? "Repartiendo…" : "Repartir el monto entre los lotes"}
+                </button>
               </div>
 
-              <button
-                type="button"
-                className="btn-secondary"
-                disabled={isSplitting || totalText.trim() === ""}
-                onClick={() => void distribute()}
-              >
-                {isSplitting ? "Repartiendo…" : "Repartir entre los lotes"}
-              </button>
-            </div>
-          )}
-
-          {isMultiLot && (
-            <p className="field-hint">
-              Partes iguales redondeadas a cien lempiras, sin pasarse de lo que debe cada lote. El
-              sobrante va al que más debe, así el mes siguiente le toca a otro y con el tiempo se
-              emparejan solos. Puedes ajustar cualquier línea después.
-            </p>
+              <p className="field-hint">
+                Partes iguales redondeadas a cien lempiras, sin pasarse de lo que debe cada lote.
+                El sobrante va al que más debe, así el mes siguiente le toca a otro y con el
+                tiempo se emparejan solos. Puedes ajustar cualquier línea después.
+              </p>
+            </>
           )}
 
           <table className="split-table">
@@ -581,7 +764,13 @@ export function NewReceiptDialog({
               <tr>
                 <th>Lote</th>
                 <th className="col-money">Saldo actual</th>
-                <th className="col-money">Recibe</th>
+                {/* Only when there is a division to see. One lot receives the
+                    Monto typed above, in full, and a column repeating it would
+                    be a second place for the same figure to live. The type
+                    moves down here for the same reason it moves up there: with
+                    several lots it is a per-lot answer, not one. */}
+                {isMultiLot && <th className="col-money">Recibe</th>}
+                {isMultiLot && <th className="col-type">Tipo</th>}
               </tr>
             </thead>
             <tbody>
@@ -601,20 +790,51 @@ export function NewReceiptDialog({
                       </span>
                     )}
                   </td>
-                  <td className="col-money">
-                    <MoneyInput
-                      id={`receipt-amount-${contract.id}`}
-                      invalid={invalidField === `receipt-amount-${contract.id}`}
-                      value={amountByContract[contract.id] ?? ""}
-                      onChange={(formatted) =>
-                        setAmountByContract((current) => ({
-                          ...current,
-                          [contract.id]: formatted,
-                        }))
-                      }
-                      placeholder="0"
-                    />
-                  </td>
+                  {isMultiLot && (
+                    <td className="col-money">
+                      <MoneyInput
+                        id={`receipt-amount-${contract.id}`}
+                        invalid={invalidField === `receipt-amount-${contract.id}`}
+                        value={amountByContract[contract.id] ?? ""}
+                        onChange={(formatted) =>
+                          setAmountByContract((current) => ({
+                            ...current,
+                            [contract.id]: formatted,
+                          }))
+                        }
+                        placeholder="0"
+                      />
+                    </td>
+                  )}
+                  {isMultiLot && (
+                    <td className="col-type">
+                      <select
+                        aria-label={`Tipo de pago para ${contract.lot.code}`}
+                        value={typeFor(contract)}
+                        onChange={(event) =>
+                          setTypeByContract((current) => ({
+                            ...current,
+                            [contract.id]: event.target.value as PaymentType,
+                          }))
+                        }
+                      >
+                        {PAYMENT_TYPE_OPTIONS.map((entry) => (
+                          <option key={entry.value} value={entry.value}>
+                            {entry.label}
+                          </option>
+                        ))}
+                      </select>
+                      {/* Per row, because with several lots this is the one
+                          that differs between them — and it is the whole
+                          reason the column exists. */}
+                      {outstandingDownPayment(contract) > 0 && (
+                        <span className="cell-sub">
+                          faltan {formatMoney(cents(outstandingDownPayment(contract)), money)} de
+                          prima
+                        </span>
+                      )}
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -622,10 +842,34 @@ export function NewReceiptDialog({
 
           {splitNote && <p className="form-blocked">{splitNote}</p>}
 
+          {/*
+            What the customer will still owe once this is recorded.
+
+            "Total del recibo" used to sit here, and it was the Monto typed
+            three fields up read back — the one figure on the screen nobody
+            needed telling. This is the figure they do: today it exists only on
+            the issued receipt, as `newBalance`, which means the answer to "y
+            cuánto me queda" arrives after the money has been taken.
+
+            Plain subtraction, and it agrees with the server for the same
+            reason routes/receipts.ts says its own check does: with no charges
+            in the system yet, a balance IS sale price minus payments. The
+            receipt remains the authority — this is the same arithmetic run
+            early, not a second source of truth.
+          */}
           {total > 0 && (
-            <p className="receipt-running-total">
-              Total del recibo <strong>{formatMoney(cents(total), money)}</strong>
-            </p>
+            <>
+              <p className={`receipt-running-total${balanceAfter < 0 ? " is-over" : ""}`}>
+                Saldo restante <strong>{formatMoney(cents(balanceAfter), money)}</strong>
+              </p>
+
+              {balanceAfter < 0 && (
+                <p className="receipt-over-note">
+                  Está pagando más de lo que debe. El servidor lo va a preguntar antes de
+                  aceptarlo.
+                </p>
+              )}
+            </>
           )}
         </div>
       )}

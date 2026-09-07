@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { useAnyDialogOpen } from "./components/Dialog";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Sidebar } from "./components/Sidebar";
 import { Topbar } from "./components/Topbar";
@@ -75,6 +76,7 @@ import type { Currency, MoneyView } from "./lib/money";
 import type { User } from "./lib/permissions";
 import { useLiveUpdates } from "./lib/liveUpdates";
 import { clearShareFromUrl, readShareRequest, takeSharedPayload } from "./lib/sharedIntake";
+import { useWindowFileDrop } from "./lib/useFileDrop";
 import { isMobileViewport } from "./lib/viewport";
 import { can } from "./lib/permissions";
 import type { AreaUnit } from "./lib/area";
@@ -168,11 +170,12 @@ export default function App() {
   const [isCreatingContract, setCreatingContract] = useState(false);
   const [isCreatingReceipt, setCreatingReceipt] = useState(false);
 
-  /* Comprobantes handed over by a share, waiting for the form to open with
-     them. Cleared when it closes, so pressing "Nuevo recibo" afterwards does
-     not reopen the form holding somebody else's photo. */
-  const [sharedFiles, setSharedFiles] = useState<File[] | null>(null);
-  const [shareNotice, setShareNotice] = useState<string | null>(null);
+  /* Comprobantes handed to the receipt form from outside it — shared in from
+     WhatsApp, or dropped anywhere on the window — waiting for it to open with
+     them. Cleared when it closes, so pressing "Nueva transacción" afterwards
+     does not reopen the form holding somebody else's photo. */
+  const [intakeFiles, setIntakeFiles] = useState<File[] | null>(null);
+  const [intakeNotice, setIntakeNotice] = useState<string | null>(null);
   const [receiptBeingVoided, setReceiptBeingVoided] = useState<Receipt | null>(null);
   const [transactionBeingEdited, setTransactionBeingEdited] = useState<Transaction | null>(null);
   const [contractBeingViewed, setContractBeingViewed] = useState<Contract | null>(null);
@@ -342,13 +345,13 @@ export default function App() {
     setCreatingReceipt(true);
 
     if (request === "failed") {
-      setShareNotice("No se pudo leer lo que compartiste. Adjunta el comprobante aquí abajo.");
+      setIntakeNotice("No se pudo leer lo que compartiste. Adjunta el comprobante aquí abajo.");
       return;
     }
 
     void takeSharedPayload(request.id).then((payload) => {
       if (payload && payload.files.length > 0) {
-        setSharedFiles(payload.files);
+        setIntakeFiles(payload.files);
         return;
       }
 
@@ -356,9 +359,97 @@ export default function App() {
          notification, say — and so is a payload that expired. Either way the
          form is already open on the right screen, which is most of the value;
          it just has nothing to attach. */
-      setShareNotice("Lo compartido no traía una imagen. Adjunta el comprobante aquí abajo.");
+      setIntakeNotice("Lo compartido no traía una imagen. Adjunta el comprobante aquí abajo.");
     });
   }, [session.status]);
+
+  /*
+   * Drop a comprobante anywhere on the window.
+   *
+   * The same destination as a share and the same reason for existing: the slip
+   * arrives in a chat window next to this one, and the fewer steps between
+   * seeing it and having a receipt to send back, the sooner the customer gets
+   * an answer. Dragging it onto Lindero opens the transaction form around it,
+   * on the Recibos tab, with the image already attached — no menu, no tab, no
+   * file picker, and no need to hit any particular part of the screen.
+   *
+   * Deliberately not gated on the Recibos tab being open. The whole point is
+   * that it works from wherever you happen to be looking.
+   */
+  const isDialogOpen = useAnyDialogOpen();
+
+  /* The permission both ways into the form are gated on, read from one place so
+     they cannot drift. The server checks it again on the way in; this only
+     decides what is worth offering. */
+  const canRecordPayment =
+    session.status === "signed-in" && can(session.user, "payment:record");
+
+  /** What the "Nueva transacción" button is enabled under. */
+  const canOpenReceiptForm =
+    canRecordPayment &&
+    contractsState.status === "ready" &&
+    customersState.status === "ready";
+
+  /*
+   * A first load that never landed — the one case where waiting will not help.
+   *
+   * Only ever a FIRST load: a failed refresh deliberately leaves a `ready`
+   * state alone rather than blanking a working screen (see useContracts), so
+   * "error" cannot appear under a form that was already openable.
+   */
+  const isReceiptDataMissing =
+    contractsState.status === "error" || customersState.status === "error";
+
+  const { isDraggingFiles, isWindowTarget } = useWindowFileDrop(
+    (files) => {
+      setActiveTab("receipts");
+      setIntakeNotice(null);
+      setIntakeFiles(files);
+      /*
+       * Asks for the form; does not conjure it. The dialog below renders only
+       * once the contracts and the customers have arrived, so a drop during
+       * those first seconds waits here and opens the moment they do — which is
+       * also exactly how a share behaves.
+       */
+      setCreatingReceipt(true);
+    },
+    /*
+     * Deliberately a LOOSER gate than the button above: permission, and not
+     * also "the lists have arrived".
+     *
+     * A button can afford to wait to be pressed. A drop cannot — it carries the
+     * comprobante with it, and the gesture this feature is built around is
+     * opening Lindero and dragging the slip straight in, which lands squarely
+     * in the second or two the app spends loading. Refusing it there did
+     * nothing visible and looked exactly like the feature not working.
+     *
+     * Not while a dialog is up, either. The receipt form has a dropzone of its
+     * own for a second slip, and everything else on top of the page is a form
+     * with typing in it or a document being read — none of which should be
+     * swept away by a file landing on the window behind them.
+     */
+    !canRecordPayment || isReceiptDataMissing || isDialogOpen,
+  );
+
+  /*
+   * Tell the whole page a file is looking for somewhere to land.
+   *
+   * On <body> rather than through props or a context because the places that
+   * can receive one are scattered — the receipt panel, the receipt form, the
+   * correction dialog, two of them behind portals — and every one of them
+   * should light up from the same fact without App having to know where they
+   * are. `body.modal-open` already works this way. The styling lives in
+   * styles.css, on `.proof-dropzone`.
+   *
+   * Driven by the drag itself and NOT by whether this hook would take the
+   * files: while the receipt form is open the window stands down, and the
+   * form's own dropzone is exactly the thing that should be showing itself.
+   */
+  useEffect(() => {
+    document.body.classList.toggle("is-dragging-file", isDraggingFiles);
+
+    return () => document.body.classList.remove("is-dragging-file");
+  }, [isDraggingFiles]);
 
   if (session.status === "checking") {
     return <div className="app-booting">Cargando…</div>;
@@ -702,11 +793,7 @@ export default function App() {
       // Recording a payment needs the customers to pick from and their
       // contracts to split across, so both have to have arrived first.
       case "receipts":
-        return contractsState.status === "ready" &&
-          customersState.status === "ready" &&
-          can(user, "payment:record")
-          ? () => setCreatingReceipt(true)
-          : undefined;
+        return canOpenReceiptForm ? () => setCreatingReceipt(true) : undefined;
 
       default:
         return undefined;
@@ -1015,17 +1102,17 @@ export default function App() {
             customers={customersState.customers}
             contracts={contractsState.contracts}
             money={money}
-            initialFiles={sharedFiles ?? undefined}
-            initialNotice={shareNotice ?? undefined}
+            initialFiles={intakeFiles ?? undefined}
+            initialNotice={intakeNotice ?? undefined}
             onClose={() => {
               setCreatingReceipt(false);
-              setSharedFiles(null);
-              setShareNotice(null);
+              setIntakeFiles(null);
+              setIntakeNotice(null);
             }}
             onIssued={() => {
               setCreatingReceipt(false);
-              setSharedFiles(null);
-              setShareNotice(null);
+              setIntakeFiles(null);
+              setIntakeNotice(null);
               // Everything that counts money has to be re-read, not just the
               // receipts: a payment moves the contract's balance, the lot's
               // paid-to-date and the customer's totals, all of which are
@@ -1048,6 +1135,8 @@ export default function App() {
             (transaction) => transaction.customerId === transactionBeingEdited.customerId,
           )}
           money={money}
+          canAttachProof={can(user, "payment:record")}
+          onProofsChanged={() => void reloadTransactions()}
           onClose={() => setTransactionBeingEdited(null)}
           onSaved={() => {
             setTransactionBeingEdited(null);
@@ -1259,6 +1348,27 @@ export default function App() {
         />
       )}
       </ErrorBoundary>
+
+      {/* What makes an invisible target discoverable: it appears under the
+          file the moment one is dragged over the app, and says what letting go
+          will do. It steps aside the moment the pointer finds a dropzone with a
+          more specific answer — those light up on their own while this is in
+          flight, so the choice between "a new transaction" and "onto the
+          receipt already open" is visible rather than guessed at.
+
+          `pointer-events: none` in the stylesheet is load-bearing — without it
+          this would become the drop target itself and swallow the drop meant
+          for the receipt panel's own zone underneath. */}
+      {isWindowTarget && (
+        <div className="window-drop" aria-hidden="true">
+          <div className="window-drop-card">
+            <p className="window-drop-title">Suelta el comprobante</p>
+            <p className="window-drop-hint">
+              Se abre una transacción nueva con la imagen adjunta.
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

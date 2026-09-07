@@ -2,6 +2,7 @@ import { ApiError, api } from "../../lib/api";
 import type { ViewerFile } from "../../components/DocumentViewer";
 import { CLIENT_ID } from "../../lib/liveUpdates";
 import { cents } from "../../lib/money";
+import type { PaymentType } from "./paymentType";
 import type { Receipt, ReceiptAttachment, ReceiptLine, Transaction } from "../../types";
 
 /**
@@ -134,7 +135,7 @@ export interface TransactionEdit {
   amountCents: number;
   paidOn: string;
   method: "cash" | "transfer" | "card";
-  type: "down_payment" | "installment" | "full_payment" | "adjustment";
+  type: PaymentType;
   reference: string | null;
   notes: string | null;
   reason: string;
@@ -243,7 +244,7 @@ export function storedProof(file: ReceiptAttachment, lotCode?: string | null): V
 export interface ReceiptDraftLine {
   contractId: string;
   amountCents: number;
-  type: "down_payment" | "installment" | "full_payment" | "adjustment";
+  type: PaymentType;
   notes?: string | null;
 }
 

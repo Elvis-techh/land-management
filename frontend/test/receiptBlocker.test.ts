@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  AMOUNT_FIELD,
   CUSTOMER_FIELD,
-  TOTAL_FIELD,
   amountFieldId,
   receiptBlocker,
 } from "../src/features/receipts/receiptBlocker";
@@ -20,13 +20,19 @@ import {
 const ONE_LOT = [{ id: "c1" }];
 const THREE_LOTS = [{ id: "c1" }, { id: "c2" }, { id: "c3" }];
 
-/** A draft that is ready to go, so each test can spoil exactly one thing. */
+/**
+ * A draft that is ready to go, so each test can spoil exactly one thing.
+ *
+ * One lot, so `amountByContract` is empty: the "Recibe" column only exists
+ * when there are several lots to divide between, and the Monto at the top of
+ * the form is that single lot's amount.
+ */
 const ready = {
   customerId: "cust-1",
   payable: ONE_LOT,
   lineCount: 1,
-  amountByContract: { c1: "5,000" },
-  totalText: "",
+  amountByContract: {},
+  amountText: "5,000",
 };
 
 describe("receiptBlocker", () => {
@@ -42,21 +48,21 @@ describe("receiptBlocker", () => {
   });
 
   it("names the missing monto, and points at the field that takes it", () => {
-    const blocker = receiptBlocker({ ...ready, lineCount: 0, amountByContract: {} });
+    const blocker = receiptBlocker({ ...ready, lineCount: 0, amountText: "" });
 
-    assert.equal(blocker?.focus, amountFieldId("c1"));
+    assert.equal(blocker?.focus, AMOUNT_FIELD);
     assert.match(blocker!.message, /monto/i);
   });
 
   it("says a typed zero is not an amount, rather than repeating 'falta el monto'", () => {
-    const blocker = receiptBlocker({ ...ready, lineCount: 0, amountByContract: { c1: "0" } });
+    const blocker = receiptBlocker({ ...ready, lineCount: 0, amountText: "0" });
 
     assert.match(blocker!.message, /mayor que cero/i);
-    assert.equal(blocker?.focus, amountFieldId("c1"));
+    assert.equal(blocker?.focus, AMOUNT_FIELD);
   });
 
   it("treats whitespace as nothing typed at all", () => {
-    const blocker = receiptBlocker({ ...ready, lineCount: 0, amountByContract: { c1: "   " } });
+    const blocker = receiptBlocker({ ...ready, lineCount: 0, amountText: "   " });
 
     assert.match(blocker!.message, /Falta el monto/i);
   });
@@ -69,27 +75,41 @@ describe("receiptBlocker", () => {
   });
 
   describe("several lots", () => {
-    it("sends an empty form to the total, which is the fast path", () => {
+    it("sends an empty form to the monto, which is the fast path", () => {
       const blocker = receiptBlocker({
         ...ready,
         payable: THREE_LOTS,
         lineCount: 0,
-        amountByContract: {},
+        amountText: "",
       });
 
-      assert.equal(blocker?.focus, TOTAL_FIELD);
+      assert.equal(blocker?.focus, AMOUNT_FIELD);
     });
 
-    it("catches a total that was typed but never distributed", () => {
+    it("catches a monto that was typed but never distributed", () => {
       const blocker = receiptBlocker({
         ...ready,
         payable: THREE_LOTS,
         lineCount: 0,
-        amountByContract: {},
-        totalText: "25,000",
+        amountText: "25,000",
       });
 
       assert.match(blocker!.message, /repartir/i);
+      assert.equal(blocker?.focus, amountFieldId("c1"));
+    });
+
+    /* A zero at the top is not a distribution problem, and "falta repartir"
+       would send somebody to press a button that cannot help them. */
+    it("blames the monto, not the split, when the monto itself is zero", () => {
+      const blocker = receiptBlocker({
+        ...ready,
+        payable: THREE_LOTS,
+        lineCount: 0,
+        amountText: "0",
+      });
+
+      assert.match(blocker!.message, /mayor que cero/i);
+      assert.equal(blocker?.focus, AMOUNT_FIELD);
     });
 
     it("is satisfied by one lot receiving money, not all of them", () => {
@@ -98,21 +118,24 @@ describe("receiptBlocker", () => {
           ...ready,
           payable: THREE_LOTS,
           lineCount: 1,
+          amountText: "25,000",
           amountByContract: { c2: "5,000" },
         }),
         null,
       );
     });
 
-    it("reports a zero typed into any lot, not only the first", () => {
+    it("reports a split that leaves every lot at zero", () => {
       const blocker = receiptBlocker({
         ...ready,
         payable: THREE_LOTS,
         lineCount: 0,
+        amountText: "25,000",
         amountByContract: { c3: "0" },
       });
 
-      assert.match(blocker!.message, /mayor que cero/i);
+      assert.match(blocker!.message, /ningún lote/i);
+      assert.equal(blocker?.focus, amountFieldId("c1"));
     });
   });
 });

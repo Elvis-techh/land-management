@@ -1448,9 +1448,17 @@ tbody tr:hover {
   gap: 6px;
   flex: 0 1 auto;
   min-width: 0;
+  /* Three chips, not two, since the type joined them. Each one is `nowrap`, so
+     without this the group overflows its neighbours on the narrow middle
+     widths — wide enough that the row has not broken into lines yet, too
+     narrow to hold "REC-2026-0042 · Prima · Transferencia" beside a long
+     name. */
+  flex-wrap: wrap;
+  row-gap: 3px;
 }
 
 .txn-receipt,
+.txn-type,
 .txn-method {
   padding: 2px 8px;
   border-radius: 10px;
@@ -1465,6 +1473,19 @@ tbody tr:hover {
 .txn-receipt.is-missing {
   border-style: dashed;
   color: var(--text-muted);
+}
+
+/*
+ * The type reads as a word, not as a code.
+ *
+ * The receipt number and the method beside it are identifiers — a mono face is
+ * right for something you compare character by character. "Prima" is a noun
+ * being read, and in mono among two other mono chips it stopped looking like
+ * the answer to a different question.
+ */
+.txn-type {
+  font-family: var(--font-body);
+  letter-spacing: 0.01em;
 }
 
 .txn-method.is-void {
@@ -1583,6 +1604,74 @@ tbody tr:hover {
   padding-left: 42px;
 }
 
+/* ---------- the whole window as a dropzone ---------- */
+
+/*
+ * Shown only while files are being dragged over the app. See useWindowFileDrop.
+ *
+ * It has to read as "anywhere here", not "on this box", so the dashed edge is
+ * the viewport's own and the card in the middle only carries the words.
+ */
+.window-drop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  /*
+   * Load-bearing, not decoration.
+   *
+   * A drag has one target, and if this layer took it, every real dropzone
+   * underneath would stop working the moment it appeared — including the
+   * receipt panel's own zone, whose whole job is to file a slip against the
+   * receipt already on screen rather than open a new one.
+   */
+  pointer-events: none;
+  border: 2px dashed var(--clay);
+  /*
+   * Light, and with no blur behind it.
+   *
+   * It used to blur the page, which looked better on its own and defeated the
+   * thing that matters more: while this is up, the OTHER places the file could
+   * go are lit up underneath it, and a 2px blur turns a dashed outline into a
+   * smudge. Dimming enough to push the page back is the whole job.
+   */
+  background: rgba(61, 49, 42, 0.18);
+  animation: window-drop-in 120ms ease-out;
+}
+
+.window-drop-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 20px 26px;
+  border-radius: var(--radius);
+  background: var(--card);
+  box-shadow: 0 18px 40px rgba(61, 49, 42, 0.22);
+  text-align: center;
+}
+
+.window-drop-title {
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.window-drop-hint {
+  margin: 0;
+  max-width: 36ch;
+  font-size: 0.7812rem;
+  color: var(--text-secondary);
+}
+
+@keyframes window-drop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
 /* ---------- proof of payment ---------- */
 
 .proof-field {
@@ -1603,7 +1692,25 @@ tbody tr:hover {
   text-align: center;
   transition:
     border-color 0.15s ease,
-    background 0.15s ease;
+    background 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+/*
+ * A place this file could go, while it is still in the air.
+ *
+ * Two steps, deliberately: this one says "you may drop here" from anywhere on
+ * the page, and `.is-over` below says "and this is where it would land". On the
+ * Recibos tab both answers are live at once — the window opens a new
+ * transaction, this zone files the slip against the receipt already on screen —
+ * and picking between them was previously a matter of knowing the app.
+ *
+ * `body.is-dragging-file` is set in App.tsx for as long as files are over the
+ * window, which is why this reaches zones inside dialogs too.
+ */
+body.is-dragging-file .proof-dropzone:not(.is-disabled) {
+  border-color: var(--clay);
+  box-shadow: 0 0 0 4px rgba(224, 122, 95, 0.18);
 }
 
 .proof-dropzone.is-over {
@@ -1613,6 +1720,24 @@ tbody tr:hover {
 
 .proof-dropzone.is-disabled {
   opacity: 0.6;
+}
+
+/*
+ * The correction dialog's copy of the zone.
+ *
+ * Shorter because of what is around it: on the receipt form the dropzone is
+ * most of the section, while here it sits under a form, a required motive and
+ * a scrolling history, with the files already on file beneath it. At full
+ * height it pushed "Guardar corrección" off the bottom of a laptop screen.
+ */
+.proof-dropzone.is-compact {
+  gap: 6px;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+}
+
+.proof-dropzone.is-compact .proof-dropzone-title {
+  font-size: 0.7812rem;
 }
 
 .proof-dropzone-title {
@@ -2169,17 +2294,14 @@ tbody tr:hover {
   white-space: nowrap;
 }
 
-/* The split's total field and its button, on one line. */
+/* The split's button. It used to share this line with a "Total entregado"
+   field; that figure is the Monto at the top of the form now, so what is left
+   is the action on it. */
 .split-total-row {
   display: flex;
   align-items: flex-end;
   gap: 10px;
   margin-bottom: 10px;
-}
-
-.split-total-row .form-field {
-  flex: 1;
-  min-width: 0;
 }
 
 /* ---------- narrow screens ---------- */
@@ -2425,6 +2547,20 @@ tbody tr:hover {
 .receipt-running-total strong {
   font-family: var(--font-mono);
   color: var(--text-primary);
+}
+
+/* A saldo restante below zero is not an error — customers do hand over more
+   than they owe — but it must not read like an ordinary figure, because the
+   next screen is a question about it. */
+.receipt-running-total.is-over strong {
+  color: var(--red-dark);
+}
+
+.receipt-over-note {
+  margin: 4px 0 0;
+  text-align: right;
+  font-size: 0.6875rem;
+  color: var(--red-dark);
 }
 
 .link-btn.is-danger {
@@ -5446,6 +5582,29 @@ input:disabled {
 }
 
 /*
+ * Tipo takes a fixed slice rather than its share of what is left.
+ *
+ * Left to itself the select asks for 100% of the column the same way the
+ * amount input does, and the browser settles the argument by squeezing the
+ * money — the one column on this table that must stay readable. Wide enough
+ * for "Pago total" and no wider. Only ever present on a multi-lot receipt.
+ */
+.split-table .col-type {
+  width: 8.5rem;
+}
+
+.split-table .col-type select {
+  width: 100%;
+  min-width: 0;
+}
+
+/* `.split-table td` is `nowrap` so a balance never breaks mid-figure. The line
+   under the type is a sentence, and has to be allowed to. */
+.split-table .col-type .cell-sub {
+  white-space: normal;
+}
+
+/*
  * On a phone the three columns stop being three columns.
  *
  * 264px cannot hold a lot code, "L. 164,000.00" and an editable amount side by
@@ -5459,6 +5618,10 @@ input:disabled {
  * goes with it — "Lote / Saldo actual / Recibe" over columns that no longer
  * exist would be worse than nothing — and each row keeps a rule under it so
  * three lots still read as three things.
+ *
+ * With one lot there is neither "Recibe" nor "Tipo" — the Monto and the Tipo
+ * at the top of the form are that lot's — so those cells simply are not there
+ * and the rules below that name them match nothing.
  *
  * MUST stay after the base rules above: same specificity, and the earlier
  * `@media (max-width: 640px)` block in this file sits above them, where these
@@ -5514,9 +5677,18 @@ input:disabled {
   }
 
   /* Wide enough for "125,000.00" and no wider — the balance beside it needs
-     the rest of the line. */
-  .split-table td:last-child {
+     the rest of the line. Keyed on its position rather than on `:last-child`,
+     which is Tipo here and the balance itself on a single-lot receipt. */
+  .split-table td:nth-child(3) {
     width: 8.5rem;
+  }
+
+  /* Tipo gets the whole third line. Squeezed in beside the amount it would be
+     a select about four characters wide, and "Pago total" would read as
+     "Pago…" on the row where knowing which it is matters most. */
+  .split-table .col-type {
+    grid-column: 1 / -1;
+    width: auto;
   }
 }
 
@@ -7187,6 +7359,7 @@ button.dash-tile.is-open {
 /* Respect a reader who has asked for less movement: the mark still appears,
    it simply does not slide or pulse into place. */
 @media (prefers-reduced-motion: reduce) {
+  .window-drop { animation: none; }
   .dash-drilldown { animation: none; }
   .is-revealed > .dash-card,
   .is-revealed > .card { animation: none; box-shadow: 0 0 0 2px var(--clay); }
