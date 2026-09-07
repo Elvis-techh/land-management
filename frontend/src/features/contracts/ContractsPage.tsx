@@ -264,9 +264,15 @@ export function ContractsPage({
                         </td>
                         <td className="col-money">
                           {moneyCell(group.totalPrice, "is-total")}
-                          <span className="cell-sub">
-                            prima {formatMoney(group.totalDownPayment, money)}
-                          </span>
+                          {/* Only when there is one. The rows underneath have
+                              always hidden a prima of zero; the header saying
+                              "prima L 0.00" over a purchase paid de contado was
+                              the one place the number still showed. */}
+                          {group.totalDownPayment > 0 && (
+                            <span className="cell-sub">
+                              prima {formatMoney(group.totalDownPayment, money)}
+                            </span>
+                          )}
                         </td>
                         <td className="col-money">{moneyCell(group.totalBalance, "is-total")}</td>
                         <td className="col-money">{moneyCell(group.totalMonthly, "is-total")}</td>

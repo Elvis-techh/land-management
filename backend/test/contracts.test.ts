@@ -121,6 +121,23 @@ describe("contracts", async () => {
     assert.match(response.json().message, /contado/i);
   });
 
+  it("refuses a cash sale carrying a prima", async () => {
+    // Nothing is financed on a venta de contado, so there is no remainder for a
+    // prima to hold back — and one left on the record shows up as a prima
+    // pendiente that can never be settled.
+    const response = await create(ownerCookie, {
+      ...financedSale(freshLot("N-04b")),
+      saleType: "cash",
+      termMonths: null,
+      monthlyPaymentCents: null,
+      dueDay: null,
+      downPaymentCents: lempiras(25_000),
+    });
+
+    assert.equal(response.statusCode, 400);
+    assert.match(response.json().message, /prima/i);
+  });
+
   it("records a donation at zero and refuses one with a price", async () => {
     const withPrice = await create(ownerCookie, {
       ...financedSale(freshLot("N-05")),

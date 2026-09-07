@@ -59,6 +59,10 @@ export function ContractPanel({
   const stamp = primaryStamp(contract);
   const detail = healthDetail(contract);
   const percent = paidPercent(contract);
+  // Prima and financiado are terms of a CREDIT sale. A venta de contado is
+  // settled in full at signing and a donación is settled at zero, so on those
+  // two the three rows are structurally empty — see "Lo acordado" below.
+  const isFinanced = contract.saleType === "financed";
   // Both `active` and `paid_off` contracts can still be closed — the lot is
   // spoken for either way.
   const isOpen = contract.status === "active" || contract.status === "paid_off";
@@ -125,26 +129,37 @@ export function ContractPanel({
             <span>Precio de venta</span>
             <span className="cell-money">{formatMoney(contract.terms.salePrice, money)}</span>
           </div>
-          <div className="cp-row">
-            <span>Prima acordada</span>
-            <span className="cell-money">{formatMoney(contract.terms.downPayment, money)}</span>
-          </div>
-          <div className="cp-row">
-            {/* Asked separately on purpose: a prima that was agreed and a prima
-                that arrived are different facts, and only one of them is money
-                in the account. */}
-            <span>Prima cobrada</span>
-            <span className="cell-money">
-              {formatMoney(contract.downPaymentPaid, money)}
-              {contract.downPaymentPaid < contract.terms.downPayment && (
-                <span className="cell-sub warn">pendiente</span>
-              )}
-            </span>
-          </div>
-          <div className="cp-row">
-            <span>Financiado</span>
-            <span className="cell-money">{formatMoney(contract.terms.financed, money)}</span>
-          </div>
+          {/* Only on a credit sale. On a contado these three would read a
+              prima of zero, a prima cobrada of zero, and a "financiado" equal
+              to the whole price — three lines saying nothing, and the last one
+              saying something untrue about a sale that finances nothing. What
+              a contado owes is the balance at the top of the panel. */}
+          {isFinanced && (
+            <>
+              <div className="cp-row">
+                <span>Prima acordada</span>
+                <span className="cell-money">
+                  {formatMoney(contract.terms.downPayment, money)}
+                </span>
+              </div>
+              <div className="cp-row">
+                {/* Asked separately on purpose: a prima that was agreed and a
+                    prima that arrived are different facts, and only one of them
+                    is money in the account. */}
+                <span>Prima cobrada</span>
+                <span className="cell-money">
+                  {formatMoney(contract.downPaymentPaid, money)}
+                  {contract.downPaymentPaid < contract.terms.downPayment && (
+                    <span className="cell-sub warn">pendiente</span>
+                  )}
+                </span>
+              </div>
+              <div className="cp-row">
+                <span>Financiado</span>
+                <span className="cell-money">{formatMoney(contract.terms.financed, money)}</span>
+              </div>
+            </>
+          )}
 
           {contract.terms.monthlyPayment !== null && (
             <>

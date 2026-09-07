@@ -92,7 +92,10 @@ export function ContractEditDialog({
     setError(null);
 
     const price = parseMoneyInput(salePrice);
-    const down = parseMoneyInput(downPayment);
+    // Zero unless the sale is financed: contado is settled in full at signing
+    // and a donation at zero, so neither shows a prima field, and a value left
+    // in state from before the forma de pago was changed must not be sent.
+    const down = isFinanced ? parseMoneyInput(downPayment) : 0;
     const months = parseIntOrNull(termMonths);
     const monthly = monthlyPayment.trim() === "" ? null : parseMoneyInput(monthlyPayment);
     const day = parseIntOrNull(dueDay);
@@ -101,18 +104,18 @@ export function ContractEditDialog({
       setError("Escribe el precio de venta en lempiras.");
       return;
     }
-    if (!Number.isFinite(down) || down < 0) {
-      setError("Escribe la prima en lempiras.");
-      return;
-    }
-    if (down > price) {
-      setError("La prima no puede ser mayor que el precio de venta.");
-      return;
-    }
 
     // The same relationships the server checks in `termsProblem`, mirrored here
     // so a mistake is caught before the round trip rather than after it.
     if (isFinanced) {
+      if (!Number.isFinite(down) || down < 0) {
+        setError("Escribe la prima en lempiras.");
+        return;
+      }
+      if (down > price) {
+        setError("La prima no puede ser mayor que el precio de venta.");
+        return;
+      }
       if (months === null || !Number.isFinite(months) || months < 1) {
         setError("Un contrato a crédito necesita el plazo en meses.");
         return;
@@ -172,7 +175,7 @@ export function ContractEditDialog({
         kind,
         saleType,
         salePriceCents: fromCurrencyUnits(price),
-        downPaymentCents: fromCurrencyUnits(down),
+        downPaymentCents: isFinanced ? fromCurrencyUnits(down) : 0,
         termMonths: isFinanced ? months : null,
         monthlyPaymentCents: isFinanced && monthly !== null ? fromCurrencyUnits(monthly) : null,
         dueDay: isFinanced ? day : null,
@@ -251,7 +254,8 @@ export function ContractEditDialog({
               ))}
             </select>
             <span className="field-hint">
-              Solo el crédito lleva plazo, cuota y día de pago.
+              Solo el crédito lleva prima, plazo, cuota y día de pago. Lo de contado se paga
+              completo al firmar.
             </span>
           </div>
 
@@ -270,14 +274,22 @@ export function ContractEditDialog({
             </span>
           </div>
 
-          <div className="form-field">
-            <label htmlFor="contract-down">Prima acordada</label>
-            <MoneyInput id="contract-down" value={downPayment} onChange={setDownPayment} />
-            <span className="field-hint">
-              Lo acordado, no lo cobrado. Van {formatMoney(contract.downPaymentPaid, money)}{" "}
-              recibidos.
-            </span>
-          </div>
+          {/* Only on a credit sale, for the reason the Nuevo contrato form
+              gives: a prima is the part of the price that is not financed, and
+              a venta de contado finances nothing. Switching a contract to
+              contado therefore clears the agreed prima the same way it clears
+              the plazo — the money already received as prima keeps its own
+              record in the payments. */}
+          {isFinanced && (
+            <div className="form-field">
+              <label htmlFor="contract-down">Prima acordada</label>
+              <MoneyInput id="contract-down" value={downPayment} onChange={setDownPayment} />
+              <span className="field-hint">
+                Lo acordado, no lo cobrado. Van {formatMoney(contract.downPaymentPaid, money)}{" "}
+                recibidos.
+              </span>
+            </div>
+          )}
 
           {isFinanced && (
             <>

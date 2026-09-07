@@ -91,7 +91,7 @@ describe("an expired reservation", async () => {
         kind: "contract",
         saleType: "cash",
         salePriceCents: lempiras(120_000),
-        downPaymentCents: lempiras(120_000),
+        downPaymentCents: 0,
         signedOn: "2026-08-01",
       },
     });

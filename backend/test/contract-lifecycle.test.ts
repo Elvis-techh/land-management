@@ -97,7 +97,7 @@ describe("a contract that is paid in full", async () => {
       kind: "contract",
       saleType: "cash",
       salePriceCents: lempiras(50_000),
-      downPaymentCents: lempiras(50_000),
+      downPaymentCents: 0,
       signedOn: "2026-05-01",
     });
     assert.equal(response.statusCode, 409);

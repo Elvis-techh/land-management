@@ -60,7 +60,7 @@ describe("contract numbering past 999", async () => {
         kind: "contract",
         saleType: "cash",
         salePriceCents: lempiras(150_000),
-        downPaymentCents: lempiras(150_000),
+        downPaymentCents: 0,
         signedOn: "2026-07-01",
       },
     });
@@ -92,7 +92,7 @@ describe("contract numbering past 999", async () => {
         kind: "contract",
         saleType: "cash",
         salePriceCents: lempiras(150_000),
-        downPaymentCents: lempiras(150_000),
+        downPaymentCents: 0,
         signedOn: "2027-02-01",
       },
     });

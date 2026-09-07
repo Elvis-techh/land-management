@@ -402,6 +402,15 @@ function termsProblem(
     return "Una donación se registra con precio y prima en cero.";
   }
 
+  if (body.saleType === "cash" && body.downPaymentCents > 0) {
+    // A prima is the part of the price that is NOT financed. A cash sale
+    // finances nothing — the whole price is expected at signing, which is what
+    // `expectedByCents` already assumes — so a prima on one is a number that
+    // changes no arithmetic and still gets counted as a prima pendiente on the
+    // Panel General until somebody notices.
+    return "Una venta de contado se salda al firmar: no lleva prima.";
+  }
+
   if (body.downPaymentCents > body.salePriceCents) {
     return "La prima no puede ser mayor que el precio de venta.";
   }
