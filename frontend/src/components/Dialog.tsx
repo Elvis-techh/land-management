@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 
 interface DialogProps {
@@ -29,16 +29,56 @@ interface DialogProps {
 
 /**
  * Every open dialog, oldest first. Dialogs stack — the contract panel opens the
- * edit form on top of itself — and two behaviours have to be shared across the
- * whole stack rather than fought over per dialog:
+ * edit form on top of itself — and three behaviours have to be shared across
+ * the whole stack rather than fought over per dialog:
  *
  *   - the scroll lock on <body> is released only when the LAST dialog closes,
  *     not the first inner one, or the page behind jumps while a dialog is still
  *     open;
  *   - one Escape closes only the TOP dialog, not every dialog listening on the
- *     document at once.
+ *     document at once;
+ *   - anything watching the WINDOW for a gesture has to know a dialog is in
+ *     front of it. See `useAnyDialogOpen`.
  */
 const openDialogs: symbol[] = [];
+
+/** Notified whenever a dialog opens or closes. See `useAnyDialogOpen`. */
+const stackListeners = new Set<() => void>();
+
+function subscribeToStack(listener: () => void): () => void {
+  stackListeners.add(listener);
+  return () => {
+    stackListeners.delete(listener);
+  };
+}
+
+function anyDialogOpen(): boolean {
+  return openDialogs.length > 0;
+}
+
+function stackChanged(): void {
+  for (const listener of stackListeners) {
+    listener();
+  }
+}
+
+/**
+ * Is anything floating above the page right now?
+ *
+ * Read by whoever listens on the window itself, where "in front of it" is not
+ * a question the DOM answers on its own: the app-wide file drop has to stand
+ * down while a dialog is open, or dropping a second screenshot onto an open
+ * receipt form would throw that form away and open another one.
+ *
+ * It reads the same stack Escape and the scroll lock read, rather than a
+ * boolean assembled from App's own dialog states, because that list would be
+ * wrong the moment a dialog is opened by a component that is not App — the
+ * document viewer and every confirmation prompt are opened from inside the
+ * screens themselves.
+ */
+export function useAnyDialogOpen(): boolean {
+  return useSyncExternalStore(subscribeToStack, anyDialogOpen);
+}
 
 /**
  * The shared shell for anything that floats above the page.
@@ -79,6 +119,7 @@ export function Dialog({ ariaLabel, size = "default", onClose, children }: Dialo
 
     openDialogs.push(id);
     document.body.classList.add("modal-open");
+    stackChanged();
 
     const handleKeyDown = (event: KeyboardEvent) => {
       // Only the dialog on top of the stack answers Escape.
@@ -100,6 +141,7 @@ export function Dialog({ ariaLabel, size = "default", onClose, children }: Dialo
       if (openDialogs.length === 0) {
         document.body.classList.remove("modal-open");
       }
+      stackChanged();
 
       if (previouslyFocused instanceof HTMLElement) {
         previouslyFocused.focus();
