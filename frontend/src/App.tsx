@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { useAnyDialogOpen } from "./components/Dialog";
+import { Dialog, useAnyDialogOpen } from "./components/Dialog";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Sidebar } from "./components/Sidebar";
 import { Topbar } from "./components/Topbar";
@@ -178,6 +178,11 @@ export default function App() {
   const [intakeFiles, setIntakeFiles] = useState<File[] | null>(null);
   const [intakeNotice, setIntakeNotice] = useState<string | null>(null);
 
+  /* Why a share was turned away, when it was. Separate from `intakeNotice`,
+     which the receipt form shows INSIDE itself: this is the case where that
+     form is never going to open, so the explanation has nowhere else to go. */
+  const [shareRefusal, setShareRefusal] = useState<string | null>(null);
+
   /* The same thing for the contract form: a scan dropped on the Contratos tab,
      waiting for "Nuevo contrato" to open around it. Kept apart from
      `intakeFiles` because the two forms take different files under different
@@ -324,6 +329,13 @@ export default function App() {
     return () => document.removeEventListener("mousedown", handlePointerDown);
   }, [isSidebarOpen, isSignedIn]);
 
+  /* The permission every way into the receipt form is gated on — the button,
+     a dropped file and a share — read from one place so the three cannot
+     drift. The server checks it again on the way in; this only decides what is
+     worth offering. */
+  const canRecordPayment =
+    session.status === "signed-in" && can(session.user, "payment:record");
+
   /*
    * A comprobante shared from WhatsApp.
    *
@@ -350,6 +362,32 @@ export default function App() {
     clearShareFromUrl();
 
     setActiveTab("receipts");
+
+    /*
+     * Somebody who may not record payments gets told so, here, instead of a
+     * form that would be refused on save.
+     *
+     * The share arrives from another app entirely — the slip was in WhatsApp a
+     * second ago — so silence reads as Lindero being broken rather than as an
+     * answer. Recibos is still where they are taken: the tab itself is not
+     * gated, and seeing the payment appear once a colleague records it is the
+     * next thing they will want.
+     *
+     * The payload is still claimed and thrown away. It was parked in IndexedDB
+     * by the service worker and nothing else will ever come back for it.
+     */
+    if (!canRecordPayment) {
+      setShareRefusal(
+        "Tu cuenta no puede registrar pagos. Pídele a quien sí pueda que registre el comprobante.",
+      );
+
+      if (request !== "failed") {
+        void takeSharedPayload(request.id);
+      }
+
+      return;
+    }
+
     setCreatingReceipt(true);
 
     if (request === "failed") {
@@ -369,7 +407,7 @@ export default function App() {
          it just has nothing to attach. */
       setIntakeNotice("Lo compartido no traía una imagen. Adjunta el comprobante aquí abajo.");
     });
-  }, [session.status]);
+  }, [session.status, canRecordPayment]);
 
   /*
    * Drop a file anywhere on the window and the form that wants it opens.
@@ -388,12 +426,6 @@ export default function App() {
    * a contract. See `dropTarget` below.
    */
   const isDialogOpen = useAnyDialogOpen();
-
-  /* The permission both ways into the form are gated on, read from one place so
-     they cannot drift. The server checks it again on the way in; this only
-     decides what is worth offering. */
-  const canRecordPayment =
-    session.status === "signed-in" && can(session.user, "payment:record");
 
   /** What the "Nueva transacción" button is enabled under. */
   const canOpenReceiptForm =
@@ -1156,35 +1188,55 @@ export default function App() {
       {/* The dialogs share a boundary of their own: a crash inside a form must
           not blank the tables and the navigation behind it. */}
       <ErrorBoundary variant="panel" area="una ventana">
-      {isCreatingReceipt &&
-        contractsState.status === "ready" &&
-        customersState.status === "ready" && (
-          <NewReceiptDialog
-            customers={customersState.customers}
-            contracts={contractsState.contracts}
-            money={money}
-            initialFiles={intakeFiles ?? undefined}
-            initialNotice={intakeNotice ?? undefined}
-            onClose={() => {
-              setCreatingReceipt(false);
-              setIntakeFiles(null);
-              setIntakeNotice(null);
-            }}
-            onIssued={() => {
-              setCreatingReceipt(false);
-              setIntakeFiles(null);
-              setIntakeNotice(null);
-              // Everything that counts money has to be re-read, not just the
-              // receipts: a payment moves the contract's balance, the lot's
-              // paid-to-date and the customer's totals, all of which are
-              // derived server-side.
-              void reloadTransactions();
-              void reloadContracts();
-              void reloadCustomers();
-              void reloadLots();
-            }}
-          />
-        )}
+      {/* A share this account cannot act on. Its own dialog rather than a line
+          inside the receipt form, because the whole point is that the receipt
+          form is not opening. */}
+      {shareRefusal && (
+        <Dialog ariaLabel="No se puede registrar el pago" onClose={() => setShareRefusal(null)}>
+          <div className="modal-header">
+            <div>
+              <p className="modal-eyebrow">Comprobante compartido</p>
+              <h2>No se puede registrar el pago</h2>
+            </div>
+          </div>
+
+          <p className="modal-description">{shareRefusal}</p>
+
+          <div className="modal-actions">
+            <button type="button" className="btn-secondary" onClick={() => setShareRefusal(null)}>
+              Entendido
+            </button>
+          </div>
+        </Dialog>
+      )}
+
+      {isCreatingReceipt && canOpenReceiptForm && (
+        <NewReceiptDialog
+          customers={customersState.customers}
+          contracts={contractsState.contracts}
+          money={money}
+          initialFiles={intakeFiles ?? undefined}
+          initialNotice={intakeNotice ?? undefined}
+          onClose={() => {
+            setCreatingReceipt(false);
+            setIntakeFiles(null);
+            setIntakeNotice(null);
+          }}
+          onIssued={() => {
+            setCreatingReceipt(false);
+            setIntakeFiles(null);
+            setIntakeNotice(null);
+            // Everything that counts money has to be re-read, not just the
+            // receipts: a payment moves the contract's balance, the lot's
+            // paid-to-date and the customer's totals, all of which are
+            // derived server-side.
+            void reloadTransactions();
+            void reloadContracts();
+            void reloadCustomers();
+            void reloadLots();
+          }}
+        />
+      )}
 
       {/* Editing shows the customer's whole history beside the form, so a
           changed amount is judged against the payments around it rather than
