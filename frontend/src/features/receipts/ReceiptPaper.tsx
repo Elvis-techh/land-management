@@ -6,7 +6,8 @@ import { code128Geometry } from "../../lib/code128";
 import type { MoneyView } from "../../lib/money";
 import { cents, formatDocumentMoney } from "../../lib/money";
 import { formatPhone } from "../../lib/phone";
-import type { Receipt, ReceiptLine } from "../../types";
+import type { Receipt } from "../../types";
+import { appliedLabel } from "./appliedLabel";
 
 interface ReceiptPaperProps {
   receipt: Receipt;
@@ -33,47 +34,6 @@ function longDate(isoDate: string): string {
   });
 
   return formatter.format(new Date(Date.UTC(year!, month! - 1, day!)));
-}
-
-/**
- * "cuota 7 de 24", or "cuotas 7 y 8 de 24" when one payment covered two.
- *
- * The single most useful line on the document: "recibí L 5,000" is a number,
- * "cuota 7 de 24" is an answer.
- *
- * Deliberately just the position. `appliedTo` also carries `settled`, and this
- * line used to mark an unfinished cuota "(parcial)" and print the lot's own
- * `saldo antes → después` beside it — accurate, and more than the line could
- * carry. What a customer wants from a receipt is how far through the schedule
- * they are; how much is left is the boxed figure at the bottom, and the size of
- * a cuota is that figure over the cuotas still to come. The extra clauses were
- * qualifying an answer nobody had asked for yet.
- *
- * The consequence, stated because it is a real one: on a receipt covering
- * several lots, the per-lot balances are no longer on the paper. The summary's
- * "Balance Anterior" and "Nuevo Balance Pendiente" are the total across the
- * lots on the receipt, so a three-lot customer reads one combined figure rather
- * than three. Every per-lot balance is still derived and still on the screen —
- * see the Contratos tab — it just is not printed here.
- */
-function appliedLabel(line: ReceiptLine): string | null {
-  if (line.appliedTo.length === 0) {
-    return null;
-  }
-
-  const numbers = line.appliedTo.map((installment) => String(installment.number));
-
-  const word = numbers.length === 1 ? "cuota" : "cuotas";
-  const list =
-    numbers.length === 1
-      ? numbers[0]!
-      : `${numbers.slice(0, -1).join(", ")} y ${numbers[numbers.length - 1]!}`;
-
-  // "de 24" only when we know the total. A cash sale has no schedule, and
-  // "cuota 3 de 0" is worse than saying nothing.
-  const total = line.installmentCount > 0 ? ` de ${line.installmentCount}` : "";
-
-  return `${word} ${list}${total}`;
 }
 
 /**
