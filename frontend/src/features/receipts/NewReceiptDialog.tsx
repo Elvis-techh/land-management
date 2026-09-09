@@ -599,7 +599,25 @@ export function NewReceiptDialog({
   const invalidField = attempted && blocker ? blocker.focus : null;
 
   return (
-    <Dialog ariaLabel="Registrar una transacción" onClose={onClose}>
+    /*
+     * Wider once the receipt is about more than one lot.
+     *
+     * 620px is the right ceiling for a column of form fields and the wrong one
+     * the moment a table of lots appears beside them — four columns, one of
+     * them a field being typed into, inside 566px of content box. The amount
+     * was the column that gave way: with a long project name beside it the
+     * field was cut to "12,5" while the same build looked fine against the
+     * short-named project the development data uses.
+     *
+     * `is-wide` is `min(1000px, 100%)`, so this is not a second fixed width —
+     * it takes the room where the room exists and is unchanged on a laptop that
+     * never had it.
+     */
+    <Dialog
+      ariaLabel="Registrar una transacción"
+      size={isMultiLot ? "wide" : "default"}
+      onClose={onClose}
+    >
       <div className="modal-header">
         <div>
           <p className="modal-eyebrow">Nueva transacción</p>
@@ -822,7 +840,11 @@ export function NewReceiptDialog({
             </>
           )}
 
-          <table className="split-table">
+          {/* The columns below have floors, and past a certain amount of
+              content those floors add up to more than the dialog. Scrolling is
+              the honest outcome there; clipping a figure is not. */}
+          <div className="split-table-scroll">
+            <table className="split-table">
             <thead>
               <tr>
                 <th>Lote</th>
@@ -832,7 +854,7 @@ export function NewReceiptDialog({
                     be a second place for the same figure to live. The type
                     moves down here for the same reason it moves up there: with
                     several lots it is a per-lot answer, not one. */}
-                {isMultiLot && <th className="col-money">Recibe</th>}
+                {isMultiLot && <th className="col-money col-receive">Recibe</th>}
                 {isMultiLot && <th className="col-type">Tipo</th>}
               </tr>
             </thead>
@@ -841,7 +863,11 @@ export function NewReceiptDialog({
                 <tr key={contract.id}>
                   <td>
                     <span className="code-badge">{contract.lot.code}</span>
-                    <span className="cell-sub">{contract.lot.projectName}</span>
+                    {/* Truncated by CSS when the column is tight, so the whole
+                        name has to stay reachable somewhere. */}
+                    <span className="cell-sub" title={contract.lot.projectName}>
+                      {contract.lot.projectName}
+                    </span>
                   </td>
                   <td className="col-money">
                     <span className="cell-money is-balance">
@@ -854,7 +880,7 @@ export function NewReceiptDialog({
                     )}
                   </td>
                   {isMultiLot && (
-                    <td className="col-money">
+                    <td className="col-money col-receive">
                       <MoneyInput
                         id={`receipt-amount-${contract.id}`}
                         invalid={invalidField === `receipt-amount-${contract.id}`}
@@ -901,7 +927,8 @@ export function NewReceiptDialog({
                 </tr>
               ))}
             </tbody>
-          </table>
+            </table>
+          </div>
 
           {splitNote && <p className="form-blocked">{splitNote}</p>}
 

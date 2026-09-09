@@ -5585,6 +5585,18 @@ input:disabled {
   width: 100%;
 }
 
+/*
+ * The last resort, when the columns' floors no longer fit side by side.
+ *
+ * On a phone the table is not a table — the rows become a grid, nothing is
+ * side by side, and there is nothing here to scroll. This is for the desktop
+ * case of a very long balance next to a very long project name, where the
+ * alternative is a figure quietly losing its last digits.
+ */
+.split-table-scroll {
+  overflow-x: auto;
+}
+
 /* Take the width of the column, not of an imaginary twenty characters. */
 .split-table .input-with-prefix,
 .split-table .input-with-prefix input {
@@ -5602,11 +5614,68 @@ input:disabled {
  */
 .split-table .col-type {
   width: 8.5rem;
+  /* A floor for the same reason `.col-receive` has one: `width` alone is a
+     suggestion, and once Recibe stopped being the column that gave way, this
+     was the next one the browser crushed — down to "P." and "C." beside a long
+     balance. A select clips its text rather than overflowing, so this fails
+     silently and looks like a rendering glitch rather than a layout bug. */
+  min-width: 7rem;
 }
 
 .split-table .col-type select {
   width: 100%;
   min-width: 0;
+}
+
+/*
+ * Recibe takes a fixed slice too, and for a stronger reason than Tipo.
+ *
+ * The columns either side of it are sized by their CONTENT, and one of them is
+ * a project name. "Proyecto Santiago Etapa 1" is 60% wider than "Valle Verde",
+ * and with the table at `width: 100%` that difference comes straight out of
+ * this column — the customer's own lots decide how much room is left to read
+ * what they are paying. It went unnoticed because the development data is on
+ * the short-named project: the same build showed "8,300.00" here and "12,5"
+ * against a longer name.
+ *
+ * Wide enough for a seven-figure amount with its centavos and the "L." prefix,
+ * which is more than this business writes on one lot. A field that silently
+ * cuts the number being typed into it is worse than a narrow table.
+ */
+.split-table .col-receive {
+  width: 9.5rem;
+  /*
+   * A FLOOR, not a preference. `width` on a table cell is a suggestion the
+   * browser abandons as soon as another column's content demands more, and the
+   * input inside this one carries `min-width: 0` — added so a text field's
+   * intrinsic twenty characters could not blow the table open on a phone, and
+   * with the side effect that this column will collapse to nothing on request.
+   * A long balance beside it did exactly that. This is the width below which
+   * the number being typed stops being legible, so it is the width the column
+   * does not go under.
+   */
+  min-width: 8.5rem;
+}
+
+/*
+ * The project under the lot code is truncated rather than allowed to set the
+ * width of the column.
+ *
+ * `.split-table td` is `nowrap` so a balance never breaks mid-figure — right
+ * for figures, and the reason this cell was demanding room for the longest
+ * project name in the business on every row. Letting it WRAP instead was worse:
+ * the column collapsed to its longest word and "Proyecto Santiago Etapa 1"
+ * became three lines, in a row whose height is otherwise two.
+ *
+ * So it keeps its one line and loses its tail when there is no room. The lot
+ * code above it is the identifier; the project is context, and the full name is
+ * on the element's `title` for anyone who needs it.
+ */
+.split-table td:first-child .cell-sub {
+  display: block;
+  overflow: hidden;
+  max-width: 10.5rem;
+  text-overflow: ellipsis;
 }
 
 /* `.split-table td` is `nowrap` so a balance never breaks mid-figure. The line
