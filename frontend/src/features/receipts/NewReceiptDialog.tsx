@@ -10,7 +10,12 @@ import type { MoneyView } from "../../lib/money";
 import { cents, formatMoney, parseMoneyInput, toMoneyInput } from "../../lib/money";
 import type { Contract, CustomerRecord, Receipt } from "../../types";
 import type { PaymentType } from "./paymentType";
-import { PAYMENT_TYPE_OPTIONS, outstandingDownPayment, suggestPaymentType } from "./paymentType";
+import {
+  PAYMENT_TYPE_OPTIONS,
+  outstandingDownPayment,
+  sharedPaymentType,
+  suggestPaymentType,
+} from "./paymentType";
 import type { PendingProof, ProofLot } from "./ProofDropzone";
 import { MAX_PROOFS, ProofDropzone, acceptProofFiles } from "./ProofDropzone";
 import type { ReceiptDraft, ReceiptDraftLine } from "./api";
@@ -46,6 +51,17 @@ interface NewReceiptDialogProps {
 }
 
 type Method = "cash" | "transfer" | "card";
+
+/*
+ * What the Tipo field at the top shows when the lots below are on different
+ * types.
+ *
+ * A reading, not a value: nothing is ever filed under it, and the option
+ * carrying it is disabled so it cannot be picked on purpose. It exists so the
+ * field can stay on screen for a multi-lot receipt without having to name one
+ * of the lots' types and be wrong about the others.
+ */
+const MIXED = "mixed";
 
 const METHODS: Array<{ value: Method; label: string }> = [
   { value: "cash", label: "Efectivo" },
@@ -120,25 +136,25 @@ export function NewReceiptDialog({
   /** Only meaningful with several lots: how the amount above was divided. */
   const [amountByContract, setAmountByContract] = useState<Record<string, string>>({});
   /*
-   * The type chosen in the field at the top, or `null` while the form's own
-   * answer stands.
+   * A type chosen by hand, per lot. The ONLY place a chosen type is kept.
    *
-   * Null rather than the resolved value, so "nobody has touched this" and "the
-   * user picked exactly what was suggested" stay distinguishable: the first
-   * has to keep following the customer being changed, and the second must
-   * survive it. Storing the resolved type would make the suggestion stop
-   * working the moment anyone glanced at the field.
-   */
-  const [chosenType, setChosenType] = useState<PaymentType | null>(null);
-  /*
-   * A type chosen for ONE lot, overriding everything above.
+   * There is deliberately no second piece of state for the field at the top of
+   * the form. That field reads this map — the shared value when the lots agree,
+   * "Varios" when they do not — and writing to it sets every lot at once. State
+   * of its own is exactly what would let it display "Cuota" while a line below
+   * it filed a prima, and that is not a cosmetic difference: a prima recorded
+   * as a cuota leaves `downPaymentPaid` short for the life of the contract, and
+   * no screen says so.
    *
-   * Only reachable with several lots, and it exists because they genuinely
-   * disagree: somebody who bought a second lot last month is settling its
-   * prima while still paying cuotas on the first, and one type for the whole
-   * receipt would record one of the two wrongly. A prima filed as a cuota
-   * leaves `downPaymentPaid` short for the life of the contract, and nothing
-   * on any screen says so.
+   * Per lot rather than per receipt because they genuinely disagree — somebody
+   * who bought a second lot last month is settling its prima while still paying
+   * cuotas on the first.
+   *
+   * A lot with no entry here follows `suggestPaymentType`. That absence is also
+   * what keeps "nobody has touched this" apart from "somebody picked exactly
+   * what was suggested": the first has to keep following the customer being
+   * changed, the second has to survive it. The keys are contract ids and the
+   * map is emptied when the customer changes, so both hold on their own.
    */
   const [typeByContract, setTypeByContract] = useState<Record<string, PaymentType>>({});
   const [proofs, setProofs] = useState<PendingProof[]>([]);
@@ -170,19 +186,43 @@ export function NewReceiptDialog({
   const isMultiLot = payable.length > 1;
 
   /*
-   * What kind of money this lot is receiving.
-   *
-   * Most specific answer wins: the lot's own picker, then the one field at the
-   * top of the form, then what the contract itself implies. Which of the two
-   * controls is on screen follows the same rule the rest of this form does —
-   * facts about the whole payment live at the top, anything that varies per
-   * lot lives in the table.
+   * What kind of money this lot is receiving: what somebody picked for it, or
+   * failing that what the contract itself implies.
    */
   const typeFor = (contract: Contract): PaymentType =>
-    typeByContract[contract.id] ?? chosenType ?? suggestPaymentType(contract);
+    typeByContract[contract.id] ?? suggestPaymentType(contract);
 
   /** The lot the top field speaks for, when there is exactly one. */
   const soleLot = payable.length === 1 ? payable[0]! : null;
+
+  /*
+   * The one type every lot is on, or `null` when they differ.
+   *
+   * What the field at the top displays — DERIVED, so it can only ever show a
+   * type the lines below are really using. `null` is the honest answer for a
+   * receipt settling a prima on one lot and paying a cuota on another, and the
+   * field renders it as "Varios" rather than picking a side.
+   *
+   * With no customer chosen there are no lots to read, so it falls back to the
+   * same default the form has always opened on.
+   */
+  const sharedType: PaymentType | null =
+    payable.length === 0 ? "installment" : sharedPaymentType(payable.map(typeFor));
+
+  /*
+   * Put one type on every lot at once.
+   *
+   * What the field at the top does when it is changed, and the reason changing
+   * it can never be a lie: afterwards the lots agree, so the value on screen is
+   * the value in use. Every lot is written explicitly rather than left to fall
+   * back, because "all of them are cuotas" is a decision somebody made and it
+   * has to survive a lot whose contract would have suggested otherwise.
+   *
+   * A single-lot receipt goes through here too — the same control doing the
+   * same thing to a shorter list.
+   */
+  const applyTypeToAll = (next: PaymentType) =>
+    setTypeByContract(Object.fromEntries(payable.map((contract) => [contract.id, next])));
 
   /** Near-proof, rather than a coincidence of amount and day. */
   const hasReferenceMatch = duplicates.some((match) => match.reason === "reference");
@@ -294,12 +334,12 @@ export function NewReceiptDialog({
       drafts.push({
         contractId: contract.id,
         amountCents: Math.round(typed * 100),
-        type: typeByContract[contract.id] ?? chosenType ?? suggestPaymentType(contract),
+        type: typeByContract[contract.id] ?? suggestPaymentType(contract),
       });
     }
 
     return drafts;
-  }, [payable, isMultiLot, amountByContract, amountText, typeByContract, chosenType]);
+  }, [payable, isMultiLot, amountByContract, amountText, typeByContract]);
 
   const total = lines.reduce((sum, line) => sum + line.amountCents, 0);
 
@@ -590,7 +630,6 @@ export function NewReceiptDialog({
               setAmountByContract({});
               // Same for a type chosen by hand: "Prima" was decided about the
               // lot that is no longer on screen.
-              setChosenType(null);
               setTypeByContract({});
               setAmountText("");
               setSplitNote(null);
@@ -633,38 +672,54 @@ export function NewReceiptDialog({
         </div>
 
         {/*
-          Only while this receipt is about one lot.
+          One control, on both shapes of this form.
 
-          With several, the type moves into the table beside each lot, because
-          that is where it stops being one answer: a customer who bought a
-          second lot last month is settling its prima and paying a cuota on the
-          first, in the same payment. A single control here would have to pick
-          one of the two and be wrong about the other — silently, and in the
-          field the contract's prima is summed from.
+          It READS the lots rather than standing beside them: with several it
+          shows the type they share, or "Varios" when they disagree, and
+          changing it puts one type on all of them. That is what lets it sit up
+          here at all. The objection to a top-level type was never its position
+          — it was a control that could say "Cuota" while a line below it filed
+          a prima. This one cannot say anything the lines are not already doing,
+          and the per-lot pickers in the table stay the finer answer for the
+          receipt that needs one.
         */}
-        {!isMultiLot && (
-          <div className="form-field">
-            <label htmlFor="receipt-type">Tipo</label>
-            <select
-              id="receipt-type"
-              value={soleLot ? typeFor(soleLot) : (chosenType ?? "installment")}
-              onChange={(event) => setChosenType(event.target.value as PaymentType)}
-            >
-              {PAYMENT_TYPE_OPTIONS.map((entry) => (
-                <option key={entry.value} value={entry.value}>
-                  {entry.label}
-                </option>
-              ))}
-            </select>
-            {/* Why it says what it says, so it can be checked rather than
-                trusted. Only where there is something to check: "es una cuota
-                porque no es nada más" is noise on every receipt. */}
-            {soleLot && outstandingDownPayment(soleLot) > 0 && (
-              <span className="field-hint">
-                Faltan {formatMoney(cents(outstandingDownPayment(soleLot)), money)} de la prima.
-              </span>
+        <div className="form-field">
+          <label htmlFor="receipt-type">Tipo</label>
+          <select
+            id="receipt-type"
+            value={sharedType ?? MIXED}
+            /* Nothing to put a type ON until a customer brings lots with them.
+               Left enabled it would take a choice and drop it — this field
+               writes to the lots, and before there are any there is nowhere
+               for the answer to go. */
+            disabled={payable.length === 0}
+            onChange={(event) => applyTypeToAll(event.target.value as PaymentType)}
+          >
+            {/* Only while the lots disagree, and disabled: it is a reading of
+                the table, not something a payment can be filed under. */}
+            {sharedType === null && (
+              <option value={MIXED} disabled>
+                Varios
+              </option>
             )}
-            {soleLot && chosenType !== null && chosenType !== suggestPaymentType(soleLot) && (
+            {PAYMENT_TYPE_OPTIONS.map((entry) => (
+              <option key={entry.value} value={entry.value}>
+                {entry.label}
+              </option>
+            ))}
+          </select>
+          {/* Why it says what it says, so it can be checked rather than
+              trusted. Only where there is something to check: "es una cuota
+              porque no es nada más" is noise on every receipt. With several
+              lots the same fact sits on the row it belongs to. */}
+          {soleLot && outstandingDownPayment(soleLot) > 0 && (
+            <span className="field-hint">
+              Faltan {formatMoney(cents(outstandingDownPayment(soleLot)), money)} de la prima.
+            </span>
+          )}
+          {soleLot &&
+            typeByContract[soleLot.id] !== undefined &&
+            typeByContract[soleLot.id] !== suggestPaymentType(soleLot) && (
               <span className="field-hint">
                 Sugerido:{" "}
                 {
@@ -674,8 +729,16 @@ export function NewReceiptDialog({
                 }
               </span>
             )}
-          </div>
-        )}
+          {/* How far this control reaches, because with several lots that is
+              not something the control itself can show. */}
+          {isMultiLot && (
+            <span className="field-hint">
+              {sharedType === null
+                ? `Los ${payable.length} lotes llevan tipos distintos. Elegir uno aquí los iguala.`
+                : `Aplica a los ${payable.length} lotes; abajo puedes cambiar uno.`}
+            </span>
+          )}
+        </div>
 
         <div className="form-field">
           <label htmlFor="receipt-date">

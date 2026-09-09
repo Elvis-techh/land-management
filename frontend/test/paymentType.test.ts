@@ -5,6 +5,7 @@ import {
   PAYMENT_TYPE_OPTIONS,
   outstandingDownPayment,
   paymentTypeLabel,
+  sharedPaymentType,
   suggestPaymentType,
 } from "../src/features/receipts/paymentType";
 
@@ -100,5 +101,39 @@ describe("paymentTypeLabel", () => {
      fifth value. A blank chip would read as "this payment has no type". */
   it("shows the stored word for a type it has never heard of", () => {
     assert.equal(paymentTypeLabel("reversal"), "reversal");
+  });
+});
+
+/*
+ * What the "Tipo" field at the top of "Nueva transacción" is allowed to say.
+ *
+ * The field sits in the top grid for a receipt of one lot or of five, which it
+ * can only do because it reads the lines rather than deciding for them. The
+ * case that matters is the last one: with lots on different types there is no
+ * single true answer, and inventing one would file a prima as a cuota in the
+ * field `downPaymentPaid` is summed from.
+ */
+describe("sharedPaymentType", () => {
+  it("gives the type when a single lot is the whole receipt", () => {
+    assert.equal(sharedPaymentType(["down_payment"]), "down_payment");
+  });
+
+  it("gives the type when every lot is on it", () => {
+    assert.equal(sharedPaymentType(["installment", "installment", "installment"]), "installment");
+  });
+
+  it("refuses to name one when the lots disagree", () => {
+    // The receipt this whole feature exists for: a prima on the lot bought
+    // last month, a cuota on the first. The field shows "Varios".
+    assert.equal(sharedPaymentType(["down_payment", "installment"]), null);
+  });
+
+  it("refuses on a disagreement anywhere in the list, not just the front", () => {
+    assert.equal(sharedPaymentType(["installment", "installment", "adjustment"]), null);
+  });
+
+  it("has no answer for no lots at all", () => {
+    // No customer chosen yet. The form supplies its own opening default.
+    assert.equal(sharedPaymentType([]), null);
   });
 });

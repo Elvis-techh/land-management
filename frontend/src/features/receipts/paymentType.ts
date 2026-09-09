@@ -92,3 +92,26 @@ export function suggestPaymentType(contract: TypeableContract): PaymentType {
 
   return "installment";
 }
+
+/**
+ * The one type a set of lots is all on, or `null` when they are not.
+ *
+ * What the "Tipo" field at the top of "Nueva transacción" displays. That field
+ * is a READING of the lines below rather than a setting of its own, and this is
+ * the rule that keeps it honest: a control showing "Cuota" while one of the
+ * lines filed a prima would be wrong in the field `downPaymentPaid` is summed
+ * from, silently and for the life of the contract.
+ *
+ * `null` — rendered as "Varios" — is the truthful answer for a customer
+ * settling the prima on the lot they bought last month while paying a cuota on
+ * the first. An empty list has no shared answer to give either.
+ */
+export function sharedPaymentType(types: readonly PaymentType[]): PaymentType | null {
+  const [first, ...rest] = types;
+
+  if (first === undefined) {
+    return null;
+  }
+
+  return rest.every((type) => type === first) ? first : null;
+}
