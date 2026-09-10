@@ -1883,10 +1883,26 @@ body.is-dragging-file .proof-dropzone:not(.is-disabled) {
   color: inherit;
 }
 
-/* Which lot this slip is evidence for. Only rendered when there is a choice. */
+/*
+ * Which lot this slip is evidence for. Only rendered when there is a choice.
+ *
+ * Sized by its own longest label rather than by a fixed ceiling. It used to sit
+ * at `flex: 0 0 auto` under `max-width: 140px`, and 140px is very nearly the
+ * width of "Todo el recibo" once the padding, the border and the dropdown
+ * arrow are taken out of it — so the option that is selected by default came
+ * out shaved, on a dialog with room to spare either side of the row.
+ *
+ * `flex: 0 1 auto` is the whole point: an auto basis takes the width the text
+ * needs, and a shrink factor of 1 hands some of it back when the row genuinely
+ * runs out — a phone, not the wide dialog this normally lives in. The floor
+ * keeps it a usable target when that happens, the ceiling keeps an unusually
+ * long lot code from crowding out the filename beside it, and the ellipsis
+ * makes the shrunk state read as shortened rather than broken.
+ */
 .proof-lot {
-  flex: 0 0 auto;
-  max-width: 140px;
+  flex: 0 1 auto;
+  min-width: 5rem;
+  max-width: 13rem;
   padding: 4px 6px;
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -1894,6 +1910,7 @@ body.is-dragging-file .proof-dropzone:not(.is-disabled) {
   font: inherit;
   font-size: 0.6875rem;
   color: var(--text-secondary);
+  text-overflow: ellipsis;
 }
 
 /* ---------- the comprobantes beside a receipt ---------- */
