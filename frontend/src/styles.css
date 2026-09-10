@@ -331,12 +331,28 @@ nav.nav {
   transition: background .15s ease, transform .1s ease;
 }
 
-.btn-primary:hover {
+.btn-primary:hover:not(:disabled) {
   background: var(--clay-dark);
 }
 
-.btn-primary:active {
+.btn-primary:active:not(:disabled) {
   transform: scale(0.98);
+}
+
+/*
+ * A primary button that cannot be pressed has to LOOK like it cannot be
+ * pressed.
+ *
+ * Without this it kept the full clay fill, the darkening on hover and the
+ * pointer cursor while disabled, so a dead "Guardar" was pixel-identical to a
+ * live one: pressing it did nothing, nothing on screen changed, and the only
+ * available conclusion was that saving is broken. `.btn-secondary`,
+ * `.btn-danger` and `.login-submit` all dim themselves already — the primary
+ * button, the one it matters most for, was the only one lying about its state.
+ */
+.btn-primary:disabled {
+  opacity: .5;
+  cursor: not-allowed;
 }
 
 .btn-primary svg {
@@ -3998,6 +4014,18 @@ body.modal-open {
   background: var(--paper);
   border-top: 1px solid var(--line);
   border-radius: 0 0 16px 16px;
+}
+
+/* Why the button beside it will not move. Pushed to the far left of the bar by
+   the auto margin, so it reads as a note about the row rather than a label on
+   the cancel button it sits next to. */
+.modal-actions-hint {
+  margin: 0 auto 0 0;
+  align-self: center;
+  max-width: 44ch;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  line-height: 1.35;
 }
 
 .btn-secondary {

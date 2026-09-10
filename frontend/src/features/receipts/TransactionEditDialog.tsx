@@ -110,6 +110,16 @@ export function TransactionEditDialog({
    * `onProofsChanged`; this is what the dialog itself shows meanwhile.
    */
   const [attachments, setAttachments] = useState<ReceiptAttachment[]>(transaction.attachments);
+  /*
+   * Whether a comprobante was filed or removed while this dialog was open.
+   *
+   * Not part of the correction — those writes already went to the server — but
+   * it changes what the two buttons at the bottom should SAY. Somebody who
+   * opened the pencil only to attach the slip the customer sent has finished
+   * their work, and telling them so is the difference between a screen that
+   * saved their file and a screen that appears to have swallowed it.
+   */
+  const [proofsFiled, setProofsFiled] = useState(false);
   const [proofBusy, setProofBusy] = useState<string | null>(null);
   const [proofError, setProofError] = useState<string | null>(null);
   const [viewingProof, setViewingProof] = useState<string | null>(null);
@@ -161,6 +171,53 @@ export function TransactionEditDialog({
 
   const canSubmit =
     amountCents > 0 && trimmedReason.length >= MINIMUM_REASON && hasChanges && !isSaving;
+
+  /**
+   * The comprobante was the whole errand.
+   *
+   * Nothing on the form changed and a file was filed, so there is no correction
+   * to save and the work is already on the server. The primary button becomes
+   * "Listo" and simply closes — pressing the main button and having the screen
+   * go away is what "done" looks like, and leaving a permanently dead "Guardar
+   * corrección" there instead is what made attaching a slip feel like it had
+   * failed.
+   */
+  const proofWasTheWork = !hasChanges && proofsFiled;
+
+  /**
+   * Why the button will not move, in the words of whoever is pressing it.
+   *
+   * A disabled primary button is now visibly disabled (see `.btn-primary` in
+   * styles.css), but "greyed out" only says that it is refusing — not what it
+   * is waiting for. Both of the things it waits for are invisible: a motive
+   * that is long enough, and a figure that actually differs from the one
+   * already posted. Neither is guessable from a grey rectangle.
+   *
+   * Silent on a form nobody has touched yet, though. A dialog that opens
+   * already complaining is telling somebody off for not having done anything
+   * in the half-second it has been on screen; the note is for the moment they
+   * have started and something is missing, not for the moment they arrive.
+   */
+  const blockedReason = (() => {
+    if (isSaving || canSubmit || proofWasTheWork) {
+      return null;
+    }
+
+    if (amountCents <= 0) {
+      return "Escribe el monto corregido.";
+    }
+
+    if (!hasChanges) {
+      // Reached only with a motive typed against an untouched form — i.e.
+      // somebody clearly intending to save. With a comprobante filed instead,
+      // `proofWasTheWork` answered above and the button already says "Listo".
+      return trimmedReason.length === 0
+        ? null
+        : "Ninguna cifra cambió todavía, así que no hay corrección que guardar.";
+    }
+
+    return `Escribe el motivo del cambio: al menos ${MINIMUM_REASON} caracteres.`;
+  })();
 
   const submit = async (allowOverpayment: boolean) => {
     setError(null);
@@ -254,6 +311,7 @@ export function TransactionEditDialog({
 
     if (stored.length > 0) {
       setAttachments((held) => [...held, ...stored]);
+      setProofsFiled(true);
       onProofsChanged();
     }
   };
@@ -282,6 +340,7 @@ export function TransactionEditDialog({
     try {
       await deleteAttachment(attachmentId);
       setAttachments((held) => held.filter((file) => file.id !== attachmentId));
+      setProofsFiled(true);
       onProofsChanged();
     } finally {
       setProofBusy(null);
@@ -438,8 +497,11 @@ export function TransactionEditDialog({
               concluded the app could not hold one.
 
               Nothing here is part of the correction. The files upload as they
-              are chosen and the button below stays exactly as disabled as it
-              was — attaching evidence is not rewriting a figure.
+              are chosen and the button below never becomes the thing that
+              saves them — attaching evidence is not rewriting a figure. What
+              it does change is what that button SAYS: with no figure edited
+              there is no correction left to save, so it reads "Listo" and
+              closes, instead of sitting there refusing to be pressed.
             */}
             <div className="receipt-proofs full-width">
               <div className="receipt-proofs-head">
@@ -609,17 +671,28 @@ export function TransactionEditDialog({
       </div>
 
       <div className="modal-actions">
+        {blockedReason && <p className="modal-actions-hint">{blockedReason}</p>}
+
+        {/* "Cancelar" stops being true the moment a comprobante is filed: that
+            file is on the server and this button will not take it back. */}
         <button type="button" className="btn-secondary" onClick={onClose}>
-          Cancelar
+          {proofsFiled ? "Cerrar" : "Cancelar"}
         </button>
-        <button
-          type="button"
-          className="btn-primary modal-submit"
-          disabled={!canSubmit}
-          onClick={() => void submit(false)}
-        >
-          {isSaving ? "Guardando…" : "Guardar corrección"}
-        </button>
+
+        {proofWasTheWork ? (
+          <button type="button" className="btn-primary modal-submit" onClick={onClose}>
+            Listo
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="btn-primary modal-submit"
+            disabled={!canSubmit}
+            onClick={() => void submit(false)}
+          >
+            {isSaving ? "Guardando…" : "Guardar corrección"}
+          </button>
+        )}
       </div>
 
       {/*
