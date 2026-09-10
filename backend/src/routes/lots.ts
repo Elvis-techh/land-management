@@ -18,8 +18,11 @@ const today = () => new Date().toISOString().slice(0, 10);
  * Two values here are DERIVED, never stored:
  *
  * - `holding` comes from the lot's active contract. The frontend turns it into
- *   Disponible / Reservado / Vendido, so a lot cannot claim to be available
- *   while a contract exists against it.
+ *   Disponible / Reservado / Financiado / Vendido / Donado, so a lot cannot
+ *   claim to be available while a contract exists against it. That last split
+ *   is why `saleType` and `status` travel with it: a lot under a live crédito
+ *   is still legally ours, and calling it "Vendido" would make it
+ *   indistinguishable from one paid off at contado.
  * - `paidToDate` is the sum of the contract's non-reversed payments. Nobody
  *   types a balance in Lindero.
  */
@@ -35,6 +38,8 @@ const lotsListQuery = (db: import("../db/client.js").Db, asOf: string) =>
       contractId: contracts.id,
       contractCode: contracts.code,
       contractKind: contracts.kind,
+      contractSaleType: contracts.saleType,
+      contractStatus: contracts.status,
       salePriceCents: contracts.salePriceCents,
       customerId: customers.id,
       customerName: customers.fullName,
@@ -155,6 +160,8 @@ export const lotRoutes: FastifyPluginAsync = async (app) => {
                   contractCode: row.contractCode,
                   customerId: row.customerId,
                   kind: row.contractKind,
+                  saleType: row.contractSaleType,
+                  status: row.contractStatus,
                   salePrice: row.salePriceCents,
                   paidToDate: row.paidToDateCents,
                 }

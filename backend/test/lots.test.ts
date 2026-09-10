@@ -48,6 +48,17 @@ describe("lots", async () => {
     assert.equal(free.holding, null);
   });
 
+  it("sends the sale type and lifecycle, so a crédito is not read as a sale", async () => {
+    // The Lotes tab cannot tell an active crédito from a contado sale without
+    // these two: `kind` only says hold-vs-sale, and every sale would come back
+    // looking identical. See frontend features/lots/lotStatus.ts.
+    const body = (await listLots(ownerCookie)).json();
+    const held = body.lots.find((lot: { code: string }) => lot.code === "A-01");
+
+    assert.equal(held.holding.saleType, "financed");
+    assert.equal(held.holding.status, "active");
+  });
+
   describe("editing", () => {
     const validEdit = {
       code: "A-02",

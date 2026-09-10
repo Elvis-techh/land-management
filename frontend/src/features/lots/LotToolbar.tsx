@@ -15,11 +15,13 @@ import { NO_FILTERS, countActiveFilters } from "./lotFilters";
 import { SORT_OPTIONS } from "./lotSort";
 import type { LotSort, SortField } from "./lotSort";
 
-/** The wording used everywhere else for each status. */
+/** The wording used everywhere else for each status, in inventory order. */
 const STATUS_LABELS: Array<{ value: LotStatus; label: string }> = [
   { value: "available", label: "Disponibles" },
   { value: "reserved", label: "Reservados" },
+  { value: "financed", label: "Financiados" },
   { value: "sold", label: "Vendidos" },
+  { value: "donated", label: "Donados" },
 ];
 
 interface LotToolbarProps {

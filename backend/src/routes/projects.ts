@@ -41,11 +41,12 @@ const projectsListQuery = (db: import("../db/client.js").Db, asOf: string) => {
         (SELECT COALESCE(SUM(lots.area_m2), 0) FROM lots
          WHERE lots.project_id = projects.id AND lots.archived_at IS NULL)
       `,
-      // A lot is taken when an active contract points at it. Splitting the two
-      // kinds here mirrors exactly how the Lotes tab derives its statuses, so
-      // the two screens cannot disagree about what is sold. A reservation past
-      // its expiry date has lapsed — it counts as neither reserved nor sold,
-      // and the lot falls back into `availableCount`.
+      // A lot is taken when an active contract points at it. The four counts
+      // below mirror exactly how the Lotes tab derives its statuses — see
+      // frontend features/lots/lotStatus.ts — so the two screens cannot
+      // disagree about what is sold. A reservation past its expiry date has
+      // lapsed: it counts as none of them, and the lot falls back into
+      // `availableCount`.
       reservedCount: sql<number>`
         (SELECT COUNT(*) FROM lots
          JOIN contracts ON contracts.lot_id = lots.id
@@ -53,10 +54,39 @@ const projectsListQuery = (db: import("../db/client.js").Db, asOf: string) => {
            AND (contracts.expires_on IS NULL OR contracts.expires_on >= ${asOf})
          WHERE lots.project_id = projects.id AND lots.archived_at IS NULL)
       `,
+      // Sold on credit and still being paid: the land has NOT changed hands.
+      // Kept out of `soldCount` because a company that has financed forty lots
+      // has not sold forty lots — it is owed forty balances and still owns the
+      // land behind them.
+      //
+      // "Not contado and not a donation" rather than "= financed" on purpose:
+      // it is the same fall-through lotStatus.ts makes, so a sale type neither
+      // side recognises lands in the same bucket on both instead of dropping
+      // out of the counts and inflating `availableCount` below.
+      financedCount: sql<number>`
+        (SELECT COUNT(*) FROM lots
+         JOIN contracts ON contracts.lot_id = lots.id
+           AND contracts.status = 'active' AND contracts.kind = 'contract'
+           AND contracts.sale_type NOT IN ('cash', 'donation')
+         WHERE lots.project_id = projects.id AND lots.archived_at IS NULL)
+      `,
+      // Gone: paid at contado, or paid off in full. Either way there is nothing
+      // left to collect and the lot is no longer ours.
       soldCount: sql<number>`
         (SELECT COUNT(*) FROM lots
          JOIN contracts ON contracts.lot_id = lots.id
            AND contracts.status IN ('active', 'paid_off') AND contracts.kind = 'contract'
+           AND contracts.sale_type <> 'donation'
+           AND (contracts.sale_type = 'cash' OR contracts.status = 'paid_off')
+         WHERE lots.project_id = projects.id AND lots.archived_at IS NULL)
+      `,
+      // Also gone, but not sold. Counted apart so a donated lot never inflates
+      // what the project appears to have earned.
+      donatedCount: sql<number>`
+        (SELECT COUNT(*) FROM lots
+         JOIN contracts ON contracts.lot_id = lots.id
+           AND contracts.status IN ('active', 'paid_off') AND contracts.kind = 'contract'
+           AND contracts.sale_type = 'donation'
          WHERE lots.project_id = projects.id AND lots.archived_at IS NULL)
       `,
     })
@@ -85,10 +115,18 @@ export const projectRoutes: FastifyPluginAsync = async (app) => {
         archivedAt: row.archivedAt,
         lotCount: row.lotCount,
         reservedCount: row.reservedCount,
+        financedCount: row.financedCount,
         soldCount: row.soldCount,
-        // Everything else is derived from these three, so the client is not
-        // asked to keep a fourth number in agreement with them.
-        availableCount: row.lotCount - row.reservedCount - row.soldCount,
+        donatedCount: row.donatedCount,
+        // Everything else is derived from these four, so the client is not
+        // asked to keep a fifth number in agreement with them. The four are
+        // mutually exclusive by construction, so what is left really is free.
+        availableCount:
+          row.lotCount -
+          row.reservedCount -
+          row.financedCount -
+          row.soldCount -
+          row.donatedCount,
         inventoryValue: row.inventoryCents,
         areaM2: row.areaM2,
       })),

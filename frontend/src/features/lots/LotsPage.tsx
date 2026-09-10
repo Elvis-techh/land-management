@@ -20,11 +20,18 @@ import type { LotSort } from "./lotSort";
 /**
  * How each status is shown to the user. Keeping this in one place means the
  * Spanish wording and the colour are defined once, not scattered through JSX.
+ *
+ * The colours carry the ownership line, not just five different hues: the three
+ * warm ones are lots we still own — free, held, or being paid for — and grey is
+ * a lot that has left us. So a glance down the column says how much land is
+ * still the company's without reading a single word.
  */
 const statusPresentation: Record<LotStatus, { label: string; stampClass: string }> = {
   available: { label: "Disponible", stampClass: "stamp success" },
   reserved: { label: "Reservado", stampClass: "stamp warning" },
+  financed: { label: "Financiado", stampClass: "stamp clay" },
   sold: { label: "Vendido", stampClass: "stamp neutral" },
+  donated: { label: "Donado", stampClass: "stamp neutral" },
 };
 
 interface LotsPageProps {

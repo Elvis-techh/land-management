@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { after, describe, it } from "node:test";
 
+import { contracts, lots } from "../src/db/schema.js";
 import { OWNER_PASSWORD, STAFF_PASSWORD, buildTestApp, login } from "./helpers.js";
 
 interface ProjectRow {
@@ -11,7 +13,9 @@ interface ProjectRow {
   lotCount: number;
   availableCount: number;
   reservedCount: number;
+  financedCount: number;
   soldCount: number;
+  donatedCount: number;
   inventoryValue: number;
   areaM2: number;
 }
@@ -189,5 +193,94 @@ describe("projects", async () => {
     for (const action of ["create", "update", "archive", "restore"]) {
       assert.ok(actions.includes(action), `expected a project ${action} in the history`);
     }
+  });
+});
+
+/**
+ * The counters on a project card, one contract shape at a time.
+ *
+ * Its own app because it adds lots: the counts the suite above asserts are the
+ * seed's, and a project that quietly grew to six lots would fail them.
+ *
+ * The point of the split is that "vendido" has to mean the land is gone. A lot
+ * being paid off monthly is still ours, so it is counted apart — otherwise a
+ * company financing forty lots reads as having sold forty lots it still owns.
+ */
+describe("project counts, by what the contract actually is", async () => {
+  const { app, db, sqlite, ids } = await buildTestApp();
+  after(async () => {
+    await app.close();
+    sqlite.close();
+  });
+
+  const ownerCookie = await login(app, "owner@test.hn", OWNER_PASSWORD);
+
+  // One lot per shape, on top of the seed's reserved A-01 and free A-02.
+  const shapes = [
+    { code: "B-01", saleType: "financed", status: "active" },
+    { code: "B-02", saleType: "financed", status: "paid_off" },
+    { code: "B-03", saleType: "cash", status: "active" },
+    { code: "B-04", saleType: "donation", status: "active" },
+  ] as const;
+
+  for (const [index, shape] of shapes.entries()) {
+    const lotId = randomUUID();
+
+    db.insert(lots)
+      .values({
+        id: lotId,
+        projectId: ids.projectId,
+        code: shape.code,
+        areaM2: 100,
+        basePriceCents: 1_000_000,
+      })
+      .run();
+
+    db.insert(contracts)
+      .values({
+        id: randomUUID(),
+        code: `CT-SHAPE-${index}`,
+        lotId,
+        customerId: ids.customerId,
+        kind: "contract",
+        saleType: shape.saleType,
+        status: shape.status,
+        // A donation transfers land for nothing, so its price really is zero.
+        salePriceCents: shape.saleType === "donation" ? 0 : 1_000_000,
+      })
+      .run();
+  }
+
+  const project = async (): Promise<ProjectRow> =>
+    (
+      await app.inject({ method: "GET", url: "/api/projects", headers: { cookie: ownerCookie } })
+    ).json().projects[0];
+
+  it("counts a live crédito as financed, never as sold", async () => {
+    assert.equal((await project()).financedCount, 1);
+  });
+
+  it("counts a paid-off crédito and a contado sale as sold", async () => {
+    // Both mean the same thing on the ground: nothing left to collect, and the
+    // lot is no longer ours. A crédito that finished IS a completed sale.
+    assert.equal((await project()).soldCount, 2);
+  });
+
+  it("counts a donation on its own, so a giveaway never reads as revenue", async () => {
+    assert.equal((await project()).donatedCount, 1);
+  });
+
+  it("leaves exactly the untouched lot available", async () => {
+    const row = await project();
+
+    // The four buckets are mutually exclusive, so what is left really is free:
+    // six lots, minus the reserved A-01 and the four above, leaves A-02.
+    assert.equal(row.lotCount, 6);
+    assert.equal(row.reservedCount, 1);
+    assert.equal(row.availableCount, 1);
+    assert.equal(
+      row.availableCount,
+      row.lotCount - row.reservedCount - row.financedCount - row.soldCount - row.donatedCount,
+    );
   });
 });

@@ -1,4 +1,4 @@
-import type { Customer, Lot } from "../../types";
+import type { Customer, Lot, LotStatus } from "../../types";
 import { lotStatus } from "./lotStatus";
 import { parseLotCode } from "./lotCode";
 
@@ -31,12 +31,29 @@ export const SORT_OPTIONS: Array<{
   { field: "project", label: "Proyecto", ascLabel: "A → Z", descLabel: "Z → A" },
   { field: "area", label: "Área", ascLabel: "Menor a mayor", descLabel: "Mayor a menor" },
   { field: "price", label: "Precio base", ascLabel: "Menor a mayor", descLabel: "Mayor a menor" },
-  { field: "status", label: "Estado", ascLabel: "Disponibles primero", descLabel: "Vendidos primero" },
+  {
+    field: "status",
+    label: "Estado",
+    ascLabel: "Disponibles primero",
+    descLabel: "Entregados primero",
+  },
   { field: "customer", label: "Cliente", ascLabel: "A → Z", descLabel: "Z → A" },
 ];
 
-/** Disponible → Reservado → Vendido: the order the inventory moves through. */
-const STATUS_ORDER = { available: 0, reserved: 1, sold: 2 } as const;
+/**
+ * The order the inventory moves through: free, held, being paid for, gone.
+ *
+ * Sold and donated share the last step rather than being ranked against each
+ * other — both mean the lot has left us, and neither comes "after" the other.
+ * The lot code breaks the tie, as it does for every other equal pair.
+ */
+const STATUS_ORDER: Record<LotStatus, number> = {
+  available: 0,
+  reserved: 1,
+  financed: 2,
+  sold: 3,
+  donated: 3,
+};
 
 /**
  * Compare two lot codes the way a person reads them.

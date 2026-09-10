@@ -12,7 +12,9 @@ interface ProjectsResponse {
     lotCount: number;
     availableCount: number;
     reservedCount: number;
+    financedCount: number;
     soldCount: number;
+    donatedCount: number;
     inventoryValue: number;
     areaM2: number;
   }>;

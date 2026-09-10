@@ -160,13 +160,23 @@ export function ProjectsPage({
                 </div>
               </div>
 
-              {/* The same three statuses as the Lotes tab, counted by the
-                  server from the very same contracts — so the two screens
-                  cannot tell different stories about what is sold. */}
+              {/* The same statuses as the Lotes tab, counted by the server
+                  from the very same contracts — so the two screens cannot tell
+                  different stories about what is sold. "Financiados" is kept
+                  apart from "vendidos" for the reason it is on the Lotes tab:
+                  those lots are being paid for, not gone.
+
+                  Donations are shown only when there are any. Most projects
+                  have none, and a permanent "0 donados" would take up a line
+                  to say nothing. */}
               <div className="project-status-row">
                 <span className="stamp success">{project.availableCount} disponibles</span>
                 <span className="stamp warning">{project.reservedCount} reservados</span>
+                <span className="stamp clay">{project.financedCount} financiados</span>
                 <span className="stamp neutral">{project.soldCount} vendidos</span>
+                {project.donatedCount > 0 && (
+                  <span className="stamp neutral">{project.donatedCount} donados</span>
+                )}
               </div>
 
               {/* Only worth saying when the two differ — "áreas en m², guardadas

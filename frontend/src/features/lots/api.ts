@@ -2,7 +2,7 @@ import { api } from "../../lib/api";
 import { toAreaUnit } from "../../lib/area";
 import type { AreaUnit } from "../../lib/area";
 import { cents } from "../../lib/money";
-import type { Customer, Lot } from "../../types";
+import type { ContractStatus, Customer, Lot, SaleType } from "../../types";
 
 /** Exactly what GET /api/lots sends back. Money arrives as whole centavos. */
 interface LotsResponse {
@@ -18,6 +18,8 @@ interface LotsResponse {
       contractCode: string;
       customerId: string;
       kind: "reservation" | "contract";
+      saleType: SaleType;
+      status: ContractStatus;
       salePrice: number;
       paidToDate: number;
     } | null;
@@ -68,6 +70,8 @@ export async function fetchLots(): Promise<LotsData> {
             contractCode: lot.holding.contractCode,
             customerId: lot.holding.customerId,
             kind: lot.holding.kind,
+            saleType: lot.holding.saleType,
+            status: lot.holding.status,
             salePrice: cents(lot.holding.salePrice),
             paidToDate: cents(lot.holding.paidToDate),
           }

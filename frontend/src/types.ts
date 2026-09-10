@@ -35,7 +35,12 @@ export interface Project {
   lotCount: number;
   availableCount: number;
   reservedCount: number;
+  /** Under a live crédito: being paid for, but still legally ours. */
+  financedCount: number;
+  /** Paid at contado, or financed and paid off — the land has changed hands. */
   soldCount: number;
+  /** Also gone, but given away rather than sold. */
+  donatedCount: number;
   /** Sum of the BASE prices of its active lots, in centavos. */
   inventoryValue: Cents;
   /** Total land in the project, in square metres. */
@@ -125,6 +130,22 @@ export interface LotHolding {
   contractCode: string;
   customerId: string;
   kind: HoldingKind;
+  /**
+   * Crédito / Contado / Donación, straight off the contract.
+   *
+   * Carried here because it is what decides whether the lot is still ours:
+   * without it the Lotes tab can only say "somebody has this", and a lot being
+   * paid off over five years looks exactly like one sold outright.
+   */
+  saleType: SaleType;
+  /**
+   * The contract's lifecycle. Only "active" and "paid_off" can appear — every
+   * other status releases the lot, so it would not be holding one.
+   *
+   * Needed alongside `saleType` for the one case the sale type cannot answer
+   * on its own: a crédito that has been paid in full IS a completed sale.
+   */
+  status: ContractStatus;
   /** Agreed sale price, in lempira centavos. */
   salePrice: Cents;
   /**
@@ -137,14 +158,27 @@ export interface LotHolding {
 }
 
 /**
- * Whether a lot can currently be sold.
+ * Where a lot stands: whether it can be sold, and whether we still own it.
+ *
+ * Those really are two questions, and the five values answer both at once:
+ *
+ * - `available` — nothing against it.
+ * - `reserved`  — a temporary hold. Ours; off the market until it lapses.
+ * - `financed`  — sold on crédito and still being paid. OURS: the customer is
+ *                 paying for it, and the land does not change hands until they
+ *                 finish. This is the whole reason the value exists — folding
+ *                 it into `sold` made a live crédito unreadable next to a
+ *                 contado sale, and made the inventory look emptier than it is.
+ * - `sold`      — paid at contado, or financed and paid off. Not ours any more.
+ * - `donated`   — transferred for nothing. Not ours either, but it was never a
+ *                 sale and must not be counted as one.
  *
  * This is NOT a stored field. It is derived from `Lot.holding` — see
  * `features/lots/lotStatus.ts`. Storing it alongside the holding would create
  * two sources of truth that can disagree, which is exactly the spreadsheet
  * problem Lindero exists to remove.
  */
-export type LotStatus = "available" | "reserved" | "sold";
+export type LotStatus = "available" | "reserved" | "financed" | "sold" | "donated";
 
 export interface Lot {
   id: string;
