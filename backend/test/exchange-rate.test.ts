@@ -174,3 +174,137 @@ describe("the displayed exchange rate", async () => {
     assert.equal(change.action, "update");
   });
 });
+
+/*
+ * A separate app and database from the block above, which depends on the order
+ * its own readings were written in.
+ */
+describe("nudging the displayed rate off the provider's figure", async () => {
+  const { app, db, sqlite } = await buildTestApp();
+  after(async () => {
+    mock.restoreAll();
+    await app.close();
+    sqlite.close();
+  });
+
+  const ownerCookie = await login(app, "owner@test.hn", OWNER_PASSWORD);
+  const staffCookie = await login(app, "staff@test.hn", STAFF_PASSWORD);
+
+  const read = async () =>
+    (await app.inject({ method: "GET", url: "/api/exchange-rate", headers: { cookie: ownerCookie } })).json();
+
+  const setAdjustment = (percent: number, cookie = ownerCookie) =>
+    app.inject({
+      method: "POST",
+      url: "/api/exchange-rate/adjustment",
+      headers: { cookie },
+      payload: { percent },
+    });
+
+  it("shows the provider's figure as it came, until somebody says otherwise", async () => {
+    const fetchMock = stubProvider(26.811824);
+
+    await refreshAutomaticRate(db);
+    const body = await read();
+
+    assert.equal(body.rate, 26.811824);
+    assert.equal(body.providerRate, 26.811824);
+    assert.equal(body.adjustmentPercent, 0);
+
+    fetchMock.mock.restore();
+  });
+
+  it("applies the adjustment and keeps the provider's own number beside it", async () => {
+    const response = await setAdjustment(0.33);
+
+    assert.equal(response.statusCode, 200);
+
+    const body = response.json();
+    // 26.811824 * 1.0033 — the figure the office was searching for.
+    assert.equal(body.rate, 26.900303);
+    assert.equal(body.providerRate, 26.811824);
+    assert.equal(body.adjustmentPercent, 0.33);
+  });
+
+  it("keeps the adjustment in force on the next scheduled refresh", async () => {
+    const fetchMock = stubProvider(27);
+
+    const result = await refreshAutomaticRate(db);
+    assert.equal(result.status, "updated");
+
+    const body = await read();
+    assert.equal(body.providerRate, 27);
+    assert.equal(body.rate, 27.0891, "the calibration must survive a refresh nobody asked for");
+    assert.equal(body.adjustmentPercent, 0.33);
+
+    fetchMock.mock.restore();
+  });
+
+  it("re-derives without asking the provider again", async () => {
+    const fetchMock = stubProvider(99);
+
+    const body = (await setAdjustment(-0.5)).json();
+
+    assert.equal(fetchMock.mock.callCount(), 0, "the figure on file is enough to re-derive from");
+    assert.equal(body.providerRate, 27);
+    assert.equal(body.rate, 26.865);
+
+    fetchMock.mock.restore();
+  });
+
+  it("refuses an adjustment big enough to be an invented rate", async () => {
+    const response = await setAdjustment(9);
+
+    assert.equal(response.statusCode, 400);
+    assert.equal(response.json().error, "implausible_adjustment");
+    // Unchanged.
+    assert.equal((await read()).adjustmentPercent, -0.5);
+  });
+
+  it("is not something an associate may set", async () => {
+    assert.equal((await setAdjustment(0.25, staffCookie)).statusCode, 403);
+  });
+
+  it("leaves a typed rate standing, and holds the setting for the way back", async () => {
+    const manual = await app.inject({
+      method: "POST",
+      url: "/api/exchange-rate",
+      headers: { cookie: ownerCookie },
+      payload: { rate: 27.5 },
+    });
+    assert.equal(manual.statusCode, 200);
+    // A typed rate is a final number: the adjustment is carried, not applied.
+    assert.equal(manual.json().rate, 27.5);
+    assert.equal(manual.json().adjustmentPercent, -0.5);
+
+    const changed = await setAdjustment(0.4);
+    assert.equal(changed.json().rate, 27.5, "changing the dial must not undo an override");
+    assert.equal(changed.json().source, "manual");
+    assert.equal(changed.json().adjustmentPercent, 0.4);
+
+    const fetchMock = stubProvider(26.8);
+    const back = await app.inject({
+      method: "POST",
+      url: "/api/exchange-rate/auto",
+      headers: { cookie: ownerCookie },
+    });
+
+    assert.equal(back.json().providerRate, 26.8);
+    assert.equal(back.json().rate, 26.9072, "the setting was waiting for it");
+
+    fetchMock.mock.restore();
+  });
+
+  it("files the adjustment in the history, with both numbers", async () => {
+    const events = (
+      await app.inject({ method: "GET", url: "/api/audit", headers: { cookie: ownerCookie } })
+    ).json().events;
+
+    const change = events.find(
+      (event: { entityType: string; after?: { adjustmentPercent?: number } }) =>
+        event.entityType === "exchange_rate" && event.after?.adjustmentPercent !== undefined,
+    );
+
+    assert.ok(change, "an adjustment should be answerable for later");
+  });
+});

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 import { formatRate, formatRateInput, parseMoneyInput } from "../../lib/money";
 import type { ExchangeRate } from "./api";
-import { setManualRate, useMarketRate } from "./api";
+import { setManualRate, setRateAdjustment, useMarketRate } from "./api";
 
 interface RatePanelProps {
   rate: ExchangeRate;
@@ -51,6 +51,7 @@ const SOURCE_LABELS: Record<ExchangeRate["source"], string> = {
  */
 export function RatePanel({ rate, canEdit, onChanged, onDone }: RatePanelProps) {
   const [draft, setDraft] = useState(() => formatRateInput(formatRate(rate.rate)));
+  const [adjustmentDraft, setAdjustmentDraft] = useState(() => String(rate.adjustmentPercent));
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setSaving] = useState(false);
 
@@ -59,6 +60,10 @@ export function RatePanel({ rate, canEdit, onChanged, onDone }: RatePanelProps) 
   useEffect(() => {
     setDraft(formatRateInput(formatRate(rate.rate)));
   }, [rate.rate]);
+
+  useEffect(() => {
+    setAdjustmentDraft(String(rate.adjustmentPercent));
+  }, [rate.adjustmentPercent]);
 
   const run = async (action: () => Promise<ExchangeRate>) => {
     setError(null);
@@ -85,6 +90,17 @@ export function RatePanel({ rate, canEdit, onChanged, onDone }: RatePanelProps) 
     void run(() => setManualRate(value));
   };
 
+  const handleAdjust = () => {
+    const percent = Number(adjustmentDraft.replace(",", ".").trim());
+
+    if (!Number.isFinite(percent)) {
+      setError("Escribe el ajuste como un porcentaje, por ejemplo 0.33.");
+      return;
+    }
+
+    void run(() => setRateAdjustment(percent));
+  };
+
   return (
     <div className="rate-panel">
       <p className="rate-headline">
@@ -98,7 +114,32 @@ export function RatePanel({ rate, canEdit, onChanged, onDone }: RatePanelProps) 
       </p>
 
       {rate.source === "auto" && rate.provider && (
-        <p className="field-hint">Tomada de {rate.provider}.</p>
+        <p className="field-hint">
+          Tomada de {rate.provider}
+          {/*
+            Both numbers, whenever they differ. An adjustment nobody can see is
+            indistinguishable from a feed that is simply wrong — and the next
+            person to ask why Lindero says one thing and a search says another
+            gets the answer on the same screen as the question.
+          */}
+          {rate.providerRate !== null && rate.adjustmentPercent !== 0 && (
+            <>
+              {" "}
+              a L. {formatRate(rate.providerRate)}, más un ajuste de{" "}
+              {rate.adjustmentPercent > 0 ? "+" : ""}
+              {rate.adjustmentPercent} %
+            </>
+          )}
+          .
+        </p>
+      )}
+
+      {rate.source === "manual" && rate.adjustmentPercent !== 0 && (
+        <p className="field-hint">
+          El ajuste de {rate.adjustmentPercent > 0 ? "+" : ""}
+          {rate.adjustmentPercent} % está guardado, pero no se aplica a una tasa escrita a
+          mano. Vuelve a automática para que cuente.
+        </p>
       )}
       {rate.source === "default" && (
         <p className="field-hint">
@@ -111,16 +152,68 @@ export function RatePanel({ rate, canEdit, onChanged, onDone }: RatePanelProps) 
 
       {canEdit ? (
         <>
+          {/*
+            Two fields, and the difference between them is the whole point.
+
+            The first overrides the feed and freezes it: the number typed is the
+            number shown, until somebody asks for automatic again. The second
+            stays pinned to the feed and travels with it. "The market moved and
+            nobody told us" wants the first; "the market rate is not the number
+            people here quote" wants the second, and using the first for it
+            means retyping a rate by hand every morning forever.
+          */}
           <div className="rate-edit">
             <label htmlFor="rate-input">Lempiras por dólar</label>
-            <input
-              id="rate-input"
-              type="text"
-              inputMode="decimal"
-              autoComplete="off"
-              value={draft}
-              onChange={(event) => setDraft(formatRateInput(event.target.value))}
-            />
+            <div className="rate-edit-row">
+              <input
+                id="rate-input"
+                type="text"
+                inputMode="decimal"
+                autoComplete="off"
+                value={draft}
+                onChange={(event) => setDraft(formatRateInput(event.target.value))}
+              />
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={isSaving}
+                onClick={handleSave}
+              >
+                {isSaving ? "Guardando…" : "Guardar"}
+              </button>
+            </div>
+            <span className="field-hint">
+              Escribirla la fija: deja de seguir al mercado hasta que alguien pida lo
+              contrario.
+            </span>
+          </div>
+
+          <div className="rate-edit">
+            <label htmlFor="rate-adjustment">Ajuste sobre la tasa del mercado (%)</label>
+            <div className="rate-edit-row">
+              <input
+                id="rate-adjustment"
+                type="text"
+                inputMode="decimal"
+                autoComplete="off"
+                value={adjustmentDraft}
+                onChange={(event) => setAdjustmentDraft(event.target.value)}
+              />
+              <button
+                type="button"
+                className="btn-secondary"
+                disabled={isSaving}
+                onClick={handleAdjust}
+              >
+                Guardar ajuste
+              </button>
+            </div>
+            <span className="field-hint">
+              El proveedor publica la tasa del mercado, y un banco compra y vende a los lados
+              de ella. Un porcentaje, no una cantidad, para que siga significando lo mismo
+              cuando la tasa se mueva: con 0.33 %, una tasa de 26.8118 se muestra como
+              26.9003.
+            </span>
           </div>
 
           {error && <p className="form-error">{error}</p>}
@@ -133,9 +226,6 @@ export function RatePanel({ rate, canEdit, onChanged, onDone }: RatePanelProps) 
               onClick={() => void run(useMarketRate)}
             >
               Volver a automática
-            </button>
-            <button type="button" className="btn-primary" disabled={isSaving} onClick={handleSave}>
-              {isSaving ? "Guardando…" : "Guardar"}
             </button>
           </div>
         </>

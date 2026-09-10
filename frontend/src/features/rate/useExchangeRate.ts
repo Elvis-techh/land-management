@@ -16,6 +16,9 @@ import { FALLBACK_USD_RATE } from "../../lib/money";
  */
 const PLACEHOLDER: ExchangeRate = {
   rate: FALLBACK_USD_RATE,
+  // Nothing has been asked of the provider yet, and nothing has been adjusted.
+  providerRate: null,
+  adjustmentPercent: 0,
   source: "default",
   provider: null,
   capturedAt: null,

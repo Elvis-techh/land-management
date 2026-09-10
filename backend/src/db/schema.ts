@@ -157,6 +157,32 @@ export const exchangeRates = sqliteTable("exchange_rates", {
    * accept that when the value is only ever displayed and compared.
    */
   rate: text("rate").notNull(),
+  /**
+   * What the provider actually said, before the adjustment below was applied.
+   * Null on a manual reading — nobody asked the provider — and on every row
+   * written before adjustments existed.
+   *
+   * Kept so the displayed number stays answerable for: "26.90" on its own
+   * cannot be checked against anything, while "26.811824 from the feed, plus
+   * 0.33%" can be, two years later, by somebody who was not here.
+   */
+  providerRate: text("provider_rate"),
+  /**
+   * The percentage added to the provider's figure to get `rate`, as a decimal
+   * string. Zero, or absent, means the feed's number is shown as it came.
+   *
+   * It exists because the indicative mid-market rate this app reads is not the
+   * number anybody in Honduras quotes — a bank's buy and sell sit either side
+   * of it, and the widely-searched figures run above it too. This is the one
+   * dial that closes that gap without pretending the feed says something it
+   * does not.
+   *
+   * Carried forward onto MANUAL rows as well, where it is stored but not
+   * applied: a typed rate is a final number. Keeping it there is what lets the
+   * setting survive an override and still be in force on the way back to
+   * automatic.
+   */
+  adjustmentPercent: text("adjustment_percent"),
   /** "auto" — fetched from the provider — or "manual", typed by a supervisor. */
   source: text("source").notNull(),
   /** Named for the record, so a rate can be traced back to where it came from. */

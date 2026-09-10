@@ -92,6 +92,13 @@
       "when": 1788620576206,
       "tag": "0012_contract_documents",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1788706976206,
+      "tag": "0013_rate_adjustment",
+      "breakpoints": true
     }
   ]
 }

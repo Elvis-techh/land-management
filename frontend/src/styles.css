@@ -3689,6 +3689,26 @@ body.modal-open {
   font-size: 0.875rem;
 }
 
+/* An input and the button that saves it, on one line. The panel holds two
+   fields that do different things, and a shared row of buttons at the bottom
+   left neither of them saying which was which. */
+.rate-edit-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.rate-edit-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.rate-edit-row .btn-primary,
+.rate-edit-row .btn-secondary {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .rate-actions {
   display: flex;
   gap: 8px;
