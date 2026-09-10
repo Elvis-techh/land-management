@@ -2014,6 +2014,97 @@ body.is-dragging-file .proof-dropzone:not(.is-disabled) {
   border-color: var(--clay);
 }
 
+/*
+ * The same square, empty: where a comprobante would be, and where one can be
+ * dropped.
+ *
+ * A payment with nothing in this column is precisely the payment somebody is
+ * holding a screenshot for, and the blank space was already saying "nothing on
+ * file" — it just had no way to say "so put it here". Filing one meant opening
+ * the row's pencil and finding the zone inside the dialog.
+ *
+ * Built on `.proof-dropzone` rather than beside it, so it inherits both halves
+ * of the highlight every other target in the app uses: the clay ring the moment
+ * files come over the window, and the filled state when this is the square they
+ * would land on. In a list of sixty rows the second half matters more than it
+ * ever did in a dialog — the whole question while dragging is which row is
+ * about to take it.
+ */
+.txn-proof-slot {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  padding: 0 0 0 12px;
+}
+
+/* Holds the column open on a row that can take neither. Same 12px + 32px the
+   thumbnail and the slot occupy, so every date in the list starts level. */
+.txn-proof-slot.is-empty {
+  width: 44px;
+}
+
+.proof-dropzone.is-slot {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-width: 1.5px;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  /* Quiet until it is wanted. Sixty dashed squares down a list would read as
+     sixty warnings; at this weight the column stays scannable and the shape is
+     there for anyone dragging a file who goes looking for it. */
+  opacity: .45;
+  transition:
+    border-color .15s ease,
+    background .15s ease,
+    box-shadow .15s ease,
+    opacity .15s ease;
+}
+
+.proof-dropzone.is-slot svg {
+  width: 15px;
+  height: 15px;
+}
+
+.proof-dropzone.is-slot:hover,
+.proof-dropzone.is-slot:focus-visible,
+body.is-dragging-file .proof-dropzone.is-slot:not(.is-disabled) {
+  opacity: 1;
+}
+
+.proof-dropzone.is-slot:hover {
+  border-color: var(--clay);
+  color: var(--clay);
+}
+
+/*
+ * Uploading. The square is 32px and there is nowhere to put "Subiendo foto.jpg…",
+ * so the pulse is the whole message — without it a slow connection looks
+ * exactly like a drop that did not register, and the natural response to that
+ * is to drop the file again.
+ */
+.proof-dropzone.is-slot.is-disabled {
+  border-color: var(--clay);
+  color: var(--clay);
+  cursor: progress;
+  animation: proof-slot-busy 1.1s ease-in-out infinite;
+}
+
+@keyframes proof-slot-busy {
+  0%, 100% { opacity: .4; }
+  50% { opacity: 1; }
+}
+
+/* The upload failed and there is no room here for the sentence saying why —
+   it is on the button's tooltip. This is what sends somebody to read it. */
+.proof-dropzone.is-slot.is-error {
+  opacity: 1;
+  border-color: var(--red-dark);
+  color: var(--red-dark);
+}
+
 /* "3" on the corner, for a payment with more than one slip behind it. */
 .txn-proof-count {
   position: absolute;

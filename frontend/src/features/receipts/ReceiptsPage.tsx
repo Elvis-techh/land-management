@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { IconChevronDown, IconEdit, IconWhatsApp } from "../../components/Icons";
+import { IconChevronDown, IconEdit, IconPaperclip, IconWhatsApp } from "../../components/Icons";
 import { readableSize } from "../../lib/documentFiles";
 import type { MoneyView } from "../../lib/money";
 import { cents, formatMoney } from "../../lib/money";
@@ -16,6 +16,7 @@ import { useFileDrop } from "../../lib/useFileDrop";
 import { paymentTypeLabel } from "./paymentType";
 import { MAX_PROOFS, PROOF_ACCEPT, acceptProofFiles } from "./ProofDropzone";
 import { TransactionToolbar } from "./TransactionToolbar";
+import { useProofAttach } from "./useProofAttach";
 import type { TransactionView } from "./TransactionToolbar";
 import { deleteAttachment, fetchReceipt, storedProof, uploadAttachment } from "./api";
 import { receiptToPng } from "./receiptImage";
@@ -72,6 +73,10 @@ interface RowProps {
   onEdit: () => void;
   /** Show this row's comprobantes, without selecting the row. */
   onOpenProof: (files: ViewerFile[], startId: string) => void;
+  /** Whether this user may file the customer's slip against a payment. */
+  canAttachProof: boolean;
+  /** One was just filed from this row; the list behind has to re-read. */
+  onProofsChanged: () => void;
   /** Hidden inside a customer group, where the name is already the heading. */
   showCustomer: boolean;
 }
@@ -92,9 +97,12 @@ function TransactionRow({
   onSelect,
   onEdit,
   onOpenProof,
+  canAttachProof,
+  onProofsChanged,
   showCustomer,
 }: RowProps) {
   const isReversed = transaction.reversedAt !== null;
+  const slotInputRef = useRef<HTMLInputElement>(null);
 
   /*
    * This row's evidence, ready for the viewer.
@@ -106,6 +114,37 @@ function TransactionRow({
   const proofs = transaction.attachments.map((file) =>
     storedProof(file, file.paymentId === null ? null : transaction.lotCode),
   );
+
+  /*
+   * Tagged with `transaction.id`, so on a receipt covering three lots the slip
+   * lands on THIS lot rather than on the paper as a whole — the same rule the
+   * correction dialog files by. The row's own copy of the list is the one App
+   * handed down, so nothing is patched locally: `onProofsChanged` re-reads and
+   * the square below turns into the thumbnail.
+   */
+  const attach = useProofAttach({
+    receiptId: transaction.receiptId,
+    paymentId: transaction.id,
+    heldCount: proofs.length,
+    onStored: onProofsChanged,
+  });
+
+  /**
+   * Whether this row offers somewhere to drop the customer's slip.
+   *
+   * The gap in the leftmost column is not decoration: a payment with no
+   * comprobante is exactly the payment somebody is holding a screenshot for,
+   * and until now the only way to file it was to open the row's pencil and
+   * find the zone inside. The empty square IS the affordance — it says both
+   * "nothing is on file here" and "put it here", which is what the blank space
+   * was already trying to say and failing.
+   *
+   * Not on a reversed row: that money is out of the accounts and the row shows
+   * no actions at all, struck through. Not without a receipt either — a
+   * comprobante is filed against one, so there would be nowhere to put it.
+   */
+  const offersProofSlot =
+    canAttachProof && !isReversed && transaction.receiptId !== null && proofs.length === 0;
 
   return (
     <div
@@ -135,6 +174,70 @@ function TransactionRow({
           <DocumentThumb file={proofs[0]!} />
           {proofs.length > 1 && <span className="txn-proof-count">{proofs.length}</span>}
         </button>
+      )}
+
+      {/*
+        The same square, empty, as a place to drop one.
+
+        It carries `proof-dropzone` so it lights up with every other target in
+        the app the moment files come over the window, and `is-over` when this
+        is the one they would land on — a row in a list of sixty needs to say
+        which square is about to take the file more than a full-width zone in a
+        dialog ever did.
+
+        `aria-disabled` while an upload is in flight rather than `disabled`: a
+        disabled button stops receiving drag events, so the drop would fall
+        through to the window behind and open a whole new transaction form on
+        top of the upload already running.
+      */}
+      {offersProofSlot && (
+        <div className="txn-proof-slot">
+          <button
+            type="button"
+            className={`proof-dropzone is-slot${attach.isDraggingOver ? " is-over" : ""}${
+              attach.busy ? " is-disabled" : ""
+            }${attach.error ? " is-error" : ""}`}
+            {...attach.dropHandlers}
+            aria-disabled={attach.busy !== null}
+            onClick={() => {
+              if (attach.busy === null) {
+                slotInputRef.current?.click();
+              }
+            }}
+            title={
+              attach.error ??
+              (attach.busy ?? "Sin comprobante. Suelta aquí el que envió el cliente, o haz clic para buscarlo.")
+            }
+            aria-label={`Adjuntar el comprobante de ${transaction.customerName} del ${transaction.paidOn}`}
+          >
+            <IconPaperclip />
+          </button>
+
+          <input
+            ref={slotInputRef}
+            type="file"
+            multiple
+            className="proof-input"
+            accept={PROOF_ACCEPT}
+            onChange={(event) => {
+              void attach.addProofs(event.target.files);
+              // Cleared so choosing the SAME file twice in a row still fires a
+              // change event.
+              event.target.value = "";
+            }}
+          />
+        </div>
+      )}
+
+      {/*
+        Neither a slip nor anywhere to put one — a reversed payment, money
+        recorded before there were receipts, or somebody who may not attach.
+        The column is held open anyway: the date is the first thing the eye
+        scans down this list, and a handful of rows starting 44px to the left
+        of the rest turns that column into a zigzag.
+      */}
+      {proofs.length === 0 && !offersProofSlot && (
+        <div className="txn-proof-slot is-empty" aria-hidden="true" />
       )}
 
       <button type="button" className="txn-main" onClick={onSelect}>
@@ -759,6 +862,8 @@ export function ReceiptsPage({
               onSelect={() => select(transaction)}
               onEdit={() => onEditTransaction(transaction)}
               onOpenProof={(files, startId) => setViewing({ source: "row", files, startId })}
+              canAttachProof={canRecord}
+              onProofsChanged={onProofsChanged}
               showCustomer
             />
           ))}
@@ -808,6 +913,8 @@ export function ReceiptsPage({
                         onOpenProof={(files, startId) =>
                           setViewing({ source: "row", files, startId })
                         }
+                        canAttachProof={canRecord}
+                        onProofsChanged={onProofsChanged}
                         showCustomer={false}
                       />
                     ))}
