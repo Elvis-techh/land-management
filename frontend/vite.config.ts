@@ -21,6 +21,13 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
+    // Refuse to start rather than quietly moving to 5174 when 5173 is taken —
+    // by a second `npm run dev`, or by anything else on the machine. Google's
+    // OAuth origin for the Drive picker (see src/lib/googleDrive.ts) is
+    // registered as exactly http://localhost:5173; a silent move there is not
+    // a working dev server on a different port, it is Drive sign-in failing
+    // for a reason nothing on screen explains.
+    strictPort: true,
     // `host: true` exposes the dev server on your local network so you can open
     // Lindero on your real phone (http://<your-computer-ip>:5173) instead of
     // only trusting Chrome's device toolbar.
