@@ -1,8 +1,13 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { DocumentViewer, DocumentThumb } from "../../components/DocumentViewer";
 import type { ViewerFile } from "../../components/DocumentViewer";
 import { readableSize } from "../../lib/documentFiles";
+import {
+  googleDriveConfigured,
+  openGoogleDrivePicker,
+  preloadGoogleDrive,
+} from "../../lib/googleDrive";
 import { useFileDrop } from "../../lib/useFileDrop";
 
 /**
@@ -183,9 +188,19 @@ export function ProofDropzone({
   const [viewing, setViewing] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  /** "Descargando contrato.pdf…" while Google Drive is being read, else null. */
+  const [driveBusy, setDriveBusy] = useState<string | null>(null);
+
+  /*
+   * Google's scripts are fetched when this appears rather than when the button
+   * is clicked, so the consent popup opens inside the click that asked for it.
+   * See `preloadGoogleDrive`.
+   */
+  useEffect(preloadGoogleDrive, []);
+
   const alreadyHeld = files.length;
 
-  const accept = (incoming: FileList | null) => {
+  const accept = (incoming: FileList | File[] | null) => {
     if (!incoming || incoming.length === 0) {
       return;
     }
@@ -211,6 +226,35 @@ export function ProofDropzone({
     }
 
     onFilesChange(files.filter((entry) => entry.id !== id));
+  };
+
+  /**
+   * The same act as choosing a file, with Google Drive as the drawer it comes
+   * out of. Everything after the download is the ordinary path: the files go
+   * through `accept`, so the type, size and count rules are the ones the server
+   * will apply, and a slip from Drive is previewable before saving exactly like
+   * a dropped one.
+   */
+  const pickFromDrive = async () => {
+    setDriveBusy("Abriendo Google Drive…");
+
+    try {
+      const { files: picked, rejections } = await openGoogleDrivePicker({
+        mimeTypes: ACCEPTED,
+        maxBytes: MAX_BYTES,
+        onProgress: setDriveBusy,
+      });
+
+      for (const message of rejections) {
+        onReject(message);
+      }
+
+      accept(picked);
+    } catch (caught) {
+      onReject(caught instanceof Error ? caught.message : "No se pudo abrir Google Drive.");
+    } finally {
+      setDriveBusy(null);
+    }
   };
 
   const assignLot = (id: string, contractId: string | null) =>
@@ -244,14 +288,31 @@ export function ProofDropzone({
           hasta 12 MB.
         </p>
 
-        <button
-          type="button"
-          className="btn-secondary"
-          disabled={disabled}
-          onClick={() => inputRef.current?.click()}
-        >
-          Elegir archivo
-        </button>
+        <div className="proof-dropzone-actions">
+          <button
+            type="button"
+            className="btn-secondary"
+            disabled={disabled || driveBusy !== null}
+            onClick={() => inputRef.current?.click()}
+          >
+            Elegir archivo
+          </button>
+
+          {/* Left out entirely where no Google credentials were configured —
+              see `googleDriveConfigured`. */}
+          {googleDriveConfigured() && (
+            <button
+              type="button"
+              className="btn-secondary"
+              disabled={disabled || driveBusy !== null}
+              onClick={() => void pickFromDrive()}
+            >
+              Desde Google Drive
+            </button>
+          )}
+        </div>
+
+        {driveBusy !== null && <p className="proof-dropzone-hint">{driveBusy}</p>}
 
         <input
           ref={inputRef}

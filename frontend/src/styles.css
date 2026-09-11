@@ -1780,6 +1780,16 @@ body.is-dragging-file .proof-dropzone:not(.is-disabled) {
   color: var(--text-muted);
 }
 
+/* The two ways to reach a file that was not dragged in: this device, or Google
+   Drive. Wraps rather than shrinks, so the second button drops onto its own
+   line on a phone instead of squeezing both labels to two words each. */
+.proof-dropzone-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
 /* The real input is driven by the button above it. Hidden with clip rather than
    `display: none` so it stays focusable and reachable by a screen reader. */
 .proof-input {
