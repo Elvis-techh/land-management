@@ -3,7 +3,7 @@ import { useState } from "react";
 import { useFileDrop } from "../../lib/useFileDrop";
 import type { ReceiptAttachment } from "../../types";
 import { uploadAttachment } from "./api";
-import { MAX_PROOFS, acceptProofFiles } from "./ProofDropzone";
+import { MAX_PROOFS, acceptProofFiles, pickProofsFromDrive } from "./ProofDropzone";
 
 interface ProofAttachOptions {
   /**
@@ -28,6 +28,12 @@ interface ProofAttachOptions {
 export interface ProofAttach {
   /** Take these files. Safe to call with a null or empty list. */
   addProofs: (incoming: FileList | File[] | null) => Promise<void>;
+  /**
+   * Choose them from Google Drive instead. MUST run inside a click — the
+   * consent popup opens during this call. Offer it only where
+   * `googleDriveConfigured()` says there is a Google project to ask.
+   */
+  pickFromDrive: () => Promise<void>;
   /** "Subiendo foto.jpg…" while one is in flight, else null. */
   busy: string | null;
   /** The first complaint from the last batch, if any. */
@@ -119,6 +125,38 @@ export function useProofAttach({
   };
 
   /*
+   * The same act again, with Drive as the drawer. Everything after the
+   * download is `addProofs`, so the rules, the one-at-a-time upload and the
+   * re-read are the ones a dropped file gets.
+   *
+   * Drive's own complaints — too big to fetch, a Google Doc — are shown only
+   * when the upload had none of its own. `addProofs` clears the error when it
+   * starts, so setting Drive's first would have it wiped before anybody read it.
+   */
+  const pickFromDrive = async () => {
+    if (receiptId === null) {
+      return;
+    }
+
+    setError(null);
+    setBusy("Abriendo Google Drive…");
+
+    try {
+      const { files, rejections } = await pickProofsFromDrive(setBusy);
+
+      await addProofs(files);
+
+      if (rejections.length > 0) {
+        setError((shown) => shown ?? rejections[0]!);
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "No se pudo abrir Google Drive.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  /*
    * Dropping is the same act as choosing, so it goes through the same
    * function — the type, size and count rules, the sequential upload and the
    * failure that leaves the payment untouched all live in `addProofs`.
@@ -130,6 +168,7 @@ export function useProofAttach({
 
   return {
     addProofs,
+    pickFromDrive,
     busy,
     error,
     clearError: () => setError(null),

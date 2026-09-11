@@ -2115,6 +2115,14 @@ body.is-dragging-file .proof-dropzone.is-slot:not(.is-disabled) {
   color: var(--red-dark);
 }
 
+/* "Where is the file?", asked by a square at the far LEFT of its row. The
+   popover's default hangs leftwards from its anchor, which here would put it
+   past the edge of the list. */
+.menu-popover.proof-source-menu {
+  left: 12px;
+  right: auto;
+}
+
 /* "3" on the corner, for a payment with more than one slip behind it. */
 .txn-proof-count {
   position: absolute;

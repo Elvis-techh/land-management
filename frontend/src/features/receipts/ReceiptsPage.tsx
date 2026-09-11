@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { RefObject } from "react";
 
 import { IconChevronDown, IconEdit, IconPaperclip, IconWhatsApp } from "../../components/Icons";
+import { MenuSurface } from "../../components/MenuSurface";
+import { googleDriveConfigured, preloadGoogleDrive } from "../../lib/googleDrive";
+import { useDismiss } from "../../lib/useDismiss";
 import { readableSize } from "../../lib/documentFiles";
 import type { MoneyView } from "../../lib/money";
 import { cents, formatMoney } from "../../lib/money";
@@ -14,7 +18,7 @@ import type { ViewerFile } from "../../components/DocumentViewer";
 import { ReceiptPaper } from "./ReceiptPaper";
 import { useFileDrop } from "../../lib/useFileDrop";
 import { paymentTypeLabel } from "./paymentType";
-import { MAX_PROOFS, PROOF_ACCEPT, acceptProofFiles } from "./ProofDropzone";
+import { MAX_PROOFS, PROOF_ACCEPT, acceptProofFiles, pickProofsFromDrive } from "./ProofDropzone";
 import { TransactionToolbar } from "./TransactionToolbar";
 import { useProofAttach } from "./useProofAttach";
 import type { TransactionView } from "./TransactionToolbar";
@@ -81,6 +85,59 @@ interface RowProps {
   showCustomer: boolean;
 }
 
+interface ProofSourceMenuProps {
+  /** The square and what surrounds it; a press inside is not "outside". */
+  anchorRef: RefObject<HTMLElement | null>;
+  onClose: () => void;
+  onDevice: () => void;
+  onDrive: () => void;
+}
+
+/**
+ * Where the comprobante is: on this device, or in Google Drive.
+ *
+ * Mounted only while open. There are sixty of these squares down the list, and
+ * a `MenuSurface` kept mounted in each would be sixty viewport listeners for
+ * the one menu anybody can have open at a time.
+ *
+ * Each choice closes the menu and acts within the same click: both the file
+ * picker and Google's consent popup are refused by the browser once the
+ * gesture that asked for them is over.
+ */
+function ProofSourceMenu({ anchorRef, onClose, onDevice, onDrive }: ProofSourceMenuProps) {
+  const isMobile = useIsMobile();
+
+  // On a phone this is a sheet with its own backdrop and Escape handling; a
+  // second outside-click listener would only fight with it.
+  useDismiss(!isMobile, anchorRef, onClose);
+
+  return (
+    <MenuSurface isOpen title="Adjuntar comprobante" onClose={onClose} className="proof-source-menu">
+      <p className="menu-title desktop-only">Adjuntar comprobante</p>
+      <button
+        type="button"
+        className="menu-item"
+        onClick={() => {
+          onClose();
+          onDevice();
+        }}
+      >
+        Desde este equipo
+      </button>
+      <button
+        type="button"
+        className="menu-item"
+        onClick={() => {
+          onClose();
+          onDrive();
+        }}
+      >
+        Desde Google Drive
+      </button>
+    </MenuSurface>
+  );
+}
+
 /**
  * One transaction.
  *
@@ -103,6 +160,8 @@ function TransactionRow({
 }: RowProps) {
   const isReversed = transaction.reversedAt !== null;
   const slotInputRef = useRef<HTMLInputElement>(null);
+  const slotRef = useRef<HTMLDivElement>(null);
+  const [choosingSource, setChoosingSource] = useState(false);
 
   /*
    * This row's evidence, ready for the viewer.
@@ -191,7 +250,7 @@ function TransactionRow({
         top of the upload already running.
       */}
       {offersProofSlot && (
-        <div className="txn-proof-slot">
+        <div className="txn-proof-slot menu-anchor" ref={slotRef}>
           <button
             type="button"
             className={`proof-dropzone is-slot${attach.isDraggingOver ? " is-over" : ""}${
@@ -199,8 +258,17 @@ function TransactionRow({
             }${attach.error ? " is-error" : ""}`}
             {...attach.dropHandlers}
             aria-disabled={attach.busy !== null}
+            aria-expanded={googleDriveConfigured() ? choosingSource : undefined}
             onClick={() => {
-              if (attach.busy === null) {
+              if (attach.busy !== null) {
+                return;
+              }
+
+              // With Drive on offer the square asks where the file is. Without
+              // it there is one answer, and asking would be a wasted click.
+              if (googleDriveConfigured()) {
+                setChoosingSource((open) => !open);
+              } else {
                 slotInputRef.current?.click();
               }
             }}
@@ -226,6 +294,15 @@ function TransactionRow({
               event.target.value = "";
             }}
           />
+
+          {choosingSource && (
+            <ProofSourceMenu
+              anchorRef={slotRef}
+              onClose={() => setChoosingSource(false)}
+              onDevice={() => slotInputRef.current?.click()}
+              onDrive={() => void attach.pickFromDrive()}
+            />
+          )}
         </div>
       )}
 
@@ -351,6 +428,13 @@ export function ReceiptsPage({
   const [proofBusy, setProofBusy] = useState<string | null>(null);
   const [proofError, setProofError] = useState<string | null>(null);
   const proofInputRef = useRef<HTMLInputElement>(null);
+
+  /*
+   * Google's scripts are fetched when the tab opens rather than on the click,
+   * so the consent popup opens inside the click that asked for it — from the
+   * panel's button and from any row's square alike. See `preloadGoogleDrive`.
+   */
+  useEffect(preloadGoogleDrive, []);
 
   /*
    * The receipt as a PNG, prepared as soon as one is opened.
@@ -653,7 +737,7 @@ export function ReceiptsPage({
    * in the same words. What differs is the timing: there is a receipt to belong
    * to already, so these upload immediately rather than waiting for a save.
    */
-  const addProofs = async (incoming: FileList | null) => {
+  const addProofs = async (incoming: FileList | File[] | null) => {
     if (detail === null || incoming === null || incoming.length === 0) {
       return;
     }
@@ -690,6 +774,34 @@ export function ReceiptsPage({
 
     if (accepted.length > 0) {
       await refreshAfterProofChange(detail.id);
+    }
+  };
+
+  /*
+   * From Google Drive instead. Everything after the download is `addProofs`,
+   * and Drive's own complaints are shown only when the upload had none — see
+   * `useProofAttach` for why the order matters.
+   */
+  const pickFromDrive = async () => {
+    if (detail === null) {
+      return;
+    }
+
+    setProofError(null);
+    setProofBusy("Abriendo Google Drive…");
+
+    try {
+      const { files, rejections } = await pickProofsFromDrive(setProofBusy);
+
+      await addProofs(files);
+
+      if (rejections.length > 0) {
+        setProofError((shown) => shown ?? rejections[0]!);
+      }
+    } catch (caught) {
+      setProofError(caught instanceof Error ? caught.message : "No se pudo abrir Google Drive.");
+    } finally {
+      setProofBusy(null);
     }
   };
 
@@ -1040,14 +1152,27 @@ export function ReceiptsPage({
                     La captura del depósito, directo desde WhatsApp.
                   </p>
 
-                  <button
-                    type="button"
-                    className="btn-secondary"
-                    disabled={proofBusy !== null}
-                    onClick={() => proofInputRef.current?.click()}
-                  >
-                    Elegir archivo
-                  </button>
+                  <div className="proof-dropzone-actions">
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      disabled={proofBusy !== null}
+                      onClick={() => proofInputRef.current?.click()}
+                    >
+                      Elegir archivo
+                    </button>
+
+                    {googleDriveConfigured() && (
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        disabled={proofBusy !== null}
+                        onClick={() => void pickFromDrive()}
+                      >
+                        Desde Google Drive
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
 

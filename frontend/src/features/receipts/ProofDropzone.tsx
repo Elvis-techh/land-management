@@ -154,6 +154,20 @@ export function acceptProofFiles(
 }
 
 /**
+ * Open Google Drive's picker for comprobantes.
+ *
+ * Beside `acceptProofFiles` for the reason that is here: four screens attach a
+ * comprobante, and each asking Drive with its own idea of the allowed types
+ * and the size ceiling is how one of them would start offering a file the
+ * server refuses. What comes back still goes through `acceptProofFiles` at the
+ * caller — this only stops Google offering, or downloading, what that will
+ * refuse.
+ */
+export function pickProofsFromDrive(onProgress: (message: string) => void) {
+  return openGoogleDrivePicker({ mimeTypes: ACCEPTED, maxBytes: MAX_BYTES, onProgress });
+}
+
+/**
  * Drag a screenshot in, or pick one.
  *
  * Built for exactly one gesture: the customer sends the deposit slip on
@@ -239,11 +253,7 @@ export function ProofDropzone({
     setDriveBusy("Abriendo Google Drive…");
 
     try {
-      const { files: picked, rejections } = await openGoogleDrivePicker({
-        mimeTypes: ACCEPTED,
-        maxBytes: MAX_BYTES,
-        onProgress: setDriveBusy,
-      });
+      const { files: picked, rejections } = await pickProofsFromDrive(setDriveBusy);
 
       for (const message of rejections) {
         onReject(message);

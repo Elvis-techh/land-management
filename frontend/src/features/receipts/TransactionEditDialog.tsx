@@ -14,9 +14,10 @@ import type { ReceiptAttachment, Transaction } from "../../types";
 import type { TransactionEdit } from "./api";
 import { deleteAttachment, storedProof, updateTransaction, uploadAttachment } from "./api";
 import { useFileDrop } from "../../lib/useFileDrop";
+import { googleDriveConfigured, preloadGoogleDrive } from "../../lib/googleDrive";
 import type { PaymentType } from "./paymentType";
 import { PAYMENT_TYPE_OPTIONS } from "./paymentType";
-import { MAX_PROOFS, PROOF_ACCEPT, acceptProofFiles } from "./ProofDropzone";
+import { MAX_PROOFS, PROOF_ACCEPT, acceptProofFiles, pickProofsFromDrive } from "./ProofDropzone";
 import { compareLedgerOrder } from "./transactionSort";
 
 interface TransactionEditDialogProps {
@@ -125,6 +126,13 @@ export function TransactionEditDialog({
   const [viewingProof, setViewingProof] = useState<string | null>(null);
   const [pendingRemoval, setPendingRemoval] = useState<ViewerFile | null>(null);
   const proofInputRef = useRef<HTMLInputElement>(null);
+
+  /*
+   * Google's scripts are fetched when the dialog opens rather than on the
+   * click, so the consent popup opens inside the click that asked for it. See
+   * `preloadGoogleDrive`.
+   */
+  useEffect(preloadGoogleDrive, []);
 
   const typedAmount = parseMoneyInput(amountText);
   const amountCents = Number.isNaN(typedAmount) ? 0 : Math.round(typedAmount * 100);
@@ -265,7 +273,7 @@ export function TransactionEditDialog({
    * Tagged with `transaction.id`, so on a receipt covering three lots the slip
    * lands on THIS lot rather than on the paper as a whole.
    */
-  const addProofs = async (incoming: FileList | null) => {
+  const addProofs = async (incoming: FileList | File[] | null) => {
     if (transaction.receiptId === null || incoming === null || incoming.length === 0) {
       return;
     }
@@ -313,6 +321,34 @@ export function TransactionEditDialog({
       setAttachments((held) => [...held, ...stored]);
       setProofsFiled(true);
       onProofsChanged();
+    }
+  };
+
+  /*
+   * From Google Drive instead. Everything after the download is `addProofs`,
+   * and Drive's own complaints are shown only when the upload had none — see
+   * `useProofAttach` for why the order matters.
+   */
+  const pickFromDrive = async () => {
+    if (transaction.receiptId === null) {
+      return;
+    }
+
+    setProofError(null);
+    setProofBusy("Abriendo Google Drive…");
+
+    try {
+      const { files, rejections } = await pickProofsFromDrive(setProofBusy);
+
+      await addProofs(files);
+
+      if (rejections.length > 0) {
+        setProofError((shown) => shown ?? rejections[0]!);
+      }
+    } catch (caught) {
+      setProofError(caught instanceof Error ? caught.message : "No se pudo abrir Google Drive.");
+    } finally {
+      setProofBusy(null);
     }
   };
 
@@ -546,14 +582,27 @@ export function TransactionEditDialog({
                         prueba no cambia ninguna cifra.
                       </p>
 
-                      <button
-                        type="button"
-                        className="btn-secondary"
-                        disabled={proofBusy !== null}
-                        onClick={() => proofInputRef.current?.click()}
-                      >
-                        Elegir archivo
-                      </button>
+                      <div className="proof-dropzone-actions">
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          disabled={proofBusy !== null}
+                          onClick={() => proofInputRef.current?.click()}
+                        >
+                          Elegir archivo
+                        </button>
+
+                        {googleDriveConfigured() && (
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            disabled={proofBusy !== null}
+                            onClick={() => void pickFromDrive()}
+                          >
+                            Desde Google Drive
+                          </button>
+                        )}
+                      </div>
                     </div>
                   )}
 

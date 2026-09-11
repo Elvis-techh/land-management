@@ -79,8 +79,13 @@ export interface DrivePickRequest {
   mimeTypes: string[];
   /** The ceiling the caller enforces anyway, in bytes. */
   maxBytes: number;
-  /** "Descargando factura.pdf…", or null when nothing is in flight. */
-  onProgress?: (message: string | null) => void;
+  /**
+   * "Descargando factura.pdf…". The caller owns the rest of the busy line — it
+   * sets its own before calling and clears it after — so there is no gap
+   * between the last download and the caller's "Subiendo…" for the line on
+   * screen to blink through.
+   */
+  onProgress?: (message: string) => void;
 }
 
 export interface DrivePickResult {
@@ -441,35 +446,27 @@ export async function openGoogleDrivePicker(request: DrivePickRequest): Promise<
     throw new Error("Google Drive no está configurado en esta instalación.");
   }
 
-  const report = request.onProgress ?? (() => {});
+  await loadPicker();
 
-  try {
-    await loadPicker();
+  const token = await requestAccessToken();
 
-    const token = await requestAccessToken();
-
-    if (token === null) {
-      return { files: [], rejections: [] };
-    }
-
-    report("Abriendo Google Drive…");
-
-    const picked = await showPicker(token, request.mimeTypes);
-    const { wanted, rejections } = triagePickedDocs(picked, request);
-    const files: File[] = [];
-
-    for (const doc of wanted) {
-      report(`Descargando ${doc.name}…`);
-
-      try {
-        files.push(await downloadDriveFile(doc, token));
-      } catch {
-        rejections.push(`No se pudo traer «${doc.name}» de Google Drive.`);
-      }
-    }
-
-    return { files, rejections };
-  } finally {
-    report(null);
+  if (token === null) {
+    return { files: [], rejections: [] };
   }
+
+  const picked = await showPicker(token, request.mimeTypes);
+  const { wanted, rejections } = triagePickedDocs(picked, request);
+  const files: File[] = [];
+
+  for (const doc of wanted) {
+    request.onProgress?.(`Descargando ${doc.name}…`);
+
+    try {
+      files.push(await downloadDriveFile(doc, token));
+    } catch {
+      rejections.push(`No se pudo traer «${doc.name}» de Google Drive.`);
+    }
+  }
+
+  return { files, rejections };
 }
