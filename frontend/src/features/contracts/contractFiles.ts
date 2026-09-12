@@ -13,6 +13,7 @@
  */
 
 import { readableSize } from "../../lib/documentFiles";
+import { openGoogleDrivePicker } from "../../lib/googleDrive";
 
 const ACCEPTED = [
   "application/pdf",
@@ -81,4 +82,19 @@ export function screenContractFiles(
   }
 
   return { accepted, rejections };
+}
+
+/**
+ * Open Google Drive's picker for contract documents.
+ *
+ * Beside `screenContractFiles` for the reason that is here: three screens
+ * attach a contract document (creation, the retry panel, and the panel of an
+ * existing contract), and each asking Drive with its own idea of the allowed
+ * types and the size ceiling is how one of them would start offering a file
+ * the server refuses. What comes back still goes through `screenContractFiles`
+ * at the caller — this only stops Google offering, or downloading, what that
+ * will refuse.
+ */
+export function pickContractFilesFromDrive(onProgress: (message: string) => void) {
+  return openGoogleDrivePicker({ mimeTypes: ACCEPTED, maxBytes: MAX_BYTES, onProgress });
 }

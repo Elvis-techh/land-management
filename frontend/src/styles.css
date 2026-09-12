@@ -5646,6 +5646,13 @@ input:disabled {
   margin-bottom: 10px;
 }
 
+/* "Agregar" and "Desde Google Drive", the two ways to file a document from an
+   existing contract's panel — same gap as the dropzone's own two buttons. */
+.cp-docs-actions {
+  display: flex;
+  gap: 12px;
+}
+
 .cp-docs {
   display: flex;
   flex-direction: column;

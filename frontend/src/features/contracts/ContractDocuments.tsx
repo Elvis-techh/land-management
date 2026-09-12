@@ -4,6 +4,7 @@ import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { DocumentThumb, DocumentViewer } from "../../components/DocumentViewer";
 import type { ViewerFile } from "../../components/DocumentViewer";
 import { readableSize } from "../../lib/documentFiles";
+import { googleDriveConfigured, preloadGoogleDrive } from "../../lib/googleDrive";
 import type { User } from "../../lib/permissions";
 import { can } from "../../lib/permissions";
 import type { ContractDocument } from "../../types";
@@ -16,6 +17,7 @@ import {
 import {
   CONTRACT_DOCUMENT_ACCEPT,
   MAX_CONTRACT_DOCUMENTS,
+  pickContractFilesFromDrive,
   screenContractFiles,
 } from "./contractFiles";
 
@@ -62,6 +64,16 @@ export function ContractDocuments({ contractId, user, onCountChanged }: Contract
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  /** "Descargando contrato.pdf…" while Google Drive is being read, else null. */
+  const [driveBusy, setDriveBusy] = useState<string | null>(null);
+
+  /*
+   * Google's scripts are fetched when this appears rather than when the button
+   * is clicked, so the consent popup opens inside the click that asked for it.
+   * See `preloadGoogleDrive`.
+   */
+  useEffect(preloadGoogleDrive, []);
+
   /*
    * Filing the signed copy is the last step of writing a contract, so it rides
    * on the capability that writes one. DESTROYING it does not: this is the
@@ -104,7 +116,7 @@ export function ContractDocuments({ contractId, user, onCountChanged }: Contract
     onCountChanged();
   };
 
-  const add = async (incoming: FileList | null) => {
+  const add = async (incoming: FileList | File[] | null) => {
     if (incoming === null || incoming.length === 0) {
       return;
     }
@@ -140,6 +152,30 @@ export function ContractDocuments({ contractId, user, onCountChanged }: Contract
 
     if (filed > 0) {
       await reload();
+    }
+  };
+
+  /**
+   * The same act as choosing a file, with Google Drive as the drawer it comes
+   * out of. Everything after the download goes through `add`, so the type,
+   * size and count rules — and the upload itself — are exactly what a chosen
+   * file gets.
+   */
+  const pickFromDrive = async () => {
+    setDriveBusy("Abriendo Google Drive…");
+
+    try {
+      const { files: picked, rejections } = await pickContractFilesFromDrive(setDriveBusy);
+
+      for (const message of rejections) {
+        setError(message);
+      }
+
+      await add(picked);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "No se pudo abrir Google Drive.");
+    } finally {
+      setDriveBusy(null);
     }
   };
 
@@ -184,16 +220,33 @@ export function ContractDocuments({ contractId, user, onCountChanged }: Contract
         <h3 className="cp-section-title">Documentos del contrato</h3>
 
         {canFile && (documents?.length ?? 0) < MAX_CONTRACT_DOCUMENTS && (
-          <button
-            type="button"
-            className="link-btn"
-            disabled={busy !== null || documents === null}
-            onClick={() => inputRef.current?.click()}
-          >
-            Agregar
-          </button>
+          <span className="cp-docs-actions">
+            <button
+              type="button"
+              className="link-btn"
+              disabled={busy !== null || driveBusy !== null || documents === null}
+              onClick={() => inputRef.current?.click()}
+            >
+              Agregar
+            </button>
+
+            {/* Left out entirely where no Google credentials were configured —
+                see `googleDriveConfigured`. */}
+            {googleDriveConfigured() && (
+              <button
+                type="button"
+                className="link-btn"
+                disabled={busy !== null || driveBusy !== null || documents === null}
+                onClick={() => void pickFromDrive()}
+              >
+                Desde Google Drive
+              </button>
+            )}
+          </span>
         )}
       </div>
+
+      {driveBusy !== null && <p className="state-message">{driveBusy}</p>}
 
       {documents === null && <p className="state-message">Cargando…</p>}
 
