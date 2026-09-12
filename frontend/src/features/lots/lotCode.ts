@@ -58,25 +58,25 @@ export function formatLotCode(prefix: string, numberText: string): string {
 }
 
 /**
- * The prefixes already in use in a project, most-used first.
+ * The prefixes already in use in a project, alphabetically.
  *
  * These become the one-click chips in the form. Only prefixes that exist are
  * offered — inventing "D" because "A", "B" and "C" are taken would be guessing
- * at a naming scheme that belongs to the business, not to this app.
+ * at a naming scheme that belongs to the business, not to this app. Sorted
+ * alphabetically rather than by how many lots each prefix has, so the chip
+ * order stays predictable ("A B C") instead of shuffling as lots are added.
  */
 export function prefixesInUse(codes: string[]): string[] {
-  const counts = new Map<string, number>();
+  const prefixes = new Set<string>();
 
   for (const code of codes) {
     const parsed = parseLotCode(code);
     if (parsed) {
-      counts.set(parsed.prefix, (counts.get(parsed.prefix) ?? 0) + 1);
+      prefixes.add(parsed.prefix);
     }
   }
 
-  return [...counts.entries()]
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .map(([prefix]) => prefix);
+  return [...prefixes].sort((a, b) => a.localeCompare(b));
 }
 
 /**
