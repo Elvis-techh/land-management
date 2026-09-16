@@ -93,10 +93,14 @@ export function matchesFilters(
     return false;
   }
 
-  if (
-    filters.statuses.length > 0 &&
-    !filters.statuses.some((status) => matchesStatus(transaction, status))
-  ) {
+  if (filters.statuses.length > 0) {
+    if (!filters.statuses.some((status) => matchesStatus(transaction, status))) {
+      return false;
+    }
+  } else if (transaction.reversedAt !== null) {
+    // No status chosen means "the money that still counts" — an anulada has
+    // stopped counting, so it stays off the log unless someone explicitly
+    // asks for "Anuladas". It is never gone: Historial keeps the record.
     return false;
   }
 

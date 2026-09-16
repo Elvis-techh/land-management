@@ -33,6 +33,15 @@ import {
 } from "./transactionFilters";
 import { DEFAULT_SORT, groupByCustomer, sortTransactions } from "./transactionSort";
 import type { TransactionSort } from "./transactionSort";
+import {
+  countReceipts,
+  idsBetween,
+  expandToReceipts,
+  paintedByDrag,
+  toggleOne,
+} from "./transactionSelection";
+import type { DragMode } from "./transactionSelection";
+import { SelectionSummaryBar } from "./SelectionSummaryBar";
 
 interface ReceiptsPageProps {
   transactions: Transaction[];
@@ -83,6 +92,16 @@ interface RowProps {
   onProofsChanged: () => void;
   /** Hidden inside a customer group, where the name is already the heading. */
   showCustomer: boolean;
+  /** Checked for the ad-hoc sum below, independent of `isSelected`. */
+  isChecked: boolean;
+  /** A reversed payment has stopped counting, so there is nothing to check. */
+  canCheck: boolean;
+  /** Armed a possible drag; resolved as a real one, or a plain click, on mouseup. */
+  onCheckMouseDown: () => void;
+  /** The pointer has entered this row's box while a drag is in progress. */
+  onCheckMouseEnter: () => void;
+  /** Mouse released over this box without it having been dragged across. */
+  onCheckClick: (shiftKey: boolean) => void;
 }
 
 interface ProofSourceMenuProps {
@@ -157,6 +176,11 @@ function TransactionRow({
   canAttachProof,
   onProofsChanged,
   showCustomer,
+  isChecked,
+  canCheck,
+  onCheckMouseDown,
+  onCheckMouseEnter,
+  onCheckClick,
 }: RowProps) {
   const isReversed = transaction.reversedAt !== null;
   const slotInputRef = useRef<HTMLInputElement>(null);
@@ -207,8 +231,80 @@ function TransactionRow({
 
   return (
     <div
-      className={`txn-row${isSelected ? " is-selected" : ""}${isReversed ? " is-void" : ""}`}
+      className={`txn-row${isSelected ? " is-selected" : ""}${isReversed ? " is-void" : ""}${
+        isChecked ? " is-checked" : ""
+      }`}
     >
+      {/*
+        The box a spreadsheet would call selecting a cell. A reversed payment
+        has stopped counting — see the filter default in transactionFilters.ts
+        — so its box stays disabled rather than letting somebody add it into a
+        sum by hand.
+
+        The SPAN is the real mouse target, not the checkbox inside it — see
+        `.txn-check` in styles.css, which turns off pointer events on the
+        input itself. A native checkbox flips its own `checked` the moment the
+        mouse goes down and only commits to that (or reverts it) once the
+        click finishes, which is a fight React's own re-render cannot win
+        consistently — it used to take a second click for the box to catch up
+        to what had already happened. Routing the mouse through the span
+        instead means the browser never touches `checked` at all; only React
+        ever writes it, so there is nothing left to race. It is also what
+        lets a press-and-drag paint several boxes in one gesture, which a
+        native checkbox has no notion of. The input stays real underneath
+        for the keyboard: Tab still reaches it and Space still toggles it,
+        through its own `onChange`, untouched by any of this.
+      */}
+      <span
+        className={`txn-check-slot${canCheck ? "" : " is-disabled"}`}
+        onMouseDown={
+          canCheck
+            ? (event) => {
+                event.preventDefault();
+                onCheckMouseDown();
+              }
+            : undefined
+        }
+        onMouseEnter={
+          canCheck
+            ? (event) => {
+                if (event.buttons === 1) {
+                  onCheckMouseEnter();
+                }
+              }
+            : undefined
+        }
+        onClick={
+          canCheck
+            ? (event) => {
+                event.stopPropagation();
+                onCheckClick(event.shiftKey);
+              }
+            : undefined
+        }
+      >
+        {/*
+          `readOnly`, with NO `onChange` — and that is not a lapse.
+
+          Pressing Space on a focused checkbox runs the browser's activation
+          behaviour: it dispatches a `click` on the input, which bubbles up to
+          the span above and toggles the row, and only THEN fires `change`. An
+          `onChange` here would toggle the very same row a second time, and the
+          two would cancel out — the box would look and behave as though the
+          keyboard did nothing at all. The span is the one handler for both
+          mouse and keyboard; `readOnly` is only what tells React this input is
+          deliberately not the one driving the state.
+        */}
+        <input
+          type="checkbox"
+          className="txn-check"
+          checked={isChecked}
+          disabled={!canCheck}
+          readOnly
+          aria-label={`Sumar la transacción de ${transaction.customerName} del ${shortDate(transaction.paidOn)}`}
+        />
+      </span>
+
       {/*
         The comprobante, at a glance and one click from being read.
 
@@ -392,6 +488,40 @@ export function ReceiptsPage({
   const [filters, setFilters] = useState<TransactionFilters>(NO_TRANSACTION_FILTERS);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const [selectedReceiptId, setSelectedReceiptId] = useState<string | null>(null);
+  /*
+   * The ad-hoc sum: whichever rows somebody has checked by hand, independent
+   * of the receipt shown in the panel. `lastCheckedId` is the anchor a
+   * shift-click extends FROM — the row last clicked, whether or not it is
+   * still checked, same as a spreadsheet keeps its anchor after a range is
+   * clicked again to shrink it.
+   */
+  const [checkedIds, setCheckedIds] = useState<ReadonlySet<string>>(new Set());
+  const [lastCheckedId, setLastCheckedId] = useState<string | null>(null);
+  /*
+   * A press-and-drag across several boxes, in progress.
+   *
+   * A ref rather than state: it changes on every row the pointer crosses
+   * while held, and none of that is worth a render on its own — only the
+   * `checkedIds` it paints along the way is. `painted` is what tells the
+   * click that follows the eventual mouseup whether this gesture already did
+   * its work — without it, releasing the mouse back over the row it started
+   * on fires a click that would flip the box a second time and cancel the
+   * drag out.
+   */
+  const dragRef = useRef<{
+    anchorId: string;
+    mode: DragMode;
+    /*
+     * The selection exactly as it stood when the mouse went down.
+     *
+     * Every move recomputes the whole answer from THIS, never from the
+     * previous move's result — see `paintedByDrag`. It is what makes going
+     * back over the rows you just crossed release them again instead of
+     * leaving a one-way trail behind the pointer.
+     */
+    before: ReadonlySet<string>;
+    painted: boolean;
+  } | null>(null);
   const [detail, setDetail] = useState<Receipt | null>(null);
   const [isLoadingDetail, setLoadingDetail] = useState(false);
 
@@ -435,6 +565,32 @@ export function ReceiptsPage({
    * panel's button and from any row's square alike. See `preloadGoogleDrive`.
    */
   useEffect(preloadGoogleDrive, []);
+
+  /*
+   * Ends a drag wherever the mouse comes back up — not just over a box, but
+   * anywhere on the page. Without this, releasing past the edge of the list
+   * would leave the drag armed, and the next unrelated click would paint as
+   * though it were still part of it.
+   *
+   * Deferred a tick on purpose. `mouseup` always fires before the `click` it
+   * turns into, so clearing the ref here right away would erase `painted`
+   * before `handleCheckClick` — which runs from that click — ever gets to
+   * read it, and a drag that ended back on its own starting box would count
+   * as a plain click and flip it again. Pushing the clear to a macrotask lets
+   * that click, when there is one, go first; when there is none — mouseup
+   * over a different box than mousedown started on — nothing was waiting on
+   * it and the ref is simply freed a moment later.
+   */
+  useEffect(() => {
+    const endDrag = () => {
+      setTimeout(() => {
+        dragRef.current = null;
+      }, 0);
+    };
+
+    window.addEventListener("mouseup", endDrag);
+    return () => window.removeEventListener("mouseup", endDrag);
+  }, []);
 
   /*
    * The receipt as a PNG, prepared as soon as one is opened.
@@ -507,6 +663,73 @@ export function ReceiptsPage({
   );
 
   const groups = useMemo(() => groupByCustomer(visible, sort), [visible, sort]);
+
+  /*
+   * The rows a selection may contain: on screen, and still counting.
+   *
+   * A reversed payment is out of the accounts — see the filter default in
+   * transactionFilters.ts — so it can be looked at but never summed. Every
+   * selection gesture reads this rather than `visible`, which keeps the ranges
+   * a shift-click or a drag spans in step with the boxes that actually respond.
+   */
+  const selectable = useMemo(
+    () => visible.filter((transaction) => transaction.reversedAt === null),
+    [visible],
+  );
+
+  /*
+   * The same rows, in the order the screen is actually showing them.
+   *
+   * `selectable` is the flat, date-sorted list, which is what the Fecha view
+   * renders — but the Cliente view renders one folded block per customer, so
+   * two rows that look adjacent under "Ana" can be four hundred apart in date
+   * order. A shift-click or a drag between them would then span every payment
+   * made in between, by everybody, which is not what was pointed at.
+   *
+   * Collapsed groups contribute nothing: their rows are not on screen, so
+   * there is nothing there to drag across and nothing to pull in as a sibling.
+   */
+  const selectionOrder = useMemo(() => {
+    if (view === "date") {
+      return selectable;
+    }
+
+    return groups.flatMap((group) =>
+      expanded.has(group.customerId)
+        ? group.transactions.filter((transaction) => transaction.reversedAt === null)
+        : [],
+    );
+  }, [view, selectable, groups, expanded]);
+
+  /*
+   * Drop anything the search or the filters have taken off screen.
+   *
+   * Without this the selection keeps ids nobody can see: the sum is computed
+   * from what is visible, so it shrinks to nothing and the bar carrying
+   * "Limpiar selección" disappears with it — leaving rows checked, no figures,
+   * and no control to clear them until the original search is typed back in.
+   *
+   * `current` is returned unchanged when nothing was pruned, so this settles in
+   * one pass instead of scheduling itself forever.
+   */
+  useEffect(() => {
+    setCheckedIds((current) => {
+      if (current.size === 0) {
+        return current;
+      }
+
+      const onScreen = new Set(selectable.map((transaction) => transaction.id));
+      const next = new Set<string>();
+
+      for (const id of current) {
+        if (onScreen.has(id)) {
+          next.add(id);
+        }
+      }
+
+      return next.size === current.size ? current : next;
+    });
+  }, [selectable]);
 
   // Selecting a transaction shows its receipt. One without a receipt clears the
   // panel rather than leaving the previous customer's document on screen beside
@@ -920,15 +1143,156 @@ export function ReceiptsPage({
     });
   };
 
-  const select = (transaction: Transaction) => setSelectedReceiptId(transaction.receiptId);
+  /*
+   * Open this row's receipt, or close it if it is the one already open.
+   *
+   * Compared by RECEIPT rather than by row, which is what makes a receipt
+   * covering three lots behave like the single document it is: whichever of
+   * its three rows opened it, any of the three closes it. A first click that
+   * opens and a second that does nothing is how a preview ends up stuck on
+   * screen with no obvious way to dismiss it.
+   */
+  const select = (transaction: Transaction) =>
+    setSelectedReceiptId((current) =>
+      current !== null && current === transaction.receiptId ? null : transaction.receiptId,
+    );
 
   const receivedTotal = visible
     .filter((transaction) => transaction.reversedAt === null)
     .reduce((sum, transaction) => sum + transaction.amount, 0);
 
+  /*
+   * Shift-click extends the checked set to every row between the anchor and
+   * this one; a plain click toggles just this one, receipt and all. Both read
+   * `selectionOrder` at click time, so the range always spans what is actually
+   * on screen, in the order the screen is showing it.
+   *
+   * Skipped when a drag already painted this gesture — see `dragRef` — so
+   * the click that fires on mouseup does not flip the box a second time.
+   */
+  const handleCheckClick = (transactionId: string, shiftKey: boolean) => {
+    const alreadyPainted = dragRef.current?.painted === true;
+    dragRef.current = null;
+
+    if (alreadyPainted) {
+      return;
+    }
+
+    if (shiftKey && lastCheckedId !== null) {
+      setCheckedIds((current) => {
+        const next = new Set(current);
+
+        for (const id of idsBetween(selectionOrder, lastCheckedId, transactionId)) {
+          next.add(id);
+        }
+
+        return expandToReceipts(selectionOrder, next);
+      });
+    } else {
+      setCheckedIds((current) => toggleOne(selectionOrder, current, transactionId));
+    }
+
+    setLastCheckedId(transactionId);
+  };
+
+  /*
+   * Arms a possible drag on mousedown, and decides its direction here rather
+   * than per row: a drag that starts on an unchecked box selects the whole way,
+   * one that starts on a checked box deselects the whole way. Nothing is
+   * painted yet — a plain click with no movement in between must produce
+   * exactly one toggle, not one here and one more from `handleCheckClick`.
+   */
+  const handleCheckMouseDown = (transactionId: string) => {
+    dragRef.current = {
+      anchorId: transactionId,
+      mode: checkedIds.has(transactionId) ? "remove" : "add",
+      before: checkedIds,
+      painted: false,
+    };
+  };
+
+  /*
+   * The pointer has entered a box while the primary button is held — a real
+   * drag, as opposed to a click that never left its row.
+   *
+   * The whole selection is recomputed from the snapshot on every row crossed,
+   * so this is also what handles the pointer coming BACK: the range shrinks and
+   * the rows it no longer covers return to whatever they were before the
+   * gesture started. A drag that begins and ends on the same box without ever
+   * crossing another never reaches this at all, and is left for
+   * `handleCheckClick` to treat as the plain click it is.
+   */
+  const handleCheckMouseEnter = (transactionId: string) => {
+    const drag = dragRef.current;
+
+    if (drag === null) {
+      return;
+    }
+
+    drag.painted = true;
+
+    setCheckedIds(
+      paintedByDrag(selectionOrder, drag.before, drag.anchorId, transactionId, drag.mode),
+    );
+    setLastCheckedId(transactionId);
+  };
+
+  const clearChecked = () => {
+    setCheckedIds(new Set());
+    setLastCheckedId(null);
+    dragRef.current = null;
+  };
+
+  /*
+   * Everything the current search and filters let through, in one press.
+   *
+   * Deliberately NOT every transaction in the database: the figures beside it
+   * are the sum of what is on screen, and a "seleccionar todo" that quietly
+   * reached past the filters would put a number there that no visible set of
+   * rows adds up to.
+   */
+  const selectAll = () => {
+    setCheckedIds(new Set(selectionOrder.map((transaction) => transaction.id)));
+    setLastCheckedId(null);
+    dragRef.current = null;
+  };
+
+  // Filtered through `visible` rather than summed straight from the ids: a row
+  // that scrolled out of the current search or filters must not go on padding
+  // a total nobody can see the rows for.
+  const checkedTransactions = selectable.filter((transaction) => checkedIds.has(transaction.id));
+  const checkedSum = cents(
+    checkedTransactions.reduce((sum, transaction) => sum + transaction.amount, 0),
+  );
+  const checkedAverage =
+    checkedTransactions.length === 0 ? cents(0) : cents(Math.round(checkedSum / checkedTransactions.length));
+  const checkedReceipts = countReceipts(checkedTransactions);
+
+  /*
+   * A selection spanning several receipts puts the panel away.
+   *
+   * The preview answers "which receipt is this", and once the selection covers
+   * four of them there is no honest answer — leaving one of the four on screen
+   * beside a total drawn from all of them is how somebody reads a figure off
+   * the document that the figures beside it do not describe. Selecting a single
+   * receipt, lots and all, leaves it up: there the document is exactly what was
+   * picked.
+   *
+   * It does not come back when the selection is cleared. The panel opens on a
+   * deliberate click on a row and on nothing else, which is one rule instead of
+   * a remembered state that reappears a minute later with no gesture behind it.
+   */
+  useEffect(() => {
+    if (checkedReceipts > 1) {
+      setSelectedReceiptId(null);
+    }
+  }, [checkedReceipts]);
+
   return (
     <div className="receipts-layout">
-      <div className="card">
+      {/* `is-selecting` while anything is checked: mid-selection every row
+          shows its box, not just the one under the pointer. See `.txn-check`. */}
+      <div className={`card txn-list${checkedTransactions.length > 0 ? " is-selecting" : ""}`}>
         <div className="card-head">
           <div>
             <h2>Transacciones</h2>
@@ -952,6 +1316,19 @@ export function ReceiptsPage({
           shownCount={visible.length}
           totalCount={transactions.length}
         />
+
+        {checkedTransactions.length > 0 && (
+          <SelectionSummaryBar
+            count={checkedTransactions.length}
+            receiptCount={checkedReceipts}
+            sumCents={checkedSum}
+            averageCents={checkedAverage}
+            money={money}
+            selectableCount={selectionOrder.length}
+            onSelectAll={selectAll}
+            onClear={clearChecked}
+          />
+        )}
 
         {visible.length === 0 && (
           <p className="state-message">
@@ -977,6 +1354,11 @@ export function ReceiptsPage({
               canAttachProof={canRecord}
               onProofsChanged={onProofsChanged}
               showCustomer
+              isChecked={checkedIds.has(transaction.id)}
+              canCheck={transaction.reversedAt === null}
+              onCheckMouseDown={() => handleCheckMouseDown(transaction.id)}
+              onCheckMouseEnter={() => handleCheckMouseEnter(transaction.id)}
+              onCheckClick={(shiftKey) => handleCheckClick(transaction.id, shiftKey)}
             />
           ))}
 
@@ -1028,6 +1410,11 @@ export function ReceiptsPage({
                         canAttachProof={canRecord}
                         onProofsChanged={onProofsChanged}
                         showCustomer={false}
+                        isChecked={checkedIds.has(transaction.id)}
+                        canCheck={transaction.reversedAt === null}
+                        onCheckMouseDown={() => handleCheckMouseDown(transaction.id)}
+                        onCheckMouseEnter={() => handleCheckMouseEnter(transaction.id)}
+                        onCheckClick={(shiftKey) => handleCheckClick(transaction.id, shiftKey)}
                       />
                     ))}
                   </div>
