@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 
-import { IconClose, IconFilter, IconSearch, IconSort } from "../../components/Icons";
+import { IconChevronDown, IconClose, IconFilter, IconSearch, IconSort } from "../../components/Icons";
 import { MenuSurface } from "../../components/MenuSurface";
 import { useDismiss } from "../../lib/useDismiss";
 import { useIsMobile } from "../../lib/viewport";
@@ -31,6 +31,11 @@ interface ContractToolbarProps {
   onSearchChange: (search: string) => void;
   shownCount: number;
   totalCount: number;
+  /** How many customers in the current view hold more than one contract. */
+  multiGroupCount: number;
+  /** Whether every one of those customers is currently folded open. */
+  allGroupsExpanded: boolean;
+  onToggleAllGroups: () => void;
 }
 
 /**
@@ -51,6 +56,9 @@ export function ContractToolbar({
   onSearchChange,
   shownCount,
   totalCount,
+  multiGroupCount,
+  allGroupsExpanded,
+  onToggleAllGroups,
 }: ContractToolbarProps) {
   const [openMenu, setOpenMenu] = useState<"sort" | "filter" | null>(null);
   const sortRef = useRef<HTMLDivElement>(null);
@@ -239,6 +247,28 @@ export function ContractToolbar({
         </span>
 
         <div className="toolbar-spacer" />
+
+        {multiGroupCount > 0 && (
+          <button
+            type="button"
+            className={
+              allGroupsExpanded
+                ? "chip menu-trigger toggle-groups open"
+                : "chip menu-trigger toggle-groups"
+            }
+            onClick={onToggleAllGroups}
+            aria-expanded={allGroupsExpanded}
+            title={
+              allGroupsExpanded
+                ? "Colapsar los clientes con más de un contrato"
+                : "Expandir los clientes con más de un contrato"
+            }
+          >
+            <IconChevronDown />
+            <span>{allGroupsExpanded ? "Colapsar varios contratos" : "Expandir varios contratos"}</span>
+            <span className="filter-count">{multiGroupCount}</span>
+          </button>
+        )}
 
         <div className="table-search">
           <IconSearch />

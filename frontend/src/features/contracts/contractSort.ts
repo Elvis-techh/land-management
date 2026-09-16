@@ -2,7 +2,7 @@ import type { Cents } from "../../lib/money";
 import { cents } from "../../lib/money";
 import type { Contract } from "../../types";
 
-export type SortField = "customer" | "balance" | "health" | "nextDue" | "code";
+export type SortField = "customer" | "balance" | "health" | "nextDue" | "code" | "groupSize";
 
 export interface ContractSort {
   field: SortField;
@@ -10,14 +10,14 @@ export interface ContractSort {
 }
 
 /**
- * Sorted by whoever needs attention first, not alphabetically.
+ * Opens on how many contracts each customer holds, fewest first.
  *
- * The default a receivables screen should open on is the customer furthest
- * behind. Somebody opening Contratos on a Monday morning is looking for who to
- * call, and making them sort for that every time is making the screen answer
- * the wrong question by default.
+ * A customer with three lots is easy to miss buried among everyone with one —
+ * sorting that way clusters them at the bottom of the list instead, so the
+ * people worth a second look (a family building out a second or third lot)
+ * stand out as their own visible block rather than scattered alphabetically.
  */
-export const DEFAULT_SORT: ContractSort = { field: "health", direction: "desc" };
+export const DEFAULT_SORT: ContractSort = { field: "groupSize", direction: "asc" };
 
 export const SORT_OPTIONS: Array<{
   field: SortField;
@@ -25,6 +25,12 @@ export const SORT_OPTIONS: Array<{
   ascLabel: string;
   descLabel: string;
 }> = [
+  {
+    field: "groupSize",
+    label: "Contratos por cliente",
+    ascLabel: "uno primero",
+    descLabel: "varios primero",
+  },
   { field: "health", label: "Estado de pago", ascLabel: "al día primero", descLabel: "atrasados primero" },
   { field: "customer", label: "Cliente", ascLabel: "A → Z", descLabel: "Z → A" },
   { field: "balance", label: "Saldo", ascLabel: "menor primero", descLabel: "mayor primero" },
@@ -40,7 +46,18 @@ const HEALTH_SEVERITY: Record<Contract["health"]["status"], number> = {
   at_risk: 3,
 };
 
-function compare(a: Contract, b: Contract, field: SortField): number {
+/** How many contracts (within the list being sorted) each customer holds. */
+function customerCounts(contracts: Contract[]): Map<string, number> {
+  const counts = new Map<string, number>();
+
+  for (const contract of contracts) {
+    counts.set(contract.customer.id, (counts.get(contract.customer.id) ?? 0) + 1);
+  }
+
+  return counts;
+}
+
+function compare(a: Contract, b: Contract, field: SortField, counts: Map<string, number>): number {
   switch (field) {
     case "customer":
       return a.customer.fullName.localeCompare(b.customer.fullName, "es");
@@ -54,14 +71,17 @@ function compare(a: Contract, b: Contract, field: SortField): number {
       return (a.health.nextDueOn ?? "9999-12-31").localeCompare(b.health.nextDueOn ?? "9999-12-31");
     case "code":
       return a.code.localeCompare(b.code, "es");
+    case "groupSize":
+      return (counts.get(a.customer.id) ?? 1) - (counts.get(b.customer.id) ?? 1);
   }
 }
 
 export function sortContracts(contracts: Contract[], sort: ContractSort): Contract[] {
   const direction = sort.direction === "asc" ? 1 : -1;
+  const counts = customerCounts(contracts);
 
   return [...contracts].sort((a, b) => {
-    const primary = compare(a, b, sort.field) * direction;
+    const primary = compare(a, b, sort.field, counts) * direction;
 
     if (primary !== 0) {
       return primary;

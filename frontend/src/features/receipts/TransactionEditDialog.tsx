@@ -102,6 +102,22 @@ export function TransactionEditDialog({
   const [isSaving, setSaving] = useState(false);
 
   /*
+   * Has anything moved off what the transaction says?
+   *
+   * Pre-filled, so "is there text in it" is always yes — see the same note in
+   * `ContractEditDialog`. `reason` counts on its own: it starts empty and the
+   * only way it has anything in it is that somebody was writing an explanation.
+   */
+  const isDirtyEdit =
+    amountText !== toMoneyInput(transaction.amount) ||
+    paidOn !== transaction.paidOn ||
+    method !== (transaction.method as Method) ||
+    type !== (transaction.type as PaymentType) ||
+    reference !== (transaction.reference ?? "") ||
+    notes !== (transaction.notes ?? "") ||
+    reason.trim() !== "";
+
+  /*
    * The comprobantes on this row, held here rather than read off the prop.
    *
    * `transaction` is a snapshot App took when the pencil was pressed and it
@@ -390,6 +406,14 @@ export function TransactionEditDialog({
     <Dialog
       ariaLabel={`Corregir la transacción de ${transaction.customerName}`}
       size="wide"
+      /*
+       * Rewriting a posted figure is the one act on this screen that cannot be
+       * undone from the outside, and it takes a written reason to do it. A
+       * click that lands beside the panel must not be what throws that away.
+       * Shut while a comprobante is uploading too — leaving mid-upload is how
+       * the file goes missing. See `dismissible` in Dialog.tsx.
+       */
+      dismissible={!isDirtyEdit && !isSaving && proofBusy === null}
       onClose={onClose}
     >
       <div className="modal-header">

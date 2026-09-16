@@ -6,6 +6,7 @@ import { IconClose } from "../../components/Icons";
 import { MoneyInput } from "../../components/MoneyInput";
 import type { MoneyView } from "../../lib/money";
 import {
+  cents,
   formatMoney,
   fromCurrencyUnits,
   parseMoneyInput,
@@ -14,7 +15,7 @@ import {
 import type { Contract, HoldingKind, SaleType } from "../../types";
 import type { ContractTermsDraft } from "./api";
 import { KIND_LABELS, SALE_TYPE_LABELS, formatDate } from "./contractPresentation";
-import { parseIntOrNull } from "./contractSchedule";
+import { clampDueDayInput, parseIntOrNull, suggestMonthlyPayment } from "./contractSchedule";
 
 const MINIMUM_REASON_LENGTH = 10;
 
@@ -83,6 +84,69 @@ export function ContractEditDialog({
 
   const priceCents = fromCurrencyUnits(parseMoneyInput(salePrice) || 0);
   const isRepricing = priceCents !== contract.terms.salePrice;
+
+  /*
+   * What the cuota WOULD be under the figures currently in the form.
+   *
+   * The create form has offered this from the start; correcting a contract
+   * never did, and the gap was doing real damage. The stored cuota is a plain
+   * value in state here: raise the price by L 40,000, cut the plazo in half,
+   * change the prima — the field kept whatever was typed into it months ago and
+   * said nothing at all. The schedule below then paid that stale cuota out
+   * against the new financed amount, and the last installment silently absorbed
+   * the entire difference.
+   *
+   * It stays a SUGGESTION, and that is deliberate rather than timid. The real
+   * figure is negotiated and rounded — L 47,000 over 13 months is L 3,615.38,
+   * which nobody pays — so the app must never quietly overwrite what was
+   * signed. All it can do is notice the arithmetic has moved and offer the new
+   * number, which is what the button below is.
+   */
+  const financedCents = Math.max(
+    0,
+    priceCents - fromCurrencyUnits(parseMoneyInput(downPayment) || 0),
+  );
+  const suggestedMonthly = (() => {
+    const months = parseIntOrNull(termMonths);
+
+    if (!isFinanced || months === null || !Number.isFinite(months)) {
+      return null;
+    }
+
+    return suggestMonthlyPayment(financedCents, months);
+  })();
+
+  /*
+   * Only worth saying when it differs from what is in the field.
+   *
+   * Offering "usar esa cuota" for the number already written there is noise,
+   * and it would show up on every contract whose cuota happens to be the even
+   * split — which is most of them, and exactly the ones where nothing is wrong.
+   */
+  const monthlyCents = fromCurrencyUnits(parseMoneyInput(monthlyPayment) || 0);
+  const suggestionDiffers = suggestedMonthly !== null && suggestedMonthly !== monthlyCents;
+
+  /*
+   * Has anything actually been changed?
+   *
+   * This form opens pre-filled, so "is there text in it" is always yes and
+   * would lock the dialog the instant it appeared. What matters is whether any
+   * field has MOVED off what the contract says — plus the reason, which exists
+   * only because somebody started writing one.
+   */
+  const isDirty =
+    kind !== contract.kind ||
+    saleType !== contract.saleType ||
+    priceCents !== contract.terms.salePrice ||
+    fromCurrencyUnits(parseMoneyInput(downPayment) || 0) !== contract.terms.downPayment ||
+    (parseIntOrNull(termMonths) ?? null) !== contract.terms.termMonths ||
+    monthlyCents !== (contract.terms.monthlyPayment ?? 0) ||
+    (parseIntOrNull(dueDay) ?? null) !== contract.terms.dueDay ||
+    signedOn !== contract.terms.signedOn ||
+    firstDueOn !== (contract.terms.firstDueOnAgreed ?? "") ||
+    expiresOn !== (contract.terms.expiresOn ?? "") ||
+    notes !== (contract.notes ?? "") ||
+    reason.trim() !== "";
   // Locked rather than hidden: somebody who cannot change the price still has
   // to see what it is to make sense of everything else on the form.
   const priceLocked = !canReprice;
@@ -197,7 +261,13 @@ export function ContractEditDialog({
   };
 
   return (
-    <Dialog ariaLabel={`Editar contrato ${contract.code}`} onClose={onCancel}>
+    <Dialog
+      ariaLabel={`Editar contrato ${contract.code}`}
+      /* A correction is typed off a document in somebody's hand, same as the
+         contract was. The X and Cancelar are the way out. */
+      dismissible={!isDirty && !isSaving}
+      onClose={onCancel}
+    >
       <form onSubmit={handleSubmit}>
         <div className="modal-header">
           <div>
@@ -314,7 +384,22 @@ export function ContractEditDialog({
                   onChange={setMonthlyPayment}
                 />
                 <span className="field-hint">
-                  La cuota que se negoció. La última absorbe la diferencia del redondeo.
+                  {suggestedMonthly !== null && suggestionDiffers ? (
+                    <>
+                      Con el precio, la prima y el plazo de arriba, repartido en partes iguales
+                      daría {formatMoney(cents(suggestedMonthly), money)}.{" "}
+                      <button
+                        type="button"
+                        className="link-btn"
+                        onClick={() => setMonthlyPayment(toMoneyInput(cents(suggestedMonthly)))}
+                      >
+                        Usar esa cuota
+                      </button>
+                      {" · "}O deja la que se negoció: la última absorbe la diferencia.
+                    </>
+                  ) : (
+                    "La cuota que se negoció. La última absorbe la diferencia del redondeo."
+                  )}
                 </span>
               </div>
 
@@ -327,7 +412,7 @@ export function ContractEditDialog({
                   min="1"
                   max="31"
                   value={dueDay}
-                  onChange={(event) => setDueDay(event.target.value)}
+                  onChange={(event) => setDueDay(clampDueDayInput(event.target.value))}
                 />
                 <span className="field-hint">
                   Los meses cortos se ajustan solos: el 31 vence el 28 en febrero.

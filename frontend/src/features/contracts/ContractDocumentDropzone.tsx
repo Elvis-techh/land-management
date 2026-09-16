@@ -49,6 +49,18 @@ interface ContractDocumentDropzoneProps {
   onFilesChange: (files: PendingDocument[]) => void;
   /** Refused before anything is uploaded — wrong type, too big, too many. */
   onReject: (message: string) => void;
+  /**
+   * What this zone is waiting on, or null when it is idle.
+   *
+   * Reported UP rather than kept here, because the consequence of being busy
+   * belongs to the form: reading a file out of Google Drive takes seconds, and
+   * for those seconds neither Guardar nor the X may be pressed. It used to be
+   * private state, and the result was a silent data loss — saving mid-download
+   * created the contract from the files held at that instant, unmounted this
+   * component, and left Drive's callback writing into a form that no longer
+   * existed. The PDF was never uploaded and nothing anywhere said so.
+   */
+  onBusyChange?: (busy: string | null) => void;
   disabled?: boolean;
 }
 
@@ -71,6 +83,7 @@ export function ContractDocumentDropzone({
   files,
   onFilesChange,
   onReject,
+  onBusyChange,
   disabled = false,
 }: ContractDocumentDropzoneProps) {
   const [viewing, setViewing] = useState<string | null>(null);
@@ -78,6 +91,17 @@ export function ContractDocumentDropzone({
 
   /** "Descargando contrato.pdf…" while Google Drive is being read, else null. */
   const [driveBusy, setDriveBusy] = useState<string | null>(null);
+
+  /* Kept in step with the parent, which is what actually holds the doors shut
+     while this is running. Announced from an effect rather than from each
+     `setDriveBusy` call so the two can never drift apart. */
+  useEffect(() => {
+    onBusyChange?.(driveBusy);
+  }, [driveBusy, onBusyChange]);
+
+  /* Whatever happens, the form is not left locked by a zone that has gone away
+     — an unmount in the middle of a download would otherwise strand it. */
+  useEffect(() => () => onBusyChange?.(null), [onBusyChange]);
 
   /*
    * Google's scripts are fetched when this appears rather than when the button

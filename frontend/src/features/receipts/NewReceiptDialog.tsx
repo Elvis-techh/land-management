@@ -1,6 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { Dialog } from "../../components/Dialog";
+import { DraftNotice } from "../../components/DraftNotice";
+import { useFormDraft } from "../../lib/formDrafts";
 import { IconClose } from "../../components/Icons";
 import { MoneyInput } from "../../components/MoneyInput";
 import { ApiError } from "../../lib/api";
@@ -552,6 +554,8 @@ export function NewReceiptDialog({
         }
       }
 
+      // The receipt exists; there is nothing left to recover.
+      formDraft.clear();
       onIssued(receipt);
     } catch (caught) {
       // The server refuses an overpayment by default and names the balance.
@@ -595,6 +599,46 @@ export function NewReceiptDialog({
    * nobody has had a chance to type yet.
    */
   const [attempted, setAttempted] = useState(false);
+  /* What the comprobante zone is waiting on — a Drive download, usually. The
+     form may not be closed or saved across it. See `ProofDropzone`. */
+  const [proofBusy, setProofBusy] = useState<string | null>(null);
+
+  /*
+   * Anything in the form a stray click would destroy.
+   *
+   * The date is excluded: it opens on today and an untouched default is not
+   * work. Everything else here is typed or chosen, including the per-lot
+   * amounts on a multi-lot receipt, which are the most laborious thing on the
+   * screen and the worst to lose.
+   */
+  const hasEnteredAnything =
+    customerId !== "" ||
+    amountText.trim() !== "" ||
+    reference.trim() !== "" ||
+    note.trim() !== "" ||
+    proofs.length > 0 ||
+    Object.values(amountByContract).some((amount) => amount.trim() !== "");
+
+  /*
+   * The form, kept across a reload.
+   *
+   * The per-lot split is the part worth saving: on a customer with four lots
+   * those are four amounts reconciled by hand against one total, and they are
+   * the most laborious thing on this screen.
+   *
+   * `proofs` is absent — a `File` cannot be serialised — and the notice below
+   * says so rather than letting a receipt be issued with its comprobante
+   * silently missing.
+   *
+   * The customer id is stored raw and re-checked on restore: a customer
+   * deactivated since yesterday would otherwise come back selected in a list
+   * that no longer contains them.
+   */
+  const formDraft = useFormDraft(
+    "receipt-create",
+    { customerId, paidOn, method, reference, note, amountText, amountByContract, typeByContract },
+    hasEnteredAnything,
+  );
 
   const invalidField = attempted && blocker ? blocker.focus : null;
 
@@ -616,6 +660,14 @@ export function NewReceiptDialog({
     <Dialog
       ariaLabel="Registrar una transacción"
       size={isMultiLot ? "wide" : "default"}
+      /*
+       * A receipt is typed at the window with the customer standing there. The
+       * backdrop and Escape stop closing it once anything is in it; the X above
+       * is the way out. Shut outright while the save is running, which is when
+       * leaving would abandon an upload halfway. See `dismissible` in
+       * Dialog.tsx.
+       */
+      dismissible={!hasEnteredAnything && !isSaving && proofBusy === null}
       onClose={onClose}
     >
       <div className="modal-header">
@@ -627,12 +679,51 @@ export function NewReceiptDialog({
             propio saldo.
           </p>
         </div>
-        <button type="button" className="modal-close" onClick={onClose} aria-label="Cerrar">
+        {/* The deliberate way out. Refused only while a file is still being
+            read out of Drive — leaving across that download is what loses the
+            comprobante. See `proofBusy`. */}
+        <button
+          type="button"
+          className="modal-close"
+          onClick={onClose}
+          disabled={proofBusy !== null}
+          title={proofBusy ?? undefined}
+          aria-label="Cerrar"
+        >
           <IconClose />
         </button>
       </div>
 
       <div className="modal-form-grid">
+        {formDraft.found && (
+          <DraftNotice
+            savedAt={formDraft.found.savedAt}
+            missing={
+              "El comprobante que habías adjuntado hay que volver a elegirlo. " +
+              "Revisa también el monto contra el saldo de hoy."
+            }
+            onRestore={() => {
+              const saved = formDraft.found!.values;
+
+              // Only if they are still somebody this form can write a receipt
+              // for. Everything else is plain text and comes back as typed.
+              if (customers.some((row) => row.id === saved.customerId)) {
+                setCustomerId(saved.customerId);
+              }
+
+              setPaidOn(saved.paidOn);
+              setMethod(saved.method);
+              setReference(saved.reference);
+              setNote(saved.note);
+              setAmountText(saved.amountText);
+              setAmountByContract(saved.amountByContract);
+              setTypeByContract(saved.typeByContract);
+              formDraft.dismiss();
+            }}
+            onDiscard={formDraft.discard}
+          />
+        )}
+
         <div className="form-field full-width">
           <label htmlFor="receipt-customer">
             Cliente <span className="required-mark">*</span>
@@ -973,6 +1064,7 @@ export function NewReceiptDialog({
             onReject={setError}
             maxFiles={MAX_PROOFS}
             lots={proofLots}
+            onBusyChange={setProofBusy}
             disabled={isSaving}
           />
         </div>
@@ -1047,13 +1139,18 @@ export function NewReceiptDialog({
       )}
 
       <div className="modal-actions">
-        <button type="button" className="btn-secondary" onClick={onClose} disabled={isSaving}>
+        <button
+          type="button"
+          className="btn-secondary"
+          onClick={onClose}
+          disabled={isSaving || proofBusy !== null}
+        >
           Cancelar
         </button>
         <button
           type="button"
           className="btn-primary modal-submit"
-          disabled={isSaving}
+          disabled={isSaving || proofBusy !== null}
           onClick={() => {
             if (blocker) {
               // Say it, then put the caret where it can be fixed. Announcing
@@ -1067,7 +1164,7 @@ export function NewReceiptDialog({
             void submit(false);
           }}
         >
-          {savingStep ?? "Registrar y emitir recibo"}
+          {proofBusy ?? savingStep ?? "Registrar y emitir recibo"}
         </button>
       </div>
     </Dialog>

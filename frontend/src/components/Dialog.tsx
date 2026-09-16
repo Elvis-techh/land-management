@@ -23,6 +23,24 @@ interface DialogProps {
    * chrome around it is in the way. See `DocumentViewer`.
    */
   size?: "default" | "wide" | "viewer";
+  /**
+   * Whether the two ACCIDENTAL ways out are open: a click on the backdrop and a
+   * press of Escape.
+   *
+   * Defaults to true, which is right for everything opened to look at
+   * something — a comprobante, a receipt, a confirmation. It is wrong for a
+   * form somebody has been typing into. A contract is twenty fields gathered
+   * off a signed piece of paper, and a click that lands two pixels outside the
+   * panel used to throw all of it away with no warning and no undo. The cost of
+   * the two exits is not symmetrical: closing a form by accident destroys work,
+   * while making somebody aim for the X costs them one deliberate click.
+   *
+   * It never blocks the X, the Cancelar button, or anything else the dialog
+   * puts on screen. Those are the deliberate exits, and a dialog with no way
+   * out at all is a trap rather than a guard — so whoever sets this to false
+   * owes the user a visible control that closes it.
+   */
+  dismissible?: boolean;
   onClose: () => void;
   children: ReactNode;
 }
@@ -95,7 +113,13 @@ export function useAnyDialogOpen(): boolean {
  * confined to the 66px header and drawn off the top of the screen. The portal
  * takes that whole class of bug off the table for every dialog.
  */
-export function Dialog({ ariaLabel, size = "default", onClose, children }: DialogProps) {
+export function Dialog({
+  ariaLabel,
+  size = "default",
+  dismissible = true,
+  onClose,
+  children,
+}: DialogProps) {
   const panelRef = useRef<HTMLDivElement>(null);
 
   // A stable identity for this dialog's slot in the stack, and a ref to the
@@ -103,6 +127,42 @@ export function Dialog({ ariaLabel, size = "default", onClose, children }: Dialo
   const [id] = useState(() => Symbol("dialog"));
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+
+  /* Read by the mount-only key listener below, which would otherwise close on
+     the value `dismissible` happened to have when the dialog first appeared —
+     and a form is empty, and therefore dismissible, at exactly that moment. */
+  const dismissibleRef = useRef(dismissible);
+  dismissibleRef.current = dismissible;
+
+  /*
+   * A press that was refused, so the refusal is visible.
+   *
+   * A backdrop click that simply does nothing is indistinguishable from a
+   * frozen app: the user's model is "clicking out here closes this", and
+   * silence invites a second, harder click rather than a look for the X. One
+   * short pulse on the panel says "still here, on purpose" and points the eye
+   * back at the form.
+   */
+  const [isNudging, setNudging] = useState(false);
+  const nudgeTimer = useRef<number | null>(null);
+
+  const refuse = () => {
+    if (nudgeTimer.current !== null) {
+      window.clearTimeout(nudgeTimer.current);
+    }
+
+    setNudging(true);
+    nudgeTimer.current = window.setTimeout(() => setNudging(false), 320);
+  };
+
+  useEffect(
+    () => () => {
+      if (nudgeTimer.current !== null) {
+        window.clearTimeout(nudgeTimer.current);
+      }
+    },
+    [],
+  );
 
   // Mounts invisible, then fades in on the next frame — without this the CSS
   // transition has no starting point to animate from.
@@ -122,9 +182,17 @@ export function Dialog({ ariaLabel, size = "default", onClose, children }: Dialo
     stackChanged();
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      // Only the dialog on top of the stack answers Escape.
+      // Only the dialog on top of the stack answers Escape — and it answers
+      // even when it is refusing, so the key never falls through to a dialog
+      // underneath that would happily close instead.
       if (event.key === "Escape" && openDialogs[openDialogs.length - 1] === id) {
-        onCloseRef.current();
+        event.preventDefault();
+
+        if (dismissibleRef.current) {
+          onCloseRef.current();
+        } else {
+          refuse();
+        }
       }
     };
 
@@ -156,14 +224,22 @@ export function Dialog({ ariaLabel, size = "default", onClose, children }: Dialo
       className={isVisible ? "modal-backdrop show" : "modal-backdrop"}
       // Only a press that lands on the backdrop itself counts as "outside".
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) {
+        if (event.target !== event.currentTarget) {
+          return;
+        }
+
+        if (dismissible) {
           onClose();
+        } else {
+          refuse();
         }
       }}
     >
       <div
         ref={panelRef}
-        className={`entity-modal${size === "default" ? "" : ` is-${size}`}`}
+        className={`entity-modal${size === "default" ? "" : ` is-${size}`}${
+          isNudging ? " is-nudging" : ""
+        }`}
         role="dialog"
         aria-modal="true"
         aria-label={ariaLabel}

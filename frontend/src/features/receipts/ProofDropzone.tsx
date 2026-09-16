@@ -91,6 +91,15 @@ interface ProofDropzoneProps {
    * with one option in it is furniture.
    */
   lots?: ProofLot[];
+  /**
+   * What this zone is waiting on, or null when it is idle.
+   *
+   * Reported UP for the same reason `ContractDocumentDropzone` does it: reading
+   * a file out of Google Drive takes seconds, and the form around this has to
+   * refuse to close across them. Kept private, the failure is silent — the
+   * receipt saves without the comprobante and nothing says a file was lost.
+   */
+  onBusyChange?: (busy: string | null) => void;
   disabled?: boolean;
 }
 
@@ -187,6 +196,7 @@ export function ProofDropzone({
   onReject,
   maxFiles,
   lots = [],
+  onBusyChange,
   disabled = false,
 }: ProofDropzoneProps) {
   /*
@@ -202,8 +212,17 @@ export function ProofDropzone({
   const [viewing, setViewing] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  /** "Descargando contrato.pdf…" while Google Drive is being read, else null. */
+  /** "Descargando comprobante.jpg…" while Google Drive is being read, else null. */
   const [driveBusy, setDriveBusy] = useState<string | null>(null);
+
+  /* Announced from an effect rather than from each `setDriveBusy` call, so the
+     parent's copy can never drift out of step with this one. The unmount clear
+     stops a form being left locked by a zone that has gone away mid-download. */
+  useEffect(() => {
+    onBusyChange?.(driveBusy);
+  }, [driveBusy, onBusyChange]);
+
+  useEffect(() => () => onBusyChange?.(null), [onBusyChange]);
 
   /*
    * Google's scripts are fetched when this appears rather than when the button

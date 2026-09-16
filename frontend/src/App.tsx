@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Dialog, useAnyDialogOpen } from "./components/Dialog";
+import { setDraftOwner } from "./lib/formDrafts";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Sidebar } from "./components/Sidebar";
 import { Topbar } from "./components/Topbar";
@@ -205,6 +206,18 @@ export default function App() {
   const [accountBeingDeactivated, setAccountBeingDeactivated] = useState<UserAccount | null>(null);
 
   const isSignedIn = session.status === "signed-in";
+
+  /*
+   * Whose half-written forms these are.
+   *
+   * Set here rather than passed into each form, because the answer is the same
+   * for all of them. Cleared on sign-out, which is what stops the next person
+   * at the shared office machine being offered somebody else's unfinished
+   * receipt. See lib/formDrafts.ts.
+   */
+  useEffect(() => {
+    setDraftOwner(session.status === "signed-in" ? session.user.id : null);
+  }, [session]);
 
   // The session expired underneath a request. Drop to the login screen rather
   // than sit on stale numbers. Defined before the data hooks because they call

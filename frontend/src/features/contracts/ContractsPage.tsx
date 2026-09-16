@@ -134,6 +134,12 @@ export function ContractsPage({
   // and "atrasados primero" still puts the worst customer at the top.
   const groups = useMemo(() => groupByCustomer(visible), [visible]);
 
+  // Only the customers actually worth folding — a lone contract has no group
+  // row to toggle, so it takes no part in "expand/collapse all".
+  const multiGroups = useMemo(() => groups.filter((group) => group.contracts.length > 1), [groups]);
+  const allGroupsExpanded =
+    multiGroups.length > 0 && multiGroups.every((group) => !collapsed.has(group.customerId));
+
   const projectNames = useMemo(
     () =>
       [...new Set(contracts.map((contract) => contract.lot.projectName))].sort((a, b) =>
@@ -154,6 +160,25 @@ export function ContractsPage({
       if (!next.delete(customerId)) {
         next.add(customerId);
       }
+      return next;
+    });
+  };
+
+  // One press folds every multi-contract customer shut, or opens them all back
+  // up — the fast way to scan just the group headers for who holds more than
+  // one lot, without clicking each one in turn.
+  const toggleAllGroups = () => {
+    setCollapsed((current) => {
+      const next = new Set(current);
+
+      for (const group of multiGroups) {
+        if (allGroupsExpanded) {
+          next.add(group.customerId);
+        } else {
+          next.delete(group.customerId);
+        }
+      }
+
       return next;
     });
   };
@@ -187,6 +212,9 @@ export function ContractsPage({
         onSearchChange={setSearch}
         shownCount={visible.length}
         totalCount={contracts.length}
+        multiGroupCount={multiGroups.length}
+        allGroupsExpanded={allGroupsExpanded}
+        onToggleAllGroups={toggleAllGroups}
       />
 
       <div className="card">

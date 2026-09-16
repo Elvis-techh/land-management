@@ -180,3 +180,14 @@ export function parseIntOrNull(value: string): number | null {
 
   return Number.isInteger(parsed) ? parsed : Number.NaN;
 }
+
+/**
+ * Keeps a día-de-pago field from ever holding what no month has: typing past
+ * 31 clamps to it instead of waiting for the submit-time error, since no
+ * calendar makes "45" true no matter how the rest of the form turns out.
+ */
+export function clampDueDayInput(raw: string): string {
+  const parsed = parseIntOrNull(raw);
+
+  return parsed !== null && Number.isFinite(parsed) && parsed > 31 ? "31" : raw;
+}

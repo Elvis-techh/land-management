@@ -2,6 +2,8 @@ import type { FormEvent } from "react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { Dialog } from "../../components/Dialog";
+import { DraftNotice } from "../../components/DraftNotice";
+import { useFormDraft } from "../../lib/formDrafts";
 import { IconClose } from "../../components/Icons";
 import { MoneyInput } from "../../components/MoneyInput";
 import { businessToday } from "../../lib/businessTime";
@@ -18,6 +20,7 @@ import { CustomerPicker, LotPicker } from "./ContractPartyPickers";
 import { KIND_LABELS, SALE_TYPE_LABELS, formatDate } from "./contractPresentation";
 import {
   addMonthsOnDay,
+  clampDueDayInput,
   financedCents,
   firstDueDate,
   parseIntOrNull,
@@ -164,6 +167,11 @@ export function ContractCreateDialog({
 
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setSaving] = useState(false);
+  /*
+   * What the dropzone is waiting on — a Google Drive download, usually — or
+   * null when nothing is in flight. See `ContractDocumentDropzone`.
+   */
+  const [documentBusy, setDocumentBusy] = useState<string | null>(null);
   /** What the save is doing right now — a contract, or the third of five scans. */
   const [savingStep, setSavingStep] = useState<string | null>(null);
 
@@ -226,6 +234,72 @@ export function ContractCreateDialog({
   const isDonation = saleType === "donation";
   const isReservation = kind === "reservation";
 
+  /*
+   * Is there anything here worth protecting?
+   *
+   * The guard below only bites once the answer is yes. A form opened and
+   * immediately thought better of still closes on a click outside, which is
+   * what anybody expects — the cost of a stray click is only real once there is
+   * work to lose.
+   *
+   * Deliberately coarse. Picking the customer is the first thing that happens
+   * on this form and everything after it is more typing, so that one field is
+   * enough to say "somebody is in the middle of this".
+   */
+  const hasEnteredAnything =
+    customer !== null ||
+    lot !== null ||
+    joinContractId !== "" ||
+    documents.length > 0 ||
+    notes.trim() !== "";
+
+  /*
+   * A file is being read out of Drive, or the save is running.
+   *
+   * Nothing may close the form during either. The download is the dangerous
+   * one: it is seconds long, it shows only a small line of text inside the
+   * dropzone, and closing across it loses the file silently — see
+   * `ContractDocumentDropzone`.
+   */
+  const isWorking = isSaving || documentBusy !== null;
+
+  /*
+   * The form, kept across a reload.
+   *
+   * The customer and the lot are stored as IDS rather than as the objects
+   * themselves. The objects are rows from a list this form is handed fresh on
+   * every open, and a stale copy from yesterday could describe a lot somebody
+   * else has since sold — so the id is re-resolved against today's list on
+   * restore, and a lot that is no longer free simply does not come back.
+   *
+   * `documents` is absent, because a `File` cannot be serialised. That absence
+   * is stated to the user rather than hidden; see the notice below.
+   *
+   * Suspended once the contract exists: from that point the form is only
+   * retrying uploads, and there is nothing left to recover.
+   */
+  const draft = useFormDraft(
+    "contract-create",
+    {
+      step,
+      customerId: customer?.id ?? null,
+      lotId: lot?.id ?? null,
+      joinContractId,
+      kind,
+      saleType,
+      priceOverride,
+      monthlyOverride,
+      expiresOverride,
+      signedOnOverride,
+      downPayment,
+      termMonths,
+      dueDay,
+      firstDueOn,
+      notes,
+    },
+    hasEnteredAnything && created === null,
+  );
+
   // The active contracts this customer already holds. Only these can be joined:
   // a sale group exists so that ONE payment can be split across the lots of ONE
   // purchase, so mixing two customers into a group would put one person's money
@@ -240,7 +314,67 @@ export function ContractCreateDialog({
     [contracts, customer],
   );
 
+  /*
+   * One option per PURCHASE, which is not the same as one per contract.
+   *
+   * This list used to be `groupCandidates` straight through, and that made the
+   * question contradict its own answer. Say a customer buys lot A, then buys
+   * lot B and joins it to A's purchase — the right thing, and what the field is
+   * for. Open the form again for lot C and the old list offered "CT-2026-014 ·
+   * Lote A-12" AND "CT-2026-015 · Lote B-03" as two separate things to join.
+   * They are not two things. They are two doors into one purchase, and being
+   * shown both is what makes somebody who just said "these are one sale"
+   * conclude the app did not believe them.
+   *
+   * Contracts already sharing a `saleGroupId` therefore collapse into a single
+   * entry describing the whole purchase. A contract standing on its own keeps
+   * its own entry, because that is genuinely one thing.
+   *
+   * The VALUE stays an ordinary contract id — any member of the group will do.
+   * The server reads whichever contract it is handed, takes that contract's
+   * `saleGroupId` (minting one if the contract had none yet) and files the new
+   * contract under it, so collapsing the list here needs no change on the other
+   * side. See routes/contracts.ts.
+   */
+  const purchaseOptions = useMemo(() => {
+    const byGroup = new Map<string, Contract[]>();
+
+    for (const candidate of groupCandidates) {
+      // A contract with no group is its own purchase, keyed by its own id so it
+      // can never be folded in with another ungrouped one.
+      const key = candidate.saleGroupId ?? `solo:${candidate.id}`;
+      const members = byGroup.get(key);
+
+      if (members) {
+        members.push(candidate);
+      } else {
+        byGroup.set(key, [candidate]);
+      }
+    }
+
+    return [...byGroup.values()].map((members) => {
+      const first = members[0]!;
+      const lots = members
+        .map((member) => member.lot.code)
+        .sort((a, b) => a.localeCompare(b, "es"));
+
+      return {
+        // Any member joins the same purchase; the first is as good as any.
+        value: first.id,
+        label:
+          members.length === 1
+            ? `${first.code} · Lote ${first.lot.code} · firmado ${formatDate(first.terms.signedOn)}`
+            : `Compra de ${members.length} lotes · ${lots.join(", ")} · firmada ${formatDate(first.terms.signedOn)}`,
+        lotCount: members.length,
+      };
+    });
+  }, [groupCandidates]);
+
   const joinContract = groupCandidates.find((candidate) => candidate.id === joinContractId) ?? null;
+
+  /* How many lots the chosen purchase already covers, for the hint below. */
+  const joinLotCount =
+    purchaseOptions.find((option) => option.value === joinContractId)?.lotCount ?? 0;
 
   // Joining an existing purchase inherits its signing date by default: these
   // are lots bought in the same deal, and two signing dates a week apart would
@@ -507,6 +641,7 @@ export function ContractCreateDialog({
     // Recorded before the uploads are attempted so that a failure in one of
     // them cannot be answered by writing the sale a second time.
     setCreated(contract);
+    draft.clear();
 
     const failures = await fileDocuments(contract.id);
 
@@ -531,7 +666,20 @@ export function ContractCreateDialog({
   };
 
   return (
-    <Dialog ariaLabel="Nuevo contrato" onClose={close}>
+    <Dialog
+      ariaLabel="Nuevo contrato"
+      /*
+       * Once there is something in the form, the backdrop and Escape stop
+       * closing it — the X and Cancelar above are the way out. Twenty fields
+       * copied off a signed contract are not something a click that missed the
+       * panel by two pixels should be able to destroy.
+       *
+       * Also shut while a file is being read out of Drive, empty form or not:
+       * that is the window in which leaving silently loses the document.
+       */
+      dismissible={!hasEnteredAnything && !isWorking}
+      onClose={close}
+    >
       <form onSubmit={handleSubmit}>
         <div className="modal-header">
           <div>
@@ -561,13 +709,71 @@ export function ContractCreateDialog({
               )}
             </p>
           </div>
-          <button type="button" className="modal-close" onClick={close} aria-label="Cerrar">
+          {/* The deliberate way out, and the ONLY one once the form has
+              something in it — see `dismissible` on the Dialog below. Refused
+              only while a file is still being read or the save is running,
+              because leaving in the middle of either is what loses the
+              document. */}
+          <button
+            type="button"
+            className="modal-close"
+            onClick={close}
+            disabled={isWorking}
+            title={documentBusy ?? undefined}
+            aria-label="Cerrar"
+          >
             <IconClose />
           </button>
         </div>
 
         {created === null && step === "parties" && (
           <div className="modal-form-grid">
+            {draft.found && (
+              <DraftNotice
+                savedAt={draft.found.savedAt}
+                /* Said plainly, because a form that comes back looking
+                   finished with its scan quietly missing is how an unfiled
+                   contract gets saved and nobody notices for months. */
+                missing="El contrato firmado que habías adjuntado hay que volver a elegirlo."
+                onRestore={() => {
+                  const saved = draft.found!.values;
+
+                  // Re-resolved against TODAY's lists: a lot sold since, or a
+                  // customer deactivated since, simply does not return.
+                  setCustomer(customers.find((row) => row.id === saved.customerId) ?? null);
+                  setLot(lots.find((row) => row.id === saved.lotId) ?? null);
+                  setJoinContractId(saved.joinContractId);
+                  setKind(saved.kind);
+                  setSaleType(saved.saleType);
+                  setPriceOverride(saved.priceOverride);
+                  setMonthlyOverride(saved.monthlyOverride);
+                  setExpiresOverride(saved.expiresOverride);
+                  setSignedOnOverride(saved.signedOnOverride);
+                  setDownPayment(saved.downPayment);
+                  setTermMonths(saved.termMonths);
+                  setDueDay(saved.dueDay);
+                  setFirstDueOn(saved.firstDueOn);
+                  setNotes(saved.notes);
+
+                  /*
+                   * Back to the step they were on — but only if the two things
+                   * that step depends on both came back. Landing somebody on
+                   * "Términos de la venta" with no lot behind it is a screen
+                   * that cannot be completed and does not say why.
+                   */
+                  const customerBack = customers.some((row) => row.id === saved.customerId);
+                  const lotBack = lots.some((row) => row.id === saved.lotId);
+
+                  if (saved.step === "terms" && customerBack && lotBack) {
+                    setStep("terms");
+                  }
+
+                  draft.dismiss();
+                }}
+                onDiscard={draft.discard}
+              />
+            )}
+
             {/* Where the file went.
 
                 A drop on the Contratos tab opens this form at step 1, which is
@@ -622,7 +828,7 @@ export function ContractCreateDialog({
 
             {/* Offered only when there is something to join. A customer with no
                 live contract cannot be buying a second lot of the same deal. */}
-            {groupCandidates.length > 0 && (
+            {purchaseOptions.length > 0 && (
               <div className="form-field full-width">
                 <label htmlFor="new-contract-group">¿Es parte de una compra que ya existe?</label>
                 <select
@@ -631,16 +837,15 @@ export function ContractCreateDialog({
                   onChange={(event) => setJoinContractId(event.target.value)}
                 >
                   <option value="">No, es una compra aparte</option>
-                  {groupCandidates.map((candidate) => (
-                    <option key={candidate.id} value={candidate.id}>
-                      {candidate.code} · Lote {candidate.lot.code} · firmado{" "}
-                      {formatDate(candidate.terms.signedOn)}
+                  {purchaseOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
                     </option>
                   ))}
                 </select>
                 <span className="field-hint">
                   {joinContract
-                    ? `Los dos lotes quedan como una sola compra, cada uno con su propio saldo. Un pago de ${customer?.fullName} podrá repartirse entre ellos desde la lista de contratos.`
+                    ? `Los ${joinLotCount + 1} lotes quedan como una sola compra, cada uno con su propio saldo. Un pago de ${customer?.fullName} podrá repartirse entre ellos desde la lista de contratos.`
                     : "Únelo solo si es la misma venta: dos lotes firmados el mismo día, con un solo recibo. Lotes comprados en años distintos comparten al cliente, no la compra."}
                 </span>
               </div>
@@ -816,7 +1021,7 @@ export function ContractCreateDialog({
                     max="31"
                     value={dueDay}
                     placeholder="5"
-                    onChange={(event) => setDueDay(event.target.value)}
+                    onChange={(event) => setDueDay(clampDueDayInput(event.target.value))}
                   />
                   <span className="field-hint">
                     Los meses cortos se ajustan solos: el 31 vence el 28 en febrero.
@@ -899,6 +1104,7 @@ export function ContractCreateDialog({
                 files={documents}
                 onFilesChange={setDocuments}
                 onReject={setError}
+                onBusyChange={setDocumentBusy}
                 disabled={isSaving}
               />
               <span className="field-hint">
@@ -974,6 +1180,7 @@ export function ContractCreateDialog({
                 files={documents}
                 onFilesChange={setDocuments}
                 onReject={setError}
+                onBusyChange={setDocumentBusy}
                 disabled={isSaving}
               />
             </div>
@@ -986,15 +1193,20 @@ export function ContractCreateDialog({
           {created !== null ? (
             /* Not "Cancelar": there is nothing left to cancel. It closes the
                form and leaves the contract standing, with or without its scan. */
-            <button type="button" className="btn-secondary" onClick={close} disabled={isSaving}>
+            <button type="button" className="btn-secondary" onClick={close} disabled={isWorking}>
               Cerrar
             </button>
           ) : step === "terms" ? (
-            <button type="button" className="btn-secondary" onClick={goBack} disabled={isSaving}>
+            <button type="button" className="btn-secondary" onClick={goBack} disabled={isWorking}>
               Atrás
             </button>
           ) : (
-            <button type="button" className="btn-secondary" onClick={onCancel}>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={onCancel}
+              disabled={isWorking}
+            >
               Cancelar
             </button>
           )}
@@ -1002,11 +1214,16 @@ export function ContractCreateDialog({
           <button
             type="submit"
             className="btn-primary modal-submit"
-            disabled={isSaving || (created === null && step === "parties" && (customer === null || lot === null))}
+            disabled={
+              isWorking ||
+              (created === null && step === "parties" && (customer === null || lot === null))
+            }
           >
             <span>
-              {isSaving
-                ? (savingStep ?? "Guardando…")
+              {documentBusy
+                ? documentBusy
+                : isSaving
+                  ? (savingStep ?? "Guardando…")
                 : created !== null
                   ? documents.length === 0
                     ? "Listo"

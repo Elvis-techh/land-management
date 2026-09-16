@@ -2,6 +2,8 @@ import type { FormEvent } from "react";
 import { useMemo, useState } from "react";
 
 import { Dialog } from "../../components/Dialog";
+import { DraftNotice } from "../../components/DraftNotice";
+import { useFormDraft } from "../../lib/formDrafts";
 import { IconClose } from "../../components/Icons";
 import { MoneyInput } from "../../components/MoneyInput";
 import { AREA_UNIT_INFO, toSquareMetres } from "../../lib/area";
@@ -65,6 +67,31 @@ export function LotCreateDialog({
   const [basePrice, setBasePrice] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setSaving] = useState(false);
+
+  /*
+   * Anything typed here that a stray click would throw away.
+   *
+   * The code fields are not in the list: they open pre-filled with a
+   * suggestion, and an untouched suggestion is not somebody's work. The
+   * OVERRIDES are, because those exist only once the suggestion was rejected by
+   * hand. Area and price are plain typing and count from the first character.
+   */
+  const hasEnteredAnything =
+    area.trim() !== "" ||
+    basePrice.trim() !== "" ||
+    prefixOverride !== null ||
+    numberOverride !== null ||
+    manualCode !== null;
+
+  /*
+   * The same values, kept across a reload. Nothing here is a file, so a
+   * restored lot form is complete — see lib/formDrafts.ts.
+   */
+  const draft = useFormDraft(
+    "lot-create",
+    { projectName, prefixOverride, numberOverride, manualCode, area, basePrice },
+    hasEnteredAnything,
+  );
 
   // The unit follows the project. A project is sold in one unit, so there is
   // nothing to choose here — picking the project has already decided it.
@@ -134,6 +161,9 @@ export function LotCreateDialog({
         areaM2: toSquareMetres(areaValue, unit),
         basePriceCents: fromCurrencyUnits(price),
       });
+
+      // The lot exists; there is nothing left to recover.
+      draft.clear();
     } catch (caught) {
       // The server checks the same rules independently — a duplicate code or a
       // permission refusal surfaces here.
@@ -144,7 +174,13 @@ export function LotCreateDialog({
   };
 
   return (
-    <Dialog ariaLabel="Nuevo lote" onClose={onCancel}>
+    <Dialog
+      ariaLabel="Nuevo lote"
+      /* The X and Cancelar stay; the backdrop and Escape stop closing once
+         there is something to lose. See `dismissible` in Dialog.tsx. */
+      dismissible={!hasEnteredAnything && !isSaving}
+      onClose={onCancel}
+    >
       <form onSubmit={handleSubmit}>
         <div className="modal-header">
           <div>
@@ -161,6 +197,24 @@ export function LotCreateDialog({
         </div>
 
         <div className="modal-form-grid">
+          {draft.found && (
+            <DraftNotice
+              savedAt={draft.found.savedAt}
+              onRestore={() => {
+                const saved = draft.found!.values;
+
+                setProjectName(saved.projectName);
+                setPrefixOverride(saved.prefixOverride);
+                setNumberOverride(saved.numberOverride);
+                setManualCode(saved.manualCode);
+                setArea(saved.area);
+                setBasePrice(saved.basePrice);
+                draft.dismiss();
+              }}
+              onDiscard={draft.discard}
+            />
+          )}
+
           <div className="form-field full-width">
             <label htmlFor="new-lot-project">Proyecto</label>
             <select
