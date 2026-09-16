@@ -856,6 +856,86 @@ tbody tr:hover {
   align-items: start;
 }
 
+/*
+ * `clip` rather than the `hidden` every other card gets, and the difference is
+ * the only reason the selection bar below can stick at all.
+ *
+ * `overflow: hidden` makes an element the scroll container for any sticky
+ * descendant. This card is taller than the window and never scrolls itself —
+ * the page behind it does — so a sticky child inside it would be pinned to a
+ * scrollport that never moves, which is to say it would simply never stick.
+ * There is no error and nothing in the devtools to see; the bar just rides up
+ * out of view like an ordinary block.
+ *
+ * `clip` cuts the corners exactly as `hidden` did without creating that scroll
+ * container. What it does NOT bring with it is the block formatting context
+ * `hidden` came with, so `flow-root` restores that separately — otherwise a
+ * first child's top margin would collapse straight out through the card's
+ * rounded edge.
+ */
+.receipts-layout > .card {
+  overflow: clip;
+  display: flow-root;
+}
+
+/* The ad-hoc sum: what the checked rows add up to, distinct from the "N
+   transacciones" line above it, which answers a different question — what the
+   current filters let through, not what somebody picked by hand.
+ *
+ * Pinned under the header, because the figures ARE the feature. Somebody drags
+ * across forty rows precisely to read the total, and a total that scrolls away
+ * the moment the selection grows past a screenful answers the question for
+ * exactly the selections small enough not to need it.
+ *
+ * `top` is the header's own 66px and `z-index` is one below its 5, so the bar
+ * slides under the header rather than over it. Its background is opaque for
+ * the same reason: the rows pass BEHIND it, and the header's translucency is
+ * already doing that job one layer up.
+ *
+ * Green, matching the rows it is counting — see `.txn-row.is-checked`. */
+.selection-bar {
+  position: sticky;
+  top: 66px;
+  z-index: 4;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 18px;
+  padding: 11px 18px;
+  background: var(--green-bg);
+  border-bottom: 1px solid var(--green);
+  font-size: 0.7812rem;
+}
+
+.selection-bar-count {
+  font-weight: 600;
+  color: var(--green-dark);
+}
+
+.selection-bar-figure {
+  color: var(--text-secondary);
+}
+
+.selection-bar-figure strong {
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+}
+
+/* The receipt count rides inside the "N seleccionadas" label rather than
+   beside it: it qualifies that number, it is not a fourth figure. */
+.selection-bar-receipts {
+  font-weight: 400;
+  color: var(--text-secondary);
+}
+
+.selection-bar-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-left: auto;
+}
+
 .receipt-row {
   display: flex;
   align-items: center;
@@ -940,6 +1020,33 @@ tbody tr:hover {
    * container, which would hand this pane a stray vertical scrollbar.
    */
   overflow-x: clip;
+}
+
+/*
+ * The document follows the list down.
+ *
+ * Only where the two are actually side by side. Below 1180px the grid collapses
+ * to one column and the receipt sits UNDER the list, where pinning it would
+ * mean pinning a block that has nothing left to scroll past; below 760px it is
+ * a full-screen sheet with its own scroller already. So this is the one case
+ * the rule is for: two panes, one of them a hundred rows long, and a document
+ * that used to be left behind at the top of it.
+ *
+ * `hidden auto` rather than the `clip` above, because a pane with a ceiling
+ * needs a real scroller on one axis. Horizontal stays off: the receipt is laid
+ * out to fit this column, and a stray long word should be cut rather than drag
+ * a second scrollbar in. `contain` keeps the last line of the receipt from
+ * handing the scroll back to the page behind it.
+ */
+@media (min-width: 1181px) {
+  .receipt-preview-wrap {
+    position: sticky;
+    top: 82px;
+    max-height: calc(100vh - 98px);
+    max-height: calc(100dvh - 98px);
+    overflow: hidden auto;
+    overscroll-behavior: contain;
+  }
 }
 
 .receipt-preview-label {
@@ -1390,6 +1497,8 @@ tbody tr:hover {
   display: flex;
   align-items: stretch;
   border-bottom: 1px solid var(--line);
+  /* Read by `.txn-check` below. Rows reveal their own box; see `.txn-check`. */
+  --check-opacity: 0;
 }
 
 .txn-row:last-child {
@@ -1398,10 +1507,117 @@ tbody tr:hover {
 
 .txn-row:hover {
   background: var(--paper);
+  --check-opacity: 1;
 }
 
+/*
+ * Two facts about one row, in two different channels.
+ *
+ * They used to be two background tints fighting over the same property, which
+ * meant the later rule simply won and a row that was both only ever showed one
+ * of them. Worse, the tint that won for "the receipt in the panel" was
+ * `--clay-bg`, and a filled red-ish row in a ledger reads as "about to be
+ * deleted" no matter what the legend says.
+ *
+ * So: the FILL says whether the row is counted in the sum, and green is the
+ * colour money is counted in everywhere else in the app. The RAIL — three
+ * pixels down the left edge — says which receipt is open in the panel beside
+ * it. Neither can hide the other, a row can carry both at once, and red is
+ * left to mean what it means on the Anular button.
+ *
+ * `box-shadow: inset` rather than a border, so the rail costs no layout: a
+ * border would push this row's text three pixels right of every other row's.
+ */
 .txn-row.is-selected {
-  background: var(--clay-bg);
+  background: var(--paper);
+  box-shadow: inset 3px 0 0 var(--clay);
+}
+
+.txn-row.is-checked {
+  background: var(--green-bg);
+  --check-opacity: 1;
+}
+
+/* Same 12px + fixed width the proof column holds open, so the checkbox lines
+   up down every row and the date after it still starts level.
+
+   THIS is the mouse target, not the box inside it — see `.txn-check` below.
+   Sized to the full row height (`align-items: stretch` on `.txn-row`) rather
+   than the 15px box, so a press-and-drag across several rows does not depend
+   on the pointer staying on a sliver of pixels the whole way down. */
+.txn-check-slot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 34px;
+  padding-left: 10px;
+  cursor: pointer;
+}
+
+.txn-check-slot.is-disabled {
+  cursor: default;
+}
+
+/*
+ * Inert to the mouse on purpose — `.txn-check-slot` around it handles every
+ * click and drag instead. A native checkbox flips its own `checked` the
+ * instant the mouse goes down, before React ever sees the event, and only
+ * commits to that (or reverts it) once the click finishes; fighting that from
+ * React's side is what used to leave the box showing last click's state
+ * instead of this one's. With the mouse routed around it, the browser never
+ * writes `checked` at all — only React does — so there is nothing left to
+ * race. The keyboard is untouched: Tab still reaches the real input and Space
+ * still toggles it through `onChange`, same as any other checkbox.
+ */
+.txn-check {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--green-dark);
+  pointer-events: none;
+  /*
+   * Hidden until there is a reason for it.
+   *
+   * Sixty checkboxes down a ledger is sixty invitations to a gesture almost
+   * nobody is making, and they compete with the dates for the first thing the
+   * eye lands on. The box appears when the pointer is on its row, when it has
+   * keyboard focus, and for as long as any selection is under way — Gmail's
+   * rule, and Airtable's.
+   *
+   * The 34px SLOT around it never moves. It holds the column open so the dates
+   * stay aligned, and it stays the mouse target whether the box is visible or
+   * not, which is what lets a press-and-drag start on a row that is not showing
+   * one yet.
+   */
+  opacity: var(--check-opacity);
+  transition: opacity .12s ease;
+}
+
+/* Reaching it by Tab has to reveal it, or the focus ring lands on nothing. */
+.txn-check:focus-visible {
+  opacity: 1;
+}
+
+/* A reversed payment can never be summed. Faint rather than absent once the
+   column is revealed: the greyed box says "not this one", which is a different
+   statement from an empty space. */
+.txn-check:disabled {
+  opacity: calc(var(--check-opacity) * 0.3);
+}
+
+/* No pointer, no hover — on a touch screen the column is simply always there. */
+@media (hover: none) {
+  .txn-row {
+    --check-opacity: 1;
+  }
+}
+
+/* Every row reveals its box while a selection is under way, not just the one
+   under the pointer: mid-selection the question is "which of these are
+   checked", and an invisible column cannot answer it. */
+.txn-list.is-selecting .txn-row {
+  --check-opacity: 1;
 }
 
 .txn-main {
@@ -2594,12 +2810,28 @@ body.is-dragging-file .proof-dropzone.is-slot:not(.is-disabled) {
   font-size: 0.8125em;
 }
 
+/*
+ * Above the receipt, not under it.
+ *
+ * They used to sit below a document 264mm long, which meant that unless you
+ * already knew they were there, the way to find Anular was to scroll past a
+ * whole receipt on the off chance. A control nobody can find is a control that
+ * does not exist: people were reaching for a delete button, not finding one,
+ * and concluding the app could not do it.
+ *
+ * So the four of them are the first thing under the label now — what you can
+ * DO with this receipt, stated before the receipt itself. The rule underneath
+ * is what keeps that from reading as part of the document: above the line is
+ * the application, below it is the paper.
+ */
 .receipt-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 14px 16px 18px;
+  padding: 0 20px 14px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid var(--line);
   flex-wrap: wrap;
 }
 
@@ -4191,6 +4423,37 @@ body.modal-open {
   background: var(--paper);
 }
 
+/*
+ * Destructive, and shaped like a button.
+ *
+ * Anular was a bare text link beside three real buttons, which put the one
+ * irreversible action on this screen in the least button-like thing on it. It
+ * gets the same box, height and radius as `.btn-secondary` so it reads as a
+ * peer — and the red family, not clay, so it still reads as the one that
+ * cannot be taken back. `--red` is already the app's danger hue; `--clay` is
+ * the brand accent and means nothing about consequence.
+ *
+ * Quiet at rest and filled on hover: a destructive control should be findable
+ * without being the loudest thing in the row.
+ */
+.btn-danger {
+  padding: 9px 16px;
+  color: var(--red-dark);
+  background: var(--red-bg);
+  border: 1px solid var(--red);
+  border-radius: 8px;
+  font-family: var(--font-body);
+  font-size: 0.8438rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.btn-danger:hover {
+  color: #FFFFFF;
+  background: var(--red-dark);
+  border-color: var(--red-dark);
+}
+
 .modal-submit {
   justify-content: center;
   min-width: 116px;
@@ -4295,8 +4558,19 @@ body.modal-open {
   .receipt-preview-wrap.is-sheet .receipt-actions {
     position: sticky;
     bottom: 0;
+    /*
+     * Above the receipt, which now follows it in the DOM rather than preceding
+     * it. Without a stacking order of its own, the document would paint over
+     * the bar it is supposed to scroll behind.
+     */
+    z-index: 1;
+    padding: 12px 16px;
+    margin-bottom: 0;
     background: var(--paper);
     border-top: 1px solid var(--line);
+    /* The separating rule belongs under the toolbar on a desktop, where the
+       document is below it. Here the document is above. */
+    border-bottom: none;
   }
 }
 

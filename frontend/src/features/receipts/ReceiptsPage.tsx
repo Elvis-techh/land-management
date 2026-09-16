@@ -1071,9 +1071,6 @@ export function ReceiptsPage({
 
         {detail && (
           <>
-            <ReceiptPaper receipt={detail} money={money} />
-            <div className="receipt-tear" />
-
             <div className="receipt-actions">
               <div className="receipt-actions-main">
                 {/* The document at full size, inside Lindero. The preview
@@ -1115,13 +1112,16 @@ export function ReceiptsPage({
               {canVoid && detail.voidedAt === null && (
                 <button
                   type="button"
-                  className="link-btn is-danger"
+                  className="btn-danger"
                   onClick={() => onVoidReceipt(detail)}
                 >
                   Anular
                 </button>
               )}
             </div>
+
+            <ReceiptPaper receipt={detail} money={money} />
+            <div className="receipt-tear" />
 
             {/*
               The evidence, beside the document rather than on it.
