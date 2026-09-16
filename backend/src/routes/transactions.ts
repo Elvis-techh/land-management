@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 
@@ -95,6 +95,25 @@ const editBody = z.object({
   reason: z.string().trim().min(10).max(500),
   /** Deliberate acknowledgement that the new amount exceeds what is owed. */
   allowOverpayment: z.boolean().default(false),
+  /**
+   * The OTHER lines of the same receipt this correction also applies to.
+   *
+   * A receipt covering three lots is three payment rows, and a wrong date or a
+   * wrong method on one of them is almost always wrong on all three — they were
+   * typed once, from one piece of paper. This is what lets the fix be made once
+   * as well.
+   *
+   * What travels is deliberately not everything. `paidOn`, `method`, `type` and
+   * `reference` describe the ACT of paying, which the lines share by
+   * construction, so copying them across is restating one fact.
+   * `amountCents` and `notes` describe one lot's share, and copying an amount
+   * onto three rows would turn an L 40,000 receipt into L 120,000 — which is
+   * what somebody "applying a date change to all lots" would be doing without
+   * meaning to. Moving an AMOUNT between lots is a different operation with a
+   * different rule (the parts must still sum to the receipt), and it lives at
+   * POST /receipts/:id/redistribute.
+   */
+  applyToPaymentIds: z.array(z.string().min(1)).max(50).default([]),
 });
 
 export const transactionRoutes: FastifyPluginAsync = async (app) => {
@@ -299,6 +318,56 @@ export const transactionRoutes: FastifyPluginAsync = async (app) => {
         });
       }
 
+      /*
+       * The sibling lines this correction also covers.
+       *
+       * Every one has to be a live row of the SAME receipt. Without that check
+       * a caller could name any payment id in the database and rewrite its date
+       * and method through a route that looks like it only touches one row —
+       * and the reason attached to it would be about somebody else's payment.
+       */
+      const siblingIds = [...new Set(body.applyToPaymentIds)].filter((id) => id !== existing.id);
+      let siblings: Array<typeof existing> = [];
+
+      if (siblingIds.length > 0) {
+        if (existing.receiptId === null) {
+          return reply.code(400).send({
+            error: "no_receipt",
+            message: "Esa transacción no está en un recibo, así que no tiene otras líneas.",
+          });
+        }
+
+        siblings = app.db
+          .select()
+          .from(payments)
+          .where(inArray(payments.id, siblingIds))
+          .all();
+
+        if (siblings.length !== siblingIds.length) {
+          return reply
+            .code(404)
+            .send({ error: "not_found", message: "Una de las líneas ya no existe." });
+        }
+
+        const stray = siblings.find((row) => row.receiptId !== existing.receiptId);
+
+        if (stray) {
+          return reply.code(400).send({
+            error: "different_receipt",
+            message: "Solo se pueden corregir juntas las líneas del mismo recibo.",
+          });
+        }
+
+        const reversed = siblings.find((row) => row.reversedAt !== null);
+
+        if (reversed) {
+          return reply.code(409).send({
+            error: "already_reversed",
+            message: "Una de las líneas está revertida y ya no cuenta en los saldos.",
+          });
+        }
+      }
+
       const contract = app.db
         .select({
           id: contracts.id,
@@ -392,9 +461,60 @@ export const transactionRoutes: FastifyPluginAsync = async (app) => {
           after,
         });
 
+        /*
+         * The same act of paying, restated on the other lines of the receipt.
+         *
+         * Only the four fields that describe the act — never the amount, which
+         * is this lot's share and nobody else's. See `applyToPaymentIds`.
+         */
+        for (const sibling of siblings) {
+          tx.update(payments)
+            .set({
+              paidOn: after.paidOn,
+              method: after.method,
+              type: after.type,
+              reference: after.reference,
+            })
+            .where(eq(payments.id, sibling.id))
+            .run();
+
+          // The reason is written once by the person and repeated here, so each
+          // line's own history answers "why did this change" without having to
+          // be traced back to a sibling row.
+          recordAudit(tx, {
+            actorId: request.user!.id,
+            entityType: "payment",
+            entityId: sibling.id,
+            action: "update",
+            reason: body.reason,
+            before: {
+              paidOn: sibling.paidOn,
+              method: sibling.method,
+              type: sibling.type,
+              reference: sibling.reference,
+            },
+            after: {
+              paidOn: after.paidOn,
+              method: after.method,
+              type: after.type,
+              reference: after.reference,
+            },
+          });
+        }
+
         // A corrected amount can close a contract (down to zero) or reopen a
         // paid-off one (corrected below the price again).
-        syncContractLifecycle(tx, existing.contractId, request.user!.id);
+        //
+        // The siblings keep their amounts, so their balances cannot have moved
+        // — but their `paidOn` can have, and the lifecycle is derived by
+        // replaying the ledger in date order. Cheaper to sync them than to
+        // reason about which date changes could matter.
+        for (const contractId of new Set([
+          existing.contractId,
+          ...siblings.map((sibling) => sibling.contractId),
+        ])) {
+          syncContractLifecycle(tx, contractId, request.user!.id);
+        }
       });
 
       const updated = transactionsQuery(app.db).where(eq(payments.id, existing.id)).get();

@@ -20,7 +20,6 @@ interface ReceiptResponse {
   note: string | null;
   voidedAt: string | null;
   voidReason: string | null;
-  supersededById: string | null;
   customer: { id: string; fullName: string; identification: string | null; phone: string };
   issuedBy: { id: string; name: string };
   totalPaid: number;
@@ -140,6 +139,16 @@ export interface TransactionEdit {
   notes: string | null;
   reason: string;
   allowOverpayment?: boolean;
+  /**
+   * The OTHER lines of the same receipt this correction also applies to.
+   *
+   * Only the date, method, type and reference travel — the fields that describe
+   * the act of paying, which the lines of one receipt share by construction.
+   * The amount is each lot's own share and is never copied: doing so would turn
+   * an L 40,000 receipt into L 120,000. Moving money BETWEEN lots is
+   * `redistributeReceipt`, which holds the total fixed.
+   */
+  applyToPaymentIds?: string[];
 }
 
 export function updateTransaction(transactionId: string, edit: TransactionEdit) {
@@ -297,6 +306,41 @@ export async function voidReceipt(receiptId: string, reason: string): Promise<Re
   const response = await api.post<{ receipt: ReceiptResponse }>(
     `/api/receipts/${receiptId}/void`,
     { reason },
+  );
+
+  return toReceipt(response.receipt);
+}
+
+/** One lot's share of a receipt that is being re-split. */
+export interface RedistributeLine {
+  contractId: string;
+  amountCents: number;
+  /** Left out, the line inherits the type of the payment it is split from. */
+  type?: PaymentType;
+}
+
+/**
+ * Move money that is already on a receipt from one lot to another.
+ *
+ * For the lot that was bought at the same time and registered weeks later: the
+ * prima went entirely onto the lot that existed, and this is what moves its
+ * share across without reissuing anything.
+ *
+ * `lines` is the COMPLETE new distribution, and the server refuses it unless it
+ * adds up to exactly what the receipt already carries. That refusal is the
+ * point — the customer is holding a printed total, and repartitioning is a
+ * statement about which lots the money landed on, never about how much of it
+ * there was.
+ */
+export async function redistributeReceipt(
+  receiptId: string,
+  lines: RedistributeLine[],
+  reason: string,
+  allowOverpayment = false,
+): Promise<Receipt> {
+  const response = await api.post<{ receipt: ReceiptResponse }>(
+    `/api/receipts/${receiptId}/redistribute`,
+    { lines, reason, allowOverpayment },
   );
 
   return toReceipt(response.receipt);

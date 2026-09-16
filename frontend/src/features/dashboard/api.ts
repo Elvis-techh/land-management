@@ -213,7 +213,6 @@ export interface Dashboard {
       voidedAt: string | null;
       voidReason: string | null;
       customerName: string;
-      wasSuperseded: boolean;
     }>;
     unprovenTransfers: { count: number; amountCents: Cents };
   } | null;

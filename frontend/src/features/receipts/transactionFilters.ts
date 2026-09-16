@@ -121,6 +121,31 @@ export function matchesFilters(
   return true;
 }
 
+/**
+ * How many transactions are in scope before the search and the filters narrow
+ * them — the "de N" the toolbar counts down from.
+ *
+ * Not `transactions.length`, and that is the whole point of this function
+ * existing. With no status chosen the list hides anuladas by default (see
+ * `matchesFilters` above), so a screen with three voided payments and nothing
+ * filtered would read "128 de 131" — which says a filter is on when none is,
+ * and sends somebody to the filter panel to clear something that is not there.
+ *
+ * Once a status IS chosen the person has opted into seeing reversed rows, so
+ * the scope widens to everything and "3 de 131" correctly reads as a narrow
+ * slice of the whole history.
+ */
+export function transactionsInScope(
+  transactions: Transaction[],
+  filters: TransactionFilters,
+): number {
+  if (filters.statuses.length > 0) {
+    return transactions.length;
+  }
+
+  return transactions.filter((transaction) => transaction.reversedAt === null).length;
+}
+
 export function filterTransactions(
   transactions: Transaction[],
   filters: TransactionFilters,

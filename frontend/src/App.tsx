@@ -1152,6 +1152,7 @@ export default function App() {
           {activeTab === "receipts" && transactionsState.status === "ready" && (
             <ReceiptsPage
               transactions={transactionsState.transactions}
+              contracts={contractsState.status === "ready" ? contractsState.contracts : []}
               money={money}
               user={user}
               onVoidReceipt={setReceiptBeingVoided}
@@ -1159,6 +1160,14 @@ export default function App() {
               // The thumbnails hang off the transaction rows, so attaching a
               // comprobante from the receipt panel has to re-read this list.
               onProofsChanged={() => void reloadTransactions()}
+              // Money moved between lots: the same four lists a void refreshes,
+              // because the same four derive from payment amounts.
+              onLedgerChanged={() => {
+                void reloadTransactions();
+                void reloadContracts();
+                void reloadCustomers();
+                void reloadLots();
+              }}
             />
           )}
 

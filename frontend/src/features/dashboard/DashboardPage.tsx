@@ -935,8 +935,12 @@ export function DashboardPage({
                           <span className="code-badge">{receipt.code}</span>
                           <span className="dash-flag-list-name">{receipt.customerName}</span>
                           <span className="cell-sub">
-                            {receipt.wasSuperseded ? "corregido" : "anulado"}
-                            {receipt.voidReason ? ` · ${receipt.voidReason}` : ""}
+                            {/* Always "anulado". It used to read "corregido"
+                                when the receipt had been replaced by another,
+                                but nothing ever recorded a replacement — a
+                                correction rewrites the receipt in place — so
+                                that branch never ran. See 0014. */}
+                            anulado{receipt.voidReason ? ` · ${receipt.voidReason}` : ""}
                           </span>
                         </li>
                       ))}

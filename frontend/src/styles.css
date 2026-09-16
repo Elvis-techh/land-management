@@ -8080,3 +8080,237 @@ button.dash-tile.is-open {
 .duplicate-matches li {
   font-size: 0.8125rem;
 }
+
+/* -------------------------------------------------------------------------- */
+/* Repartir un recibo entre lotes                                              */
+/* -------------------------------------------------------------------------- */
+
+/*
+ * The form for moving money that is already posted from one lot to another.
+ *
+ * Rows rather than a table, because every row is the same two things — a lot
+ * and an amount — and a table's header would be repeating what the two columns
+ * already say. The split table in the NEW receipt form earns its columns: it
+ * carries a type, a balance before and a balance after as well.
+ */
+.redistribute-lines {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: clip;
+}
+
+.redistribute-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.redistribute-line:last-child {
+  border-bottom: none;
+}
+
+.redistribute-lot {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.redistribute-lot-code {
+  font-weight: 600;
+  font-size: 0.875rem;
+}
+
+.redistribute-lot-meta {
+  font-size: 0.6875rem;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A lot being offered as somewhere to move money TO, which is the whole point
+   of the screen — so it is named rather than left to be inferred from an empty
+   amount box. */
+.redistribute-lot-new {
+  align-self: flex-start;
+  margin-top: 3px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--clay-bg);
+  color: var(--clay-dark);
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.redistribute-amount {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+.redistribute-amount input {
+  width: 130px;
+  text-align: right;
+  font-family: var(--font-mono);
+}
+
+/* What this lot holds TODAY, under the box that will change it. The before and
+   the after on one line, so nobody has to remember what they are replacing. */
+.redistribute-current {
+  font-size: 0.625rem;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+}
+
+/*
+ * The running total, which is the control that governs the whole form.
+ *
+ * Neutral while the figures are being typed and green only once they add up —
+ * the button is refused until then, and this is what says why.
+ */
+.redistribute-total {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 10px;
+  padding: 9px 14px;
+  border-radius: 8px;
+  background: var(--surface-sunken, var(--paper));
+  border: 1px solid var(--line);
+  font-size: 0.8125rem;
+  font-family: var(--font-mono);
+}
+
+.redistribute-total.is-balanced {
+  background: var(--green-bg);
+  border-color: var(--green);
+}
+
+/* The gap, signed and named. Clay rather than red: nothing is wrong yet, the
+   form is simply not finished — see the note on colour in styles above. */
+.redistribute-gap {
+  color: var(--clay-dark);
+  font-weight: 700;
+}
+
+.redistribute-total .link-btn {
+  margin-left: auto;
+}
+
+@media (max-width: 560px) {
+  /* The amount drops under the lot rather than squeezing both into a phone's
+     width. The input keeps its own width so the figures stay right-aligned
+     with each other down the column. */
+  .redistribute-line {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .redistribute-amount {
+    align-items: flex-start;
+    width: 100%;
+  }
+
+  .redistribute-amount input {
+    width: 100%;
+  }
+
+  .redistribute-total .link-btn {
+    margin-left: 0;
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* ¿A cuáles lotes aplica la corrección?                                       */
+/* -------------------------------------------------------------------------- */
+
+/*
+ * Shown only on a receipt covering more than one lot, where "corrige la fecha"
+ * is genuinely ambiguous — one line, or the paper?
+ *
+ * Boxed rather than left as loose checkboxes in the form: it is a question
+ * about scope, not another field, and the answer changes how many rows the save
+ * touches.
+ */
+.apply-scope {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: var(--surface-sunken, var(--paper));
+}
+
+.apply-scope-title {
+  margin: 0 0 9px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.apply-scope-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.apply-scope-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 5px 6px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 0.8125rem;
+}
+
+.apply-scope-row:hover {
+  background: var(--paper);
+}
+
+/* The row being edited. Checked, disabled, and not a decision — it is in the
+   list so the list reads as the whole receipt rather than "the other lots". */
+.apply-scope-row.is-fixed {
+  cursor: default;
+  color: var(--text-secondary);
+}
+
+.apply-scope-row.is-fixed:hover {
+  background: none;
+}
+
+.apply-scope-lot {
+  font-weight: 600;
+}
+
+.apply-scope-meta {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  color: var(--text-secondary);
+}
+
+/* Why the amount is not on the list. This is the sentence that stops somebody
+   tripling a receipt while believing they corrected a date. */
+.apply-scope-note {
+  margin: 10px 0 0;
+  font-size: 0.6875rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.apply-scope-note.is-muted {
+  color: var(--text-muted);
+}
+
+.apply-scope-row input:disabled {
+  cursor: not-allowed;
+}

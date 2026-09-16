@@ -428,7 +428,6 @@ export interface Receipt {
   /** Set when the receipt was voided. The row and the number both survive. */
   voidedAt: string | null;
   voidReason: string | null;
-  supersededById: string | null;
   customer: { id: string; fullName: string; identification: string | null; phone: string };
   issuedBy: { id: string; name: string };
   /** What the customer handed over. Unaffected by a later void. */

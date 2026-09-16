@@ -181,3 +181,159 @@ describe("0008 — accounts that can be switched off", () => {
     sqlite.close();
   });
 });
+
+describe("0014 — dropping the receipt that was never superseded", () => {
+  /**
+   * `receipts` as it stood before 0014, with the two tables that point at it.
+   *
+   * Both matter. `payments.receipt_id` and `attachments.receipt_id` are the
+   * references that make dropping the table a foreign-key violation on any
+   * database that has ever issued a receipt — which is the case an empty test
+   * database cannot produce and a deploy always can.
+   */
+  function databaseBefore0014() {
+    const { db, sqlite } = createDb(":memory:");
+
+    sqlite.exec(`
+      CREATE TABLE customers (id text PRIMARY KEY NOT NULL, full_name text NOT NULL);
+      CREATE TABLE users (id text PRIMARY KEY NOT NULL, name text NOT NULL);
+      CREATE TABLE receipts (
+        id text PRIMARY KEY NOT NULL,
+        number integer NOT NULL,
+        code text NOT NULL,
+        lookup_code text NOT NULL,
+        customer_id text NOT NULL,
+        issued_on text NOT NULL,
+        issued_by text NOT NULL,
+        idempotency_key text,
+        note text,
+        voided_at text,
+        void_reason text,
+        voided_by text,
+        superseded_by_id text,
+        created_at text DEFAULT CURRENT_TIMESTAMP NOT NULL,
+        FOREIGN KEY (customer_id) REFERENCES customers(id),
+        FOREIGN KEY (issued_by) REFERENCES users(id),
+        FOREIGN KEY (voided_by) REFERENCES users(id),
+        FOREIGN KEY (superseded_by_id) REFERENCES receipts(id)
+      );
+      CREATE UNIQUE INDEX receipts_number_unique ON receipts (number);
+      CREATE UNIQUE INDEX receipts_code_unique ON receipts (code);
+      CREATE UNIQUE INDEX receipts_lookup_code_unique ON receipts (lookup_code);
+      CREATE UNIQUE INDEX receipts_idempotency_key_unique ON receipts (idempotency_key);
+      CREATE TABLE payments (
+        id text PRIMARY KEY NOT NULL,
+        receipt_id text,
+        amount_cents integer NOT NULL,
+        FOREIGN KEY (receipt_id) REFERENCES receipts(id)
+      );
+      CREATE TABLE attachments (
+        id text PRIMARY KEY NOT NULL,
+        receipt_id text NOT NULL,
+        file_name text NOT NULL,
+        FOREIGN KEY (receipt_id) REFERENCES receipts(id)
+      );
+    `);
+
+    return { db, sqlite };
+  }
+
+  it("rebuilds the table without orphaning the payments printed on it", () => {
+    const { db, sqlite } = databaseBefore0014();
+
+    sqlite.exec(`
+      INSERT INTO customers (id, full_name) VALUES ('c1', 'Ana Portillo');
+      INSERT INTO users (id, name) VALUES ('u1', 'Dueña');
+      INSERT INTO receipts (id, number, code, lookup_code, customer_id, issued_on, issued_by)
+        VALUES ('r1', 1, 'IM-482739156034', 'ABCD-EFGH', 'c1', '2026-03-15', 'u1');
+      INSERT INTO payments (id, receipt_id, amount_cents) VALUES ('p1', 'r1', 4000000);
+      INSERT INTO attachments (id, receipt_id, file_name) VALUES ('a1', 'r1', 'deposito.pdf');
+    `);
+
+    runMigrations(db, sqlite, folderWith("0014_drop_superseded"));
+
+    // The money and the proof are still attached to the receipt they were
+    // printed on, through a table that has been dropped and rebuilt under them.
+    const joined = sqlite
+      .prepare(
+        "SELECT r.code, p.amount_cents FROM payments p JOIN receipts r ON r.id = p.receipt_id WHERE p.id = 'p1'",
+      )
+      .get() as { code: string; amount_cents: number } | undefined;
+
+    assert.equal(joined?.code, "IM-482739156034");
+    assert.equal(joined?.amount_cents, 4000000);
+
+    const proof = sqlite
+      .prepare("SELECT receipt_id FROM attachments WHERE id = 'a1'")
+      .get() as { receipt_id: string };
+
+    assert.equal(proof.receipt_id, "r1");
+    assert.deepEqual(sqlite.pragma("foreign_key_check"), []);
+    assert.deepEqual(sqlite.pragma("foreign_keys"), [{ foreign_keys: 1 }]);
+
+    sqlite.close();
+  });
+
+  it("leaves the column gone and every other field intact", () => {
+    const { db, sqlite } = databaseBefore0014();
+
+    sqlite.exec(`
+      INSERT INTO customers (id, full_name) VALUES ('c1', 'Ana Portillo');
+      INSERT INTO users (id, name) VALUES ('u1', 'Dueña');
+      INSERT INTO receipts
+        (id, number, code, lookup_code, customer_id, issued_on, issued_by, note, voided_at, void_reason, voided_by)
+        VALUES ('r1', 7, 'IM-482739156034', 'ABCD-EFGH', 'c1', '2026-03-15', 'u1',
+                'Pago de marzo', '2026-03-20T10:00:00.000Z', 'Cheque sin fondos', 'u1');
+    `);
+
+    runMigrations(db, sqlite, folderWith("0014_drop_superseded"));
+
+    const columns = (sqlite.pragma("table_info(receipts)") as Array<{ name: string }>).map(
+      (column) => column.name,
+    );
+
+    assert.ok(!columns.includes("superseded_by_id"));
+
+    // A void is the one thing on a receipt that the dashboard reads back, so
+    // the rebuild has to carry it across rather than merely keeping the row.
+    const row = sqlite.prepare("SELECT * FROM receipts WHERE id = 'r1'").get() as Record<
+      string,
+      unknown
+    >;
+
+    assert.equal(row.number, 7);
+    assert.equal(row.note, "Pago de marzo");
+    assert.equal(row.void_reason, "Cheque sin fondos");
+    assert.equal(row.voided_by, "u1");
+
+    sqlite.close();
+  });
+
+  it("keeps the unique indexes that stop a receipt number being reused", () => {
+    const { db, sqlite } = databaseBefore0014();
+
+    sqlite.exec(`
+      INSERT INTO customers (id, full_name) VALUES ('c1', 'Ana Portillo');
+      INSERT INTO users (id, name) VALUES ('u1', 'Dueña');
+      INSERT INTO receipts (id, number, code, lookup_code, customer_id, issued_on, issued_by)
+        VALUES ('r1', 1, 'IM-482739156034', 'ABCD-EFGH', 'c1', '2026-03-15', 'u1');
+    `);
+
+    runMigrations(db, sqlite, folderWith("0014_drop_superseded"));
+
+    // Recreated after the rename, not inherited. A rebuild that forgot them
+    // would let the sequence hand out a number twice and nothing would complain
+    // until two customers held the same receipt number.
+    assert.throws(
+      () =>
+        sqlite
+          .prepare(
+            "INSERT INTO receipts (id, number, code, lookup_code, customer_id, issued_on, issued_by) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          )
+          .run("r2", 1, "IM-999999999999", "WXYZ-WXYZ", "c1", "2026-03-16", "u1"),
+      /UNIQUE/,
+    );
+
+    sqlite.close();
+  });
+});

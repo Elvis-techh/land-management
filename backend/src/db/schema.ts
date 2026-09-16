@@ -567,15 +567,20 @@ export const receipts = sqliteTable(
     voidedAt: text("voided_at"),
     voidReason: text("void_reason"),
     voidedBy: text("voided_by").references(() => users.id),
-    /**
-     * The receipt issued in this one's place, when it was voided in order to be
-     * corrected rather than simply cancelled.
+    /*
+     * There is no `superseded_by_id` here any more, and the absence is
+     * deliberate.
      *
-     * This is what makes a correction explainable to the customer holding the
-     * old paper: both documents exist, each says what it said, and the chain
-     * between them is recorded rather than remembered.
+     * It was a seam for correcting a receipt by voiding it and issuing a
+     * replacement, with the chain between the two recorded. Nothing ever wrote
+     * it — for eight migrations it was read in two places and set by none —
+     * and the reason it stayed empty is that the app answers the question a
+     * different way: a receipt is corrected IN PLACE, by rewriting its rows
+     * under a written reason, so no second document is ever issued. See
+     * PATCH /transactions/:id and POST /receipts/:id/redistribute.
+     *
+     * Dropped in 0014 rather than left as a column that reads as a feature.
      */
-    supersededById: text("superseded_by_id").references((): AnySQLiteColumn => receipts.id),
     createdAt: timestamp("created_at"),
   },
   (table) => [

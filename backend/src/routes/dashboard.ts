@@ -759,7 +759,6 @@ export const dashboardRoutes: FastifyPluginAsync<DashboardRoutesOptions> = async
               voidedAt: receipts.voidedAt,
               voidReason: receipts.voidReason,
               customerName: customers.fullName,
-              supersededById: receipts.supersededById,
             })
             .from(receipts)
             .innerJoin(customers, eq(customers.id, receipts.customerId))
@@ -768,7 +767,7 @@ export const dashboardRoutes: FastifyPluginAsync<DashboardRoutesOptions> = async
             // the same "YYYY-MM", so one prefix match catches both.
             .where(sql`${receipts.voidedAt} LIKE ${`${month}%`}`)
             .all()
-            .map((row) => ({ ...row, wasSuperseded: row.supersededById !== null })),
+            .map((row) => ({ ...row })),
 
           /*
            * Transfers with nothing to reconcile them against.

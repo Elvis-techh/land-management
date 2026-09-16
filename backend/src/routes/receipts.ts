@@ -137,7 +137,6 @@ const receiptsListQuery = (db: Db) =>
       note: receipts.note,
       voidedAt: receipts.voidedAt,
       voidReason: receipts.voidReason,
-      supersededById: receipts.supersededById,
       createdAt: receipts.createdAt,
       customerId: customers.id,
       customerName: customers.fullName,
@@ -295,7 +294,6 @@ function presentReceipts(db: Db, rows: readonly ReceiptRow[], includeLines: bool
       note: row.note,
       voidedAt: row.voidedAt,
       voidReason: row.voidReason,
-      supersededById: row.supersededById,
       customer: {
         id: row.customerId,
         fullName: row.customerName,
@@ -420,6 +418,41 @@ const receiptBody = z.object({
 
 const voidBody = z.object({
   reason: z.string().trim().min(10).max(500),
+});
+
+/**
+ * Moving money that is already on a receipt from one lot to another.
+ *
+ * `lines` is the COMPLETE new distribution, not a patch: every contract that
+ * keeps money has to appear, and the amounts have to add up to what the
+ * receipt already carries. Both halves matter. A patch-shaped body would let a
+ * client that forgot a line silently delete that lot's money; requiring the
+ * whole picture plus an exact total means anything missing fails the sum check
+ * instead of being obeyed.
+ */
+const redistributeBody = z.object({
+  /** The same written justification a corrected amount takes. See PATCH /transactions/:id. */
+  reason: z.string().trim().min(10).max(500),
+  allowOverpayment: z.boolean().default(false),
+  lines: z
+    .array(
+      z.object({
+        contractId: z.string().min(1),
+        /**
+         * Positive, always. "This lot keeps nothing" is said by leaving the
+         * contract out of `lines` entirely, which the total check then forces
+         * the caller to account for somewhere else.
+         */
+        amountCents: z.number().int().positive(),
+        /**
+         * What the money becomes on its new lot. Left out, a line inherits the
+         * type of the payment the receipt was written with — a prima split
+         * across two lots is a prima on both.
+         */
+        type: z.enum(PAYMENT_TYPES).optional(),
+      }),
+    )
+    .min(1, "Indica al menos un contrato."),
 });
 
 /**
@@ -1054,6 +1087,440 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
       });
 
       const row = receiptsListQuery(app.db).where(eq(receipts.id, existing.id)).get()!;
+
+      return { receipt: presentReceipts(app.db, [row], true)[0] };
+    },
+  );
+
+  /* ---------------------------------------------------------------------- */
+  /* Redistributing                                                          */
+  /* ---------------------------------------------------------------------- */
+
+  /**
+   * Move money that is already on a receipt from one lot to another.
+   *
+   * The case this exists for: a customer pays the prima for two lots, the
+   * second lot is not in the system yet, so the whole amount is filed against
+   * the first one. The lot is created weeks later and joined to the same
+   * purchase — and the money is still sitting entirely on lot A, because until
+   * now "Repartir" only existed BEFORE a payment was recorded.
+   *
+   * ---
+   *
+   * The rows are edited in place. The alternative — reverse the old payment and
+   * insert new ones — looks cleaner and is silently wrong here, because
+   * `presentReceipts` computes `totalPaid` by summing EVERY row on the receipt
+   * including reversed ones. That is deliberate: a voided receipt has to keep
+   * saying what the paper in the customer's hand says. But it means a reverse
+   * plus a re-insert on the same receipt makes an L 40,000 receipt report
+   * L 80,000, and `transactionCount` double, with nothing raising an error.
+   *
+   * So the invariant this route defends is simply: the rows of a receipt always
+   * sum to what the receipt was issued for. Everything below is in service of
+   * that one sentence.
+   *
+   * `payment:edit`, not `payment:record`. This rewrites figures that are
+   * already posted and already printed, which is the same act — and the same
+   * trust — as PATCH /transactions/:id, down to the written reason.
+   */
+  app.post<{ Params: { id: string } }>(
+    "/receipts/:id/redistribute",
+    { onRequest: app.requireCapability("payment:edit") },
+    async (request, reply) => {
+      const parsed = redistributeBody.safeParse(request.body);
+
+      if (!parsed.success) {
+        return reply.code(400).send({
+          error: "invalid_redistribution",
+          message:
+            parsed.error.issues[0]?.message ??
+            "Explica por qué se reparte el recibo (al menos 10 caracteres).",
+        });
+      }
+
+      const body = parsed.data;
+      const actor = request.user!;
+
+      const receipt = app.db
+        .select()
+        .from(receipts)
+        .where(eq(receipts.id, request.params.id))
+        .get();
+
+      if (!receipt) {
+        return reply.code(404).send({ error: "not_found", message: "Ese recibo no existe." });
+      }
+
+      // A voided receipt's money is already out of the accounts. Repartitioning
+      // figures that count for nothing would write a distribution nobody can
+      // see the effect of, and un-voiding is not what this route is.
+      if (receipt.voidedAt) {
+        return reply.code(409).send({
+          error: "already_voided",
+          message: "Ese recibo está anulado y su dinero ya no cuenta en los saldos.",
+        });
+      }
+
+      const liveRows = app.db
+        .select({
+          id: payments.id,
+          contractId: payments.contractId,
+          amountCents: payments.amountCents,
+          originalAmountCents: payments.originalAmountCents,
+          originalCurrency: payments.originalCurrency,
+          exchangeRate: payments.exchangeRate,
+          paidOn: payments.paidOn,
+          method: payments.method,
+          reference: payments.reference,
+          type: payments.type,
+          notes: payments.notes,
+          createdAt: payments.createdAt,
+        })
+        .from(payments)
+        .where(and(eq(payments.receiptId, receipt.id), sql`${payments.reversedAt} IS NULL`))
+        .all();
+
+      if (liveRows.length === 0) {
+        return reply.code(409).send({
+          error: "nothing_to_redistribute",
+          message: "Ese recibo no tiene transacciones activas que repartir.",
+        });
+      }
+
+      /*
+       * Every row of one receipt was written with one rate and one currency —
+       * POST /receipts writes them from a single body. Checked anyway, because
+       * the whole original-amount calculation below assumes one rate, and a
+       * receipt that somehow held two would come out of it quietly misreporting
+       * what the customer handed over.
+       */
+      const anchor = orderLedger(liveRows)[0]!;
+      const rate = anchor.exchangeRate;
+      const currency = anchor.originalCurrency;
+
+      if (
+        liveRows.some((row) => row.exchangeRate !== rate || row.originalCurrency !== currency)
+      ) {
+        return reply.code(409).send({
+          error: "mixed_currency",
+          message: "Ese recibo mezcla monedas o tipos de cambio y no se puede repartir aquí.",
+        });
+      }
+
+      const faceCents = liveRows.reduce((total, row) => total + row.amountCents, 0);
+      const requestedCents = body.lines.reduce((total, line) => total + line.amountCents, 0);
+
+      // THE check. Everything else on this route is a detail; this is the one
+      // that keeps the paper in the customer's hand true.
+      if (requestedCents !== faceCents) {
+        return reply.code(409).send({
+          error: "total_changed",
+          message:
+            `El reparto suma L ${(requestedCents / 100).toLocaleString("es-HN")} y el recibo ` +
+            `es por L ${(faceCents / 100).toLocaleString("es-HN")}. ` +
+            "Repartir mueve el dinero entre lotes; no cambia el total del recibo.",
+          receiptTotalCents: faceCents,
+          requestedTotalCents: requestedCents,
+        });
+      }
+
+      const seen = new Set<string>();
+
+      for (const line of body.lines) {
+        if (seen.has(line.contractId)) {
+          return reply.code(400).send({
+            error: "duplicate_contract",
+            message: "Un contrato solo puede aparecer una vez en el mismo recibo.",
+          });
+        }
+        seen.add(line.contractId);
+      }
+
+      const contractRows = app.db
+        .select({
+          id: contracts.id,
+          code: contracts.code,
+          customerId: contracts.customerId,
+          status: contracts.status,
+          salePriceCents: contracts.salePriceCents,
+        })
+        .from(contracts)
+        .where(inArray(contracts.id, [...seen]))
+        .all();
+
+      const contractById = new Map(contractRows.map((row) => [row.id, row]));
+      const liveByContract = new Map(liveRows.map((row) => [row.contractId, row]));
+      const liveIds = new Set(liveRows.map((row) => row.id));
+
+      for (const line of body.lines) {
+        const contract = contractById.get(line.contractId);
+
+        if (!contract) {
+          return reply
+            .code(404)
+            .send({ error: "contract_not_found", message: "Uno de los contratos no existe." });
+        }
+
+        // The receipt names one customer. Redistribution moves money between
+        // that person's lots and nowhere else — without this, a typo in a
+        // contract id could file somebody's prima against a stranger's lot.
+        if (contract.customerId !== receipt.customerId) {
+          return reply.code(400).send({
+            error: "contract_not_customers",
+            message: `El contrato ${contract.code} no es del cliente de este recibo.`,
+          });
+        }
+
+        if (contract.status === "cancelled" || contract.status === "defaulted") {
+          return reply.code(409).send({
+            error: "contract_closed",
+            message: `El contrato ${contract.code} está cerrado y no admite pagos.`,
+          });
+        }
+
+        if (!body.allowOverpayment) {
+          /*
+           * The balance WITHOUT this receipt's own rows, so the question asked
+           * is "would the new share overpay this lot" rather than "is it
+           * different from what it has now". A lot already holding part of this
+           * receipt must not be counted as owing less because of money that is
+           * about to be re-apportioned.
+           */
+          const others = app.db
+            .select({
+              id: payments.id,
+              amountCents: payments.amountCents,
+              paidOn: payments.paidOn,
+              createdAt: payments.createdAt,
+              reversedAt: payments.reversedAt,
+            })
+            .from(payments)
+            .where(eq(payments.contractId, contract.id))
+            .all()
+            .filter((row) => !liveIds.has(row.id));
+
+          const room = replayContract({
+            salePriceCents: contract.salePriceCents,
+            credits: others,
+          }).balanceCents;
+
+          if (line.amountCents > room) {
+            return reply.code(409).send({
+              error: "overpayment",
+              message:
+                `El contrato ${contract.code} solo debe ` +
+                `L ${(room / 100).toLocaleString("es-HN")}. ` +
+                "Confirma el sobrepago si de verdad le toca esa parte.",
+              balanceCents: room,
+              contractId: contract.id,
+            });
+          }
+        }
+      }
+
+      /*
+       * Lots that end up with nothing lose their row.
+       *
+       * Leaving a zero-amount payment behind would print an L 0.00 line on the
+       * receipt, and the receipt is the document this whole route exists to
+       * keep honest. The row is not lost in the sense that matters: the audit
+       * below records the distribution it had before.
+       *
+       * Except when somebody attached the customer's proof to that specific
+       * line — `attachments.payment_id` points at it, and dropping the row
+       * would either break that reference or take the comprobante down with it.
+       * That is a decision for the person who filed the file, not for this
+       * route to make quietly.
+       */
+      const dropped = liveRows.filter((row) => !seen.has(row.contractId));
+
+      if (dropped.length > 0) {
+        const held = app.db
+          .select({ paymentId: attachments.paymentId, fileName: attachments.fileName })
+          .from(attachments)
+          .where(
+            inArray(
+              attachments.paymentId,
+              dropped.map((row) => row.id),
+            ),
+          )
+          .all();
+
+        if (held.length > 0) {
+          const stranded = dropped.find((row) =>
+            held.some((file) => file.paymentId === row.id),
+          )!;
+          const code = contractById.get(stranded.contractId)?.code ?? "";
+
+          return reply.code(409).send({
+            error: "proof_attached",
+            message:
+              `La transacción del contrato ${code} tiene un comprobante adjunto. ` +
+              "Quita el comprobante de esa línea antes de mover todo su monto a otro lote.",
+          });
+        }
+      }
+
+      /*
+       * The dollar column has to keep summing to what the customer handed over,
+       * so the original amounts are re-split across the new lines as a whole
+       * rather than each one divided by the rate on its own — the same reason
+       * `originalAmounts` exists for POST /receipts. `faceCents` is unchanged,
+       * so the total it derives is the same total the receipt was issued with.
+       */
+      const originals = originalAmounts(
+        body.lines.map((line) => line.amountCents),
+        faceCents,
+        Number(rate),
+      );
+
+      const before = liveRows.map((row) => ({
+        paymentId: row.id,
+        contractId: row.contractId,
+        contractCode: contractById.get(row.contractId)?.code ?? null,
+        amountCents: row.amountCents,
+        type: row.type,
+      }));
+
+      const touched = new Set([
+        ...liveRows.map((row) => row.contractId),
+        ...body.lines.map((line) => line.contractId),
+      ]);
+
+      app.db.transaction((tx) => {
+        body.lines.forEach((line, index) => {
+          const current = liveByContract.get(line.contractId);
+
+          if (current) {
+            tx.update(payments)
+              .set({
+                amountCents: line.amountCents,
+                originalAmountCents: originals[index]!,
+                ...(line.type ? { type: line.type } : {}),
+              })
+              .where(eq(payments.id, current.id))
+              .run();
+
+            // Also per payment, not only per receipt. Somebody looking at one
+            // transaction asking "why is this L 20,000 when the receipt says
+            // 40,000" reads the history of THAT row, and a receipt-level entry
+            // would not be there.
+            recordAudit(tx, {
+              actorId: actor.id,
+              entityType: "payment",
+              entityId: current.id,
+              action: "update",
+              reason: body.reason,
+              before: { amountCents: current.amountCents, type: current.type },
+              after: { amountCents: line.amountCents, type: line.type ?? current.type },
+            });
+
+            return;
+          }
+
+          const id = randomUUID();
+
+          tx.insert(payments)
+            .values({
+              id,
+              contractId: line.contractId,
+              receiptId: receipt.id,
+              amountCents: line.amountCents,
+              originalAmountCents: originals[index]!,
+              originalCurrency: currency,
+              exchangeRate: rate,
+              /*
+               * The new row takes the ORIGINAL payment's date and instant, not
+               * today's.
+               *
+               * `paidOn` because the money moved when it moved — this is the
+               * same prima, landing where it should have landed in the first
+               * place. `createdAt` because the receipt's own "saldo anterior"
+               * is derived by replaying the customer's ledger up to the rows on
+               * this receipt: a row stamped today would sort months after its
+               * siblings and the printed receipt would start disagreeing with
+               * itself about what was owed before it.
+               */
+              paidOn: anchor.paidOn,
+              createdAt: anchor.createdAt,
+              method: anchor.method,
+              reference: anchor.reference,
+              type: line.type ?? anchor.type,
+              notes: null,
+              recordedBy: actor.id,
+            })
+            .run();
+
+          recordAudit(tx, {
+            actorId: actor.id,
+            entityType: "payment",
+            entityId: id,
+            action: "create",
+            reason: body.reason,
+            after: {
+              receiptNumber: receipt.number,
+              contractId: line.contractId,
+              amountCents: line.amountCents,
+              type: line.type ?? anchor.type,
+            },
+          });
+        });
+
+        for (const row of dropped) {
+          tx.delete(payments).where(eq(payments.id, row.id)).run();
+
+          recordAudit(tx, {
+            actorId: actor.id,
+            entityType: "payment",
+            entityId: row.id,
+            action: "delete",
+            reason: body.reason,
+            before: {
+              receiptNumber: receipt.number,
+              contractId: row.contractId,
+              amountCents: row.amountCents,
+              type: row.type,
+            },
+          });
+        }
+
+        // One entry for the receipt as a whole on top of the per-row ones: the
+        // question "how was this paper split, and how is it split now" is about
+        // the receipt, and answering it by collating six payment rows is how a
+        // reconstruction goes wrong a year later.
+        recordAudit(tx, {
+          actorId: actor.id,
+          entityType: "payment",
+          entityId: receipt.id,
+          action: "update",
+          reason: body.reason,
+          before: { receiptNumber: receipt.number, totalCents: faceCents, lines: before },
+          after: {
+            receiptNumber: receipt.number,
+            totalCents: requestedCents,
+            lines: body.lines.map((line) => ({
+              contractId: line.contractId,
+              contractCode: contractById.get(line.contractId)?.code ?? null,
+              amountCents: line.amountCents,
+              type: line.type ?? liveByContract.get(line.contractId)?.type ?? anchor.type,
+            })),
+          },
+        });
+
+        /*
+         * Every contract on both sides of the move, not just the ones gaining.
+         *
+         * A lot that gives money away can go from paid_off back to active, and
+         * a lot that receives it can settle. Both directions are lifecycle
+         * changes and both have to be written, or a lot sits in the wrong
+         * status until something unrelated happens to touch it.
+         */
+        for (const contractId of touched) {
+          syncContractLifecycle(tx, contractId, actor.id);
+        }
+      });
+
+      const row = receiptsListQuery(app.db).where(eq(receipts.id, receipt.id)).get()!;
 
       return { receipt: presentReceipts(app.db, [row], true)[0] };
     },

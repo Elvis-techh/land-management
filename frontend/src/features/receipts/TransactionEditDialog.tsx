@@ -118,6 +118,62 @@ export function TransactionEditDialog({
     reason.trim() !== "";
 
   /*
+   * The other lines of the same receipt.
+   *
+   * A receipt covering three lots is three payment rows sharing one
+   * `receiptId`. A wrong date or a wrong method on one of them was almost
+   * certainly typed wrong on all three — they came off one piece of paper — so
+   * the correction is offered across them rather than made three times.
+   *
+   * Reversed lines are left out: their money is already out of the accounts and
+   * rewriting the date of something that does not count is meaningless.
+   */
+  const siblings = useMemo(
+    () =>
+      transaction.receiptId === null
+        ? []
+        : customerTransactions.filter(
+            (row) =>
+              row.receiptId === transaction.receiptId &&
+              row.id !== transaction.id &&
+              row.reversedAt === null,
+          ),
+    [customerTransactions, transaction],
+  );
+
+  /** Which sibling lines this correction also covers. None, until asked. */
+  const [applyToIds, setApplyToIds] = useState<ReadonlySet<string>>(new Set());
+
+  /*
+   * The four fields that describe the ACT of paying rather than one lot's
+   * share: the date, how it was paid, what kind of payment it was, and the
+   * bank's confirmation number. These are the only ones that can be copied
+   * across lines — see `applyToPaymentIds` in routes/transactions.ts for why
+   * the amount emphatically cannot.
+   */
+  const sharedFieldsChanged =
+    paidOn !== transaction.paidOn ||
+    method !== (transaction.method as Method) ||
+    type !== (transaction.type as PaymentType) ||
+    reference !== (transaction.reference ?? "");
+
+  const amountChanged = amountText !== toMoneyInput(transaction.amount);
+
+  const toggleApplyTo = (id: string) => {
+    setApplyToIds((current) => {
+      const next = new Set(current);
+
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+
+      return next;
+    });
+  };
+
+  /*
    * The comprobantes on this row, held here rather than read off the prop.
    *
    * `transaction` is a snapshot App took when the pencil was pressed and it
@@ -256,6 +312,15 @@ export function TransactionEditDialog({
       notes: notes.trim() === "" ? null : notes.trim(),
       reason: trimmedReason,
       allowOverpayment,
+      /*
+       * Only when one of the four shared fields actually moved.
+       *
+       * Checking a lot and then changing nothing but the amount would otherwise
+       * write an audit entry on every sibling saying that its date changed from
+       * a value to the same value — noise in the one history that has to stay
+       * readable.
+       */
+      applyToPaymentIds: sharedFieldsChanged ? [...applyToIds] : [],
     };
 
     try {
@@ -514,6 +579,75 @@ export function TransactionEditDialog({
                 onChange={(event) => setNotes(event.target.value)}
               />
             </div>
+
+            {/*
+              Which lots of this receipt the correction reaches.
+              *
+              * Hidden entirely on a one-lot receipt, where the question does not
+              * arise and a control offering one locked checkbox is just
+              * furniture.
+              */}
+            {siblings.length > 0 && (
+              <div className="apply-scope full-width">
+                <p className="apply-scope-title">
+                  Este recibo cubre {siblings.length + 1} lotes. ¿A cuáles aplica el cambio?
+                </p>
+
+                <div className="apply-scope-list">
+                  {/* The lot being edited, always included and not a choice.
+                      Shown anyway so the list is the whole receipt rather than
+                      "the others", which would read as if this one were being
+                      left out. */}
+                  <label className="apply-scope-row is-fixed">
+                    <input type="checkbox" checked readOnly disabled />
+                    <span className="apply-scope-lot">{transaction.lotCode}</span>
+                    <span className="apply-scope-meta">
+                      {formatMoney(transaction.amount, money)} · esta transacción
+                    </span>
+                  </label>
+
+                  {siblings.map((sibling) => (
+                    <label className="apply-scope-row" key={sibling.id}>
+                      <input
+                        type="checkbox"
+                        checked={applyToIds.has(sibling.id)}
+                        disabled={!sharedFieldsChanged}
+                        onChange={() => toggleApplyTo(sibling.id)}
+                      />
+                      <span className="apply-scope-lot">{sibling.lotCode}</span>
+                      <span className="apply-scope-meta">
+                        {formatMoney(sibling.amount, money)}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+
+                {/*
+                  The distinction the whole control turns on, said plainly.
+                  *
+                  * "Aplicar a todos" cannot mean putting the same amount on
+                  * every lot — that would turn an L 40,000 receipt into
+                  * L 120,000. Copying a DATE across three lots restates one
+                  * fact; copying an AMOUNT across three lots invents money. So
+                  * the amount is never part of what travels, and somebody
+                  * trying to move money between lots is pointed at the screen
+                  * that does it under the rule that keeps the total intact.
+                  */}
+                <p className="apply-scope-note">
+                  Se copian la fecha, el método, el tipo y el número de confirmación. El{" "}
+                  <strong>monto no</strong>: cada lote tiene su propia parte, y copiar una cifra a
+                  los tres multiplicaría el recibo. Para mover dinero de un lote a otro usa{" "}
+                  <strong>Repartir</strong> en la vista del recibo, que obliga a que las partes
+                  sigan sumando el total.
+                </p>
+
+                {!sharedFieldsChanged && amountChanged && (
+                  <p className="apply-scope-note is-muted">
+                    Solo cambiaste el monto, así que no hay nada que copiar a los otros lotes.
+                  </p>
+                )}
+              </div>
+            )}
 
             <div className="form-field full-width">
               <label htmlFor="edit-reason">

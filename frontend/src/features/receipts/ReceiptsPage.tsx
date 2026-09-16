@@ -11,7 +11,7 @@ import { cents, formatMoney } from "../../lib/money";
 import type { User } from "../../lib/permissions";
 import { can } from "../../lib/permissions";
 import { useIsMobile } from "../../lib/viewport";
-import type { Receipt, Transaction } from "../../types";
+import type { Contract, Receipt, Transaction } from "../../types";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { DocumentViewer, DocumentThumb } from "../../components/DocumentViewer";
 import type { ViewerFile } from "../../components/DocumentViewer";
@@ -30,6 +30,7 @@ import {
   NO_TRANSACTION_FILTERS,
   filterTransactions,
   searchTransactions,
+  transactionsInScope,
 } from "./transactionFilters";
 import { DEFAULT_SORT, groupByCustomer, sortTransactions } from "./transactionSort";
 import type { TransactionSort } from "./transactionSort";
@@ -42,9 +43,16 @@ import {
 } from "./transactionSelection";
 import type { DragMode } from "./transactionSelection";
 import { SelectionSummaryBar } from "./SelectionSummaryBar";
+import { ReceiptRedistributeDialog } from "./ReceiptRedistributeDialog";
 
 interface ReceiptsPageProps {
   transactions: Transaction[];
+  /**
+   * Every contract, so the receipt panel can offer the customer's OTHER lots as
+   * somewhere to move part of this receipt — including a lot created after the
+   * money was taken, which is the whole case "Repartir" exists for.
+   */
+  contracts: Contract[];
   money: MoneyView;
   user: User;
   onVoidReceipt: (receipt: Receipt) => void;
@@ -57,6 +65,14 @@ interface ReceiptsPageProps {
    * that prompted the upload keeps showing nothing.
    */
   onProofsChanged: () => void;
+  /**
+   * Re-read everything after money moves between lots.
+   *
+   * Wider than `onProofsChanged` on purpose: redistributing rewrites payment
+   * amounts, so the contracts, the customers' totals and the lots' status all
+   * re-derive — the same set a void refreshes, for the same reason.
+   */
+  onLedgerChanged: () => void;
 }
 
 const METHOD_LABELS: Record<string, string> = {
@@ -476,11 +492,13 @@ function TransactionRow({
  */
 export function ReceiptsPage({
   transactions,
+  contracts,
   money,
   user,
   onVoidReceipt,
   onEditTransaction,
   onProofsChanged,
+  onLedgerChanged,
 }: ReceiptsPageProps) {
   const [view, setView] = useState<TransactionView>("date");
   const [search, setSearch] = useState("");
@@ -648,6 +666,15 @@ export function ReceiptsPage({
   // correcting rewrites a posted figure in place. See routes/transactions.ts.
   const canEdit = can(user, "payment:edit");
   const canVoid = can(user, "payment:reverse");
+
+  /*
+   * The receipt currently being re-split across lots, if any.
+   *
+   * Behind `payment:edit` rather than `payment:record`: moving money that is
+   * already posted and already printed is the same act, and the same trust, as
+   * correcting a transaction's amount. See POST /receipts/:id/redistribute.
+   */
+  const [receiptBeingSplit, setReceiptBeingSplit] = useState<Receipt | null>(null);
   // Attaching the proof behind a payment is part of recording it, so it rides
   // on the same capability rather than inventing a third.
   const canRecord = can(user, "payment:record");
@@ -1314,7 +1341,9 @@ export function ReceiptsPage({
           search={search}
           onSearchChange={setSearch}
           shownCount={visible.length}
-          totalCount={transactions.length}
+          // What the list holds before the search and the filters narrow it —
+          // NOT every row in the database. See `transactionsInScope`.
+          totalCount={transactionsInScope(transactions, filters)}
         />
 
         {checkedTransactions.length > 0 && (
@@ -1495,6 +1524,17 @@ export function ReceiptsPage({
                       : "Enviar"}
                 </button>
               </div>
+
+              {canEdit && detail.voidedAt === null && detail.lines.length > 0 && (
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => setReceiptBeingSplit(detail)}
+                  title="Mover parte de este recibo a otro lote del mismo cliente"
+                >
+                  Repartir
+                </button>
+              )}
 
               {canVoid && detail.voidedAt === null && (
                 <button
@@ -1689,6 +1729,21 @@ export function ReceiptsPage({
           solo se pierde la prueba que envió el cliente, y si ya no está en el chat no hay
           otra copia.
         </ConfirmDialog>
+      )}
+
+      {receiptBeingSplit !== null && (
+        <ReceiptRedistributeDialog
+          receipt={receiptBeingSplit}
+          contracts={contracts}
+          money={money}
+          onClose={() => setReceiptBeingSplit(null)}
+          onRedistributed={() => {
+            setReceiptBeingSplit(null);
+            // The panel re-reads itself off the reloaded transactions — see the
+            // effect on `selectedReceiptId`.
+            onLedgerChanged();
+          }}
+        />
       )}
     </div>
   );

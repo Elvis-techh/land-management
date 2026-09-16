@@ -4,7 +4,7 @@ import { describe, it } from "node:test";
 
 import { eq } from "drizzle-orm";
 
-import { contracts, payments } from "../src/db/schema.js";
+import { auditEvents, contracts, payments } from "../src/db/schema.js";
 import { OWNER_PASSWORD, STAFF_PASSWORD, buildTestApp, login } from "./helpers.js";
 
 const lempiras = (amount: number) => Math.round(amount * 100);
@@ -514,6 +514,260 @@ describe("correcting a transaction", () => {
     });
 
     assert.equal(response.statusCode, 403);
+
+    await app.close();
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Correcting several lines of one receipt at once                             */
+/* -------------------------------------------------------------------------- */
+
+describe("correcting the other lines of the same receipt", () => {
+  /**
+   * A receipt covering two lots, which is what makes the question exist: one
+   * amount, one piece of paper, two payment rows.
+   */
+  async function twoLotReceipt() {
+    const built = await buildTestApp();
+    const cookie = await login(built.app, "owner@test.hn", OWNER_PASSWORD);
+    const secondId = randomUUID();
+
+    built.db
+      .insert(contracts)
+      .values({
+        id: secondId,
+        code: "CT-TEST-002",
+        lotId: built.ids.freeLotId,
+        customerId: built.ids.customerId,
+        kind: "contract",
+        saleType: "financed",
+        status: "active",
+        salePriceCents: lempiras(80_000),
+        termMonths: 24,
+        monthlyPaymentCents: lempiras(3_000),
+        dueDay: 5,
+        signedOn: "2026-01-10",
+      })
+      .run();
+
+    const response = await built.app.inject({
+      method: "POST",
+      url: "/api/receipts",
+      headers: { cookie },
+      payload: {
+        customerId: built.ids.customerId,
+        paidOn: "2026-03-15",
+        method: "cash",
+        reference: "BAC-0001",
+        lines: [
+          { contractId: built.ids.contractId, amountCents: lempiras(20_000), type: "installment" },
+          { contractId: secondId, amountCents: lempiras(20_000), type: "installment" },
+        ],
+      },
+    });
+
+    assert.equal(response.statusCode, 201);
+
+    const { receipt } = response.json() as { receipt: any };
+    const lines: any[] = receipt.lines;
+
+    return { ...built, cookie, secondId, receipt, lines };
+  }
+
+  it("copies the date and method onto the lines that were asked for", async () => {
+    const { app, db, cookie, lines } = await twoLotReceipt();
+
+    const edited = lines[0]!;
+    const sibling = lines[1]!;
+
+    const response = await app.inject({
+      method: "PATCH",
+      url: `/api/transactions/${edited.paymentId}`,
+      headers: { cookie },
+      payload: {
+        amountCents: edited.amount,
+        paidOn: "2026-03-18",
+        method: "transfer",
+        type: "installment",
+        reference: "BAC-9999",
+        notes: null,
+        reason: "La fecha y el banco estaban mal en todo el recibo.",
+        applyToPaymentIds: [sibling.paymentId],
+      },
+    });
+
+    assert.equal(response.statusCode, 200);
+
+    const moved = db.select().from(payments).where(eq(payments.id, sibling.paymentId)).get()!;
+
+    assert.equal(moved.paidOn, "2026-03-18");
+    assert.equal(moved.method, "transfer");
+    assert.equal(moved.reference, "BAC-9999");
+
+    await app.close();
+  });
+
+  it("never copies the amount, so the receipt cannot be multiplied", async () => {
+    const { app, db, cookie, receipt, lines } = await twoLotReceipt();
+
+    const edited = lines[0]!;
+    const sibling = lines[1]!;
+
+    // The amount on the edited line is doubled AND the sibling is named. The
+    // sibling must keep its own share: this is the mistake the whole feature is
+    // shaped to prevent.
+    const response = await app.inject({
+      method: "PATCH",
+      url: `/api/transactions/${edited.paymentId}`,
+      headers: { cookie },
+      payload: {
+        amountCents: lempiras(40_000),
+        paidOn: "2026-03-18",
+        method: "cash",
+        type: "installment",
+        reference: "BAC-0001",
+        notes: null,
+        reason: "Subiendo el monto de una línea y tocando la otra a propósito.",
+        allowOverpayment: true,
+        applyToPaymentIds: [sibling.paymentId],
+      },
+    });
+
+    assert.equal(response.statusCode, 200);
+
+    const moved = db.select().from(payments).where(eq(payments.id, sibling.paymentId)).get()!;
+
+    assert.equal(moved.amountCents, lempiras(20_000));
+    assert.equal(moved.paidOn, "2026-03-18");
+
+    const detail = await app.inject({
+      method: "GET",
+      url: `/api/receipts/${receipt.id}`,
+      headers: { cookie },
+    });
+
+    // 40,000 + 20,000 — the edited line really did change, and only it did.
+    assert.equal((detail.json() as any).receipt.totalPaid, lempiras(60_000));
+
+    await app.close();
+  });
+
+  it("writes the same reason to each line's own history", async () => {
+    const { app, db, cookie, lines } = await twoLotReceipt();
+
+    const edited = lines[0]!;
+    const sibling = lines[1]!;
+    const reason = "La fecha y el banco estaban mal en todo el recibo.";
+
+    await app.inject({
+      method: "PATCH",
+      url: `/api/transactions/${edited.paymentId}`,
+      headers: { cookie },
+      payload: {
+        amountCents: edited.amount,
+        paidOn: "2026-03-18",
+        method: "transfer",
+        type: "installment",
+        reference: "BAC-9999",
+        notes: null,
+        reason,
+        applyToPaymentIds: [sibling.paymentId],
+      },
+    });
+
+    const entries = db
+      .select()
+      .from(auditEvents)
+      .where(eq(auditEvents.entityId, sibling.paymentId))
+      .all();
+
+    const update = entries.find((entry) => entry.action === "update")!;
+
+    assert.ok(update, "the sibling's own history must carry the correction");
+    assert.equal(update.reason, reason);
+    assert.equal(JSON.parse(update.beforeJson!).paidOn, "2026-03-15");
+    assert.equal(JSON.parse(update.afterJson!).paidOn, "2026-03-18");
+
+    await app.close();
+  });
+
+  it("refuses to reach a payment that is on a different receipt", async () => {
+    const { app, db, ids, cookie, lines } = await twoLotReceipt();
+
+    const other = await app.inject({
+      method: "POST",
+      url: "/api/receipts",
+      headers: { cookie },
+      payload: {
+        customerId: ids.customerId,
+        paidOn: "2026-04-15",
+        method: "cash",
+        lines: [
+          { contractId: ids.contractId, amountCents: lempiras(5_000), type: "installment" },
+        ],
+      },
+    });
+
+    const strangerLine = (other.json() as any).receipt.lines[0];
+    const edited = lines[0]!;
+
+    const response = await app.inject({
+      method: "PATCH",
+      url: `/api/transactions/${edited.paymentId}`,
+      headers: { cookie },
+      payload: {
+        amountCents: edited.amount,
+        paidOn: "2026-03-18",
+        method: "transfer",
+        type: "installment",
+        reference: null,
+        notes: null,
+        reason: "Intentando alcanzar una línea de otro recibo.",
+        applyToPaymentIds: [strangerLine.paymentId],
+      },
+    });
+
+    assert.equal(response.statusCode, 400);
+    assert.equal(response.json().error, "different_receipt");
+
+    // Untouched.
+    const untouched = db
+      .select()
+      .from(payments)
+      .where(eq(payments.id, strangerLine.paymentId))
+      .get()!;
+
+    assert.equal(untouched.paidOn, "2026-04-15");
+
+    await app.close();
+  });
+
+  it("leaves the other lines alone when none was asked for", async () => {
+    const { app, db, cookie, lines } = await twoLotReceipt();
+
+    const edited = lines[0]!;
+    const sibling = lines[1]!;
+
+    await app.inject({
+      method: "PATCH",
+      url: `/api/transactions/${edited.paymentId}`,
+      headers: { cookie },
+      payload: {
+        amountCents: edited.amount,
+        paidOn: "2026-03-18",
+        method: "transfer",
+        type: "installment",
+        reference: null,
+        notes: null,
+        reason: "Solo esta línea: la otra se pagó de verdad ese día.",
+      },
+    });
+
+    const untouched = db.select().from(payments).where(eq(payments.id, sibling.paymentId)).get()!;
+
+    assert.equal(untouched.paidOn, "2026-03-15");
+    assert.equal(untouched.method, "cash");
 
     await app.close();
   });
