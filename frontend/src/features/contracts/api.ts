@@ -75,6 +75,11 @@ export interface SplitLine {
   amountCents: number;
   balanceBefore: number;
   balanceAfter: number;
+  /**
+   * The total handed over was not enough to cover this lot's own next
+   * installment, even after the server favored the smallest ones first.
+   */
+  belowMinimum: boolean;
 }
 
 /**

@@ -8,6 +8,8 @@ import { splitEvenly } from "../lib/allocation.js";
 import type { AllocationTarget } from "../lib/allocation.js";
 import { attachmentsForPayment, attachmentsForReceipts } from "../lib/storedFiles.js";
 import { recordAudit } from "../lib/audit.js";
+import { assessContract } from "../lib/contracts.js";
+import type { ContractTerms, SaleType } from "../lib/contracts.js";
 import { syncContractLifecycle } from "../lib/contractLifecycle.js";
 import { openContract } from "../lib/holding.js";
 import { replayContract } from "../lib/ledger.js";
@@ -192,11 +194,21 @@ export const transactionRoutes: FastifyPluginAsync = async (app) => {
           .send({ error: "customer_not_found", message: "Ese cliente no existe." });
       }
 
+      const asOf = today();
+
       const open = app.db
         .select({
           id: contracts.id,
           code: contracts.code,
+          saleType: contracts.saleType,
           salePriceCents: contracts.salePriceCents,
+          downPaymentCents: contracts.downPaymentCents,
+          termMonths: contracts.termMonths,
+          monthlyPaymentCents: contracts.monthlyPaymentCents,
+          dueDay: contracts.dueDay,
+          signedOn: contracts.signedOn,
+          firstDueOn: contracts.firstDueOn,
+          createdAt: contracts.createdAt,
           lotCode: lots.code,
           projectName: projects.name,
           paidToDateCents: sql<number>`
@@ -213,19 +225,37 @@ export const transactionRoutes: FastifyPluginAsync = async (app) => {
         .innerJoin(projects, eq(projects.id, lots.projectId))
         // Contracts still being serviced — a paid-off or lapsed one has
         // nothing left to pay, so it is not a split target.
-        .where(and(eq(contracts.customerId, request.params.id), openContract(today())))
+        .where(and(eq(contracts.customerId, request.params.id), openContract(asOf)))
         .all();
 
-      const targets: AllocationTarget[] = open.map((contract) => ({
-        contractId: contract.id,
-        code: contract.code,
-        balanceCents: Math.max(0, contract.salePriceCents - contract.paidToDateCents),
-      }));
+      const targets: AllocationTarget[] = open.map((contract) => {
+        const terms: ContractTerms = {
+          saleType: contract.saleType as SaleType,
+          salePriceCents: contract.salePriceCents,
+          downPaymentCents: contract.downPaymentCents,
+          termMonths: contract.termMonths,
+          monthlyPaymentCents: contract.monthlyPaymentCents,
+          dueDay: contract.dueDay,
+          signedOn: contract.signedOn ?? contract.createdAt.slice(0, 10),
+          firstDueOn: contract.firstDueOn,
+        };
+
+        return {
+          contractId: contract.id,
+          code: contract.code,
+          balanceCents: Math.max(0, contract.salePriceCents - contract.paidToDateCents),
+          // The next installment this lot still needs, so a plain even split
+          // cannot round it below what it owes RIGHT NOW while another lot
+          // that merely owes more overall takes the surplus.
+          minimumDueCents: assessContract(terms, contract.paidToDateCents, asOf).nextDueAmountCents,
+        };
+      });
 
       const result = splitEvenly(amountCents, targets);
       const byContract = new Map(
         result.allocations.map((allocation) => [allocation.contractId, allocation.amountCents]),
       );
+      const shortOfMinimum = new Set(result.shortOfMinimumContractIds);
 
       return {
         lines: open
@@ -241,6 +271,10 @@ export const transactionRoutes: FastifyPluginAsync = async (app) => {
               amountCents: amount,
               balanceBefore,
               balanceAfter: Math.max(0, balanceBefore - amount),
+              // The total handed over could not cover this lot's own next
+              // installment even after favoring the smallest ones first — the
+              // screen warns rather than silently posting a short payment.
+              belowMinimum: shortOfMinimum.has(contract.id),
             };
           })
           // Contracts receiving nothing are still listed, so the screen can show

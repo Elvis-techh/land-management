@@ -555,8 +555,13 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
           contractId: member.id,
           code: member.code,
           balanceCents: member.balance,
+          // The next installment this lot still needs, so a plain even split
+          // cannot round it below what it owes RIGHT NOW while another lot
+          // that merely owes more overall takes the surplus.
+          minimumDueCents: member.health.nextDueAmount,
         })),
       );
+      const shortOfMinimum = new Set(split.shortOfMinimumContractIds);
 
       return reply.send({
         amountCents,
@@ -571,6 +576,10 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
             amountCents: allocation.amountCents,
             balanceBefore: member.balance,
             balanceAfter: member.balance - allocation.amountCents,
+            // The total handed over could not cover this lot's own next
+            // installment even after favoring the smallest ones first — the
+            // screen warns rather than silently posting a short payment.
+            belowMinimum: shortOfMinimum.has(member.id),
           };
         }),
       });

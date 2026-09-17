@@ -425,7 +425,9 @@ export function NewReceiptDialog({
    * payment that gets recorded cannot disagree: equal shares rounded down to
    * whole hundreds, capped at what each lot still owes, with the remainder
    * going to the lot that owes the most — which is what makes the lots even out
-   * over a term instead of one always taking the odd money.
+   * over a term instead of one always taking the odd money. A lot never gets
+   * less than its own next installment out of this, even if that means giving
+   * up on the round numbers for that one line — see src/lib/allocation.ts.
    *
    * The result lands in the per-lot fields as ordinary typed values, so every
    * line stays editable afterwards. It is a proposal, never a decision.
@@ -452,14 +454,34 @@ export function NewReceiptDialog({
 
       setAmountByContract(next);
 
+      const notes: string[] = [];
+
       if (result.unallocatedCents > 0) {
         // Handed back rather than absorbed: pushing the extra onto a lot that
         // is already paid off is how a customer ends up with a credit nobody
         // can explain.
-        setSplitNote(
+        notes.push(
           `Sobran ${formatMoney(cents(result.unallocatedCents), money)}: el cliente ya no debe tanto. ` +
             "Decide a dónde va ese dinero antes de guardar.",
         );
+      }
+
+      const short = result.lines.filter((line) => line.belowMinimum);
+
+      if (short.length > 0) {
+        // The total simply was not enough to cover every lot's current cuota,
+        // even after the server favored the smallest ones first. Said here
+        // rather than left for the lot to quietly show up late afterwards.
+        const codes = short.map((line) => line.lotCode).join(", ");
+
+        notes.push(
+          `El monto no alcanza la cuota completa de ${codes}. Ajusta las líneas a mano o ` +
+            (short.length > 1 ? "esos lotes quedarán atrasados." : "ese lote quedará atrasado."),
+        );
+      }
+
+      if (notes.length > 0) {
+        setSplitNote(notes.join(" "));
       }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "No se pudo repartir el monto.");
@@ -924,9 +946,10 @@ export function NewReceiptDialog({
               </div>
 
               <p className="field-hint">
-                Partes iguales redondeadas a cien lempiras, sin pasarse de lo que debe cada lote.
-                El sobrante va al que más debe, así el mes siguiente le toca a otro y con el
-                tiempo se emparejan solos. Puedes ajustar cualquier línea después.
+                Partes iguales redondeadas a cien lempiras, sin pasarse de lo que debe cada lote ni
+                dejar a ninguno por debajo de su próxima cuota. El sobrante va al que más debe, así
+                el mes siguiente le toca a otro y con el tiempo se emparejan solos. Puedes ajustar
+                cualquier línea después.
               </p>
             </>
           )}

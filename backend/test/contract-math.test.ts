@@ -323,3 +323,78 @@ describe("splitting one payment across a purchase", () => {
     assert.equal(DEFAULT_ROUNDING_STEP_CENTS, lempiras(100));
   });
 });
+
+describe("keeping every lot at its own minimum", () => {
+  it("leaves the plain even split untouched when it already covers every minimum", () => {
+    // Both cuotas (0 and 6,700) are well under the 12,500 the plain even split
+    // already hands each lot, so nothing here needs correcting.
+    const result = splitEvenly(lempiras(25_000), [
+      { contractId: "a", code: "CT-2026-001", balanceCents: lempiras(100_000), minimumDueCents: 0 },
+      {
+        contractId: "b",
+        code: "CT-2026-002",
+        balanceCents: lempiras(100_000),
+        minimumDueCents: lempiras(6_700),
+      },
+    ]);
+
+    assert.equal(result.shortOfMinimumContractIds.length, 0);
+    assert.deepEqual(
+      result.allocations.map((line) => line.amountCents).sort((a, b) => a - b),
+      [lempiras(12_500), lempiras(12_500)],
+    );
+  });
+
+  it("gives a lot its full next cuota even when a plain split would round it below that", () => {
+    // Lot "a" owes far more overall but nothing is due on it right now. Lot
+    // "b" owes little overall but its cuota of 7,200 is due today. A plain
+    // even split of 8,000 hands each lot 4,000 — which reads as an incomplete
+    // payment on "b" a moment later even though the customer paid enough.
+    const result = splitEvenly(lempiras(8_000), [
+      { contractId: "a", code: "CT-2026-001", balanceCents: lempiras(500_000), minimumDueCents: 0 },
+      {
+        contractId: "b",
+        code: "CT-2026-002",
+        balanceCents: lempiras(50_000),
+        minimumDueCents: lempiras(7_200),
+      },
+    ]);
+
+    const forB = result.allocations.find((line) => line.contractId === "b");
+
+    assert.ok(forB && forB.amountCents >= lempiras(7_200));
+    assert.equal(result.shortOfMinimumContractIds.length, 0);
+    assert.equal(
+      result.allocations.reduce((sum, line) => sum + line.amountCents, 0),
+      lempiras(8_000),
+    );
+  });
+
+  it("clears as many lots as it can when the total cannot cover everyone's minimum", () => {
+    // Together the two cuotas cost 12,000; only 10,000 was handed over. "a"'s
+    // smaller cuota is paid in full; "b" is left short and flagged as such
+    // rather than silently split down the middle.
+    const result = splitEvenly(lempiras(10_000), [
+      {
+        contractId: "a",
+        code: "CT-2026-001",
+        balanceCents: lempiras(100_000),
+        minimumDueCents: lempiras(3_000),
+      },
+      {
+        contractId: "b",
+        code: "CT-2026-002",
+        balanceCents: lempiras(500_000),
+        minimumDueCents: lempiras(9_000),
+      },
+    ]);
+
+    const forA = result.allocations.find((line) => line.contractId === "a");
+    const forB = result.allocations.find((line) => line.contractId === "b");
+
+    assert.equal(forA?.amountCents, lempiras(3_000));
+    assert.equal(forB?.amountCents, lempiras(7_000));
+    assert.deepEqual(result.shortOfMinimumContractIds, ["b"]);
+    assert.equal(result.unallocatedCents, 0);
+  });
+});

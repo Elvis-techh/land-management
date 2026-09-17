@@ -24,7 +24,9 @@ interface SplitPreviewDialogProps {
  * receipt, but the money has to land on three contracts. The division is worked
  * out by the SERVER, so this screen and the payment that eventually gets
  * recorded cannot disagree about the arithmetic: equal shares rounded down to
- * whole hundreds, with the odd remainder going to the lot that owes the most.
+ * whole hundreds, with the odd remainder going to the lot that owes the most —
+ * except when that would leave a lot below its own next installment, which the
+ * server corrects for before answering (see src/lib/allocation.ts).
  *
  * Nothing here writes anything. Recording the payment arrives with the
  * transactions screen; this is the preview that makes the rule visible first.
@@ -111,8 +113,9 @@ export function SplitPreviewDialog({ contracts, money, onClose }: SplitPreviewDi
             placeholder="Ej. 25,000"
           />
           <span className="field-hint">
-            Se divide en partes iguales redondeadas a cien lempiras. El sobrante va al lote que
-            más debe, así que el mes siguiente le toca a otro y con el tiempo se emparejan solos.
+            Se divide en partes iguales redondeadas a cien lempiras, sin dejar a ningún lote por
+            debajo de su próxima cuota. El sobrante va al lote que más debe, así que el mes
+            siguiente le toca a otro y con el tiempo se emparejan solos.
           </span>
         </div>
 
@@ -163,6 +166,26 @@ export function SplitPreviewDialog({ contracts, money, onClose }: SplitPreviewDi
               decidir a dónde va ese dinero antes de registrar el pago.
             </p>
           )}
+
+          {(() => {
+            const short = lines.filter((line) => line.belowMinimum);
+
+            if (short.length === 0) {
+              return null;
+            }
+
+            // The total simply is not enough to cover every lot's current
+            // cuota, even after the server favored the smallest ones first.
+            const codes = short.map((line) => line.lotCode).join(", ");
+
+            return (
+              <p className="form-blocked">
+                El monto no alcanza la cuota completa de {codes}.{" "}
+                {short.length > 1 ? "Esos lotes quedarán atrasados" : "Ese lote quedará atrasado"}{" "}
+                si se registra así.
+              </p>
+            );
+          })()}
         </div>
       )}
 
