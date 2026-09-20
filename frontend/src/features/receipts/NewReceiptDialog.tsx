@@ -160,7 +160,16 @@ export function NewReceiptDialog({
    */
   const [typeByContract, setTypeByContract] = useState<Record<string, PaymentType>>({});
   const [proofs, setProofs] = useState<PendingProof[]>([]);
-  const [error, setError] = useState<string | null>(initialNotice ?? null);
+  const [error, setError] = useState<string | null>(null);
+  /**
+   * Whatever went wrong with the comprobante specifically — a share that
+   * carried no image, a file the dropzone refused, an upload that failed
+   * after the payment was already saved — kept apart from `error` so it can
+   * be shown where it is actually about: right by the Comprobante field,
+   * not wherever the form's general error banner happens to sit. See the
+   * render below.
+   */
+  const [proofNotice, setProofNotice] = useState<string | null>(initialNotice ?? null);
   const [duplicates, setDuplicates] = useState<DuplicateMatch[]>([]);
   const [overpaymentPrompt, setOverpaymentPrompt] = useState<string | null>(null);
   const [splitNote, setSplitNote] = useState<string | null>(null);
@@ -290,7 +299,7 @@ export function NewReceiptDialog({
      * complaint when both exist.
      */
     if (rejections[0] !== undefined) {
-      setError((current) => current ?? rejections[0] ?? null);
+      setProofNotice((current) => current ?? rejections[0] ?? null);
     }
 
     return () => {
@@ -511,6 +520,7 @@ export function NewReceiptDialog({
 
   const submit = async (allowOverpayment: boolean) => {
     setError(null);
+    setProofNotice(null);
     setSaving(true);
     setSavingStep("Registrando el pago…");
 
@@ -566,7 +576,7 @@ export function NewReceiptDialog({
         // failed payment. The receipt stands; the file can be added again from
         // the receipt itself.
         if (failures.length > 0) {
-          setError(
+          setProofNotice(
             `El pago quedó registrado como ${receipt.code}, pero no se pudo subir ` +
               `${failures.join(", ")}. Puedes adjuntarlo de nuevo desde el recibo.`,
           );
@@ -1081,10 +1091,13 @@ export function NewReceiptDialog({
       <div className="modal-form-grid">
         <div className="form-field full-width">
           <label>Comprobante</label>
+          {/* Right above the field it is about, not down with the form's
+              general errors — see the `proofNotice` state doc above. */}
+          {proofNotice && <p className="form-error full-width">{proofNotice}</p>}
           <ProofDropzone
             files={proofs}
             onFilesChange={setProofs}
-            onReject={setError}
+            onReject={setProofNotice}
             maxFiles={MAX_PROOFS}
             lots={proofLots}
             onBusyChange={setProofBusy}
