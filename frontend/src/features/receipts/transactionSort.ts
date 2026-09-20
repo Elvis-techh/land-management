@@ -1,15 +1,18 @@
+import type { SortDirection, SortRule } from "../../lib/sortRules";
+import { compareByRules } from "../../lib/sortRules";
 import { parseTimestamp } from "../../lib/time";
 import type { Transaction } from "../../types";
 
+export type { SortDirection };
+
 /** The columns worth ordering by. Each maps to something visible in the list. */
-export type SortField = "date" | "customer" | "amount" | "lot";
+export type SortField = "date" | "customer" | "amount" | "lot" | "project";
 
-export type SortDirection = "asc" | "desc";
-
-export interface TransactionSort {
-  field: SortField;
-  direction: SortDirection;
-}
+/**
+ * The screen's whole sort, as a list of levels tried in order — "by customer,
+ * then by date" — not just one field. See lib/sortRules.ts.
+ */
+export type TransactionSort = SortRule<SortField>[];
 
 /**
  * Newest first, which is what a transactions screen is for.
@@ -17,7 +20,7 @@ export interface TransactionSort {
  * Somebody opening this tab is nearly always looking for something that
  * happened today or yesterday, not for the first payment ever taken.
  */
-export const DEFAULT_SORT: TransactionSort = { field: "date", direction: "desc" };
+export const DEFAULT_SORT: TransactionSort = [{ field: "date", direction: "desc" }];
 
 /**
  * How each option reads, and what its two directions are called.
@@ -40,6 +43,7 @@ export const SORT_OPTIONS: Array<{
   { field: "customer", label: "Cliente", ascLabel: "A → Z", descLabel: "Z → A" },
   { field: "amount", label: "Monto", ascLabel: "Menor a mayor", descLabel: "Mayor a menor" },
   { field: "lot", label: "Lote", ascLabel: "A → Z", descLabel: "Z → A" },
+  { field: "project", label: "Proyecto", ascLabel: "A → Z", descLabel: "Z → A" },
 ];
 
 /**
@@ -84,13 +88,13 @@ export function compareLedgerOrder(a: Transaction, b: Transaction): number {
 }
 
 /**
- * Order the transactions.
+ * One rule's comparison, direction already applied — see `compareByRules`.
  *
- * Ordering by "Fecha del pago" is ledger order, whole, with the direction
- * applied to ALL THREE parts of the key — so "más recientes primero" is the
- * exact reverse of "más antiguos primero", and of the history in the correction
- * dialog. That is a stronger promise than it sounds, and it is the one that was
- * broken:
+ * "date" is the one field this cannot be a plain `(a.x - b.x) * direction`
+ * for: it compares ledger order, whole, with the direction applied to ALL
+ * THREE parts of the key — so "más recientes primero" is the exact reverse of
+ * "más antiguos primero", and of the history in the correction dialog. That is
+ * a stronger promise than it sounds, and it is the one that was broken:
  *
  * The list used to reverse `paidOn` and `createdAt` but leave the final id
  * comparison ascending. Rows that tie on the first two parts therefore came out
@@ -102,37 +106,50 @@ export function compareLedgerOrder(a: Transaction, b: Transaction): number {
  * dialog highlighted the third. Nothing was miscounted; the two screens were
  * reading one ambiguity in two directions.
  *
- * Ordering by anything else keeps a different rule, deliberately. Rows the
- * chosen field cannot separate fall back to ledger order REVERSED — newest
- * first — and that fallback is not flipped by direction: asking for "menor a
- * mayor" should not also reverse the two payments that tie at L 5,000, for no
- * visible reason.
+ * Because it carries the id, a "date" rule never ties — so if it is one of
+ * several levels, nothing after it in the chain ever runs, which is exactly
+ * right: there is nothing left for a later level to break a tie on.
+ */
+function compareTransactionField(a: Transaction, b: Transaction, rule: SortRule<SortField>): number {
+  if (rule.field === "date") {
+    const raw = compareLedgerOrder(a, b);
+    return rule.direction === "asc" ? raw : -raw;
+  }
+
+  const raw = ((): number => {
+    switch (rule.field) {
+      case "customer":
+        return a.customerName.localeCompare(b.customerName, "es");
+      case "amount":
+        return a.amount - b.amount;
+      case "project":
+        return a.projectName.localeCompare(b.projectName, "es");
+      case "lot":
+      default:
+        return a.lotCode.localeCompare(b.lotCode, "es");
+    }
+  })();
+
+  return rule.direction === "asc" ? raw : -raw;
+}
+
+/**
+ * Order the transactions.
+ *
+ * Every level is tried in turn — see `compareByRules` — and rows every level
+ * leaves tied fall back to ledger order REVERSED — newest first — un-flipped
+ * by any level's own direction: asking for "menor a mayor" on the amount
+ * should not also reverse the two payments that tie at L 5,000, for no visible
+ * reason. That fallback never actually runs when "date" is one of the levels,
+ * since a "date" comparison never ties — see `compareTransactionField`.
  */
 export function sortTransactions(
   transactions: Transaction[],
   sort: TransactionSort,
 ): Transaction[] {
-  const factor = sort.direction === "asc" ? 1 : -1;
-
   // A copy: sorting the array we were handed would mutate the caller's state.
-  if (sort.field === "date") {
-    return [...transactions].sort((a, b) => compareLedgerOrder(a, b) * factor);
-  }
-
-  const compare = (a: Transaction, b: Transaction): number => {
-    switch (sort.field) {
-      case "customer":
-        return a.customerName.localeCompare(b.customerName, "es");
-      case "amount":
-        return a.amount - b.amount;
-      case "lot":
-      default:
-        return a.lotCode.localeCompare(b.lotCode, "es");
-    }
-  };
-
   return [...transactions].sort(
-    (a, b) => compare(a, b) * factor || -compareLedgerOrder(a, b),
+    (a, b) => compareByRules(a, b, sort, compareTransactionField) || -compareLedgerOrder(a, b),
   );
 }
 
@@ -195,23 +212,29 @@ export function groupByCustomer(
   const ordered = [...groups.values()];
 
   // The GROUPS are ordered by the same choice where it makes sense. Sorting
-  // people by "lote" is meaningless, so those fall back to the most recent
-  // payment — which is the useful answer when the question is about a person.
-  const factor = sort.direction === "asc" ? 1 : -1;
-
-  ordered.sort((a, b) => {
-    const result = (() => {
-      switch (sort.field) {
+  // people by "lote" or "proyecto" is meaningless — one person can have
+  // transactions on several — so those fall back to the most recent payment,
+  // which is the useful answer when the question is about a person.
+  const compareGroupField = (a: CustomerGroup, b: CustomerGroup, rule: SortRule<SortField>): number => {
+    const raw = ((): number => {
+      switch (rule.field) {
         case "customer":
-          return a.customerName.localeCompare(b.customerName, "es") * factor;
+          return a.customerName.localeCompare(b.customerName, "es");
         case "amount":
-          return (a.totalCents - b.totalCents) * factor;
+          return a.totalCents - b.totalCents;
         case "date":
         case "lot":
+        case "project":
         default:
-          return a.lastPaidOn.localeCompare(b.lastPaidOn) * factor;
+          return a.lastPaidOn.localeCompare(b.lastPaidOn);
       }
     })();
+
+    return rule.direction === "asc" ? raw : -raw;
+  };
+
+  ordered.sort((a, b) => {
+    const result = compareByRules(a, b, sort, compareGroupField);
 
     // Two people whose last payment fell on the same day, or who have paid the
     // same total, are separated by name rather than by whichever the server

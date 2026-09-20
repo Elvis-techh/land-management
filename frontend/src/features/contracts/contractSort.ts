@@ -1,13 +1,25 @@
 import type { Cents } from "../../lib/money";
 import { cents } from "../../lib/money";
+import type { SortRule } from "../../lib/sortRules";
+import { compareByRules } from "../../lib/sortRules";
 import type { Contract } from "../../types";
+import { compareLotCodes } from "../lots/lotSort";
 
-export type SortField = "customer" | "balance" | "health" | "nextDue" | "code" | "groupSize";
+export type SortField =
+  | "customer"
+  | "balance"
+  | "health"
+  | "nextDue"
+  | "code"
+  | "groupSize"
+  | "lot"
+  | "project";
 
-export interface ContractSort {
-  field: SortField;
-  direction: "asc" | "desc";
-}
+/**
+ * The screen's whole sort, as a list of levels tried in order — "by customer,
+ * then by lot" — not just one field. See lib/sortRules.ts.
+ */
+export type ContractSort = SortRule<SortField>[];
 
 /**
  * Opens on how many contracts each customer holds, fewest first.
@@ -17,7 +29,7 @@ export interface ContractSort {
  * people worth a second look (a family building out a second or third lot)
  * stand out as their own visible block rather than scattered alphabetically.
  */
-export const DEFAULT_SORT: ContractSort = { field: "groupSize", direction: "asc" };
+export const DEFAULT_SORT: ContractSort = [{ field: "groupSize", direction: "asc" }];
 
 export const SORT_OPTIONS: Array<{
   field: SortField;
@@ -35,7 +47,9 @@ export const SORT_OPTIONS: Array<{
   { field: "customer", label: "Cliente", ascLabel: "A → Z", descLabel: "Z → A" },
   { field: "balance", label: "Saldo", ascLabel: "menor primero", descLabel: "mayor primero" },
   { field: "nextDue", label: "Próxima cuota", ascLabel: "más próxima", descLabel: "más lejana" },
-  { field: "code", label: "Número", ascLabel: "más antiguo", descLabel: "más reciente" },
+  { field: "code", label: "Contrato desde", ascLabel: "más antiguo", descLabel: "más reciente" },
+  { field: "lot", label: "Lote", ascLabel: "A → Z", descLabel: "Z → A" },
+  { field: "project", label: "Proyecto", ascLabel: "A → Z", descLabel: "Z → A" },
 ];
 
 /** Worst first when sorting descending, so the severity order is explicit. */
@@ -73,15 +87,24 @@ function compare(a: Contract, b: Contract, field: SortField, counts: Map<string,
       return a.code.localeCompare(b.code, "es");
     case "groupSize":
       return (counts.get(a.customer.id) ?? 1) - (counts.get(b.customer.id) ?? 1);
+    case "lot":
+      // Same comparator the Lotes screen sorts its own code column with, so
+      // A-2 comes before A-10 here too rather than reading as plain text.
+      return compareLotCodes(a.lot.code, b.lot.code);
+    case "project":
+      return a.lot.projectName.localeCompare(b.lot.projectName, "es");
   }
 }
 
 export function sortContracts(contracts: Contract[], sort: ContractSort): Contract[] {
-  const direction = sort.direction === "asc" ? 1 : -1;
   const counts = customerCounts(contracts);
 
   return [...contracts].sort((a, b) => {
-    const primary = compare(a, b, sort.field, counts) * direction;
+    const primary = compareByRules(a, b, sort, (x, y, rule) => {
+      const raw = compare(x, y, rule.field, counts);
+
+      return rule.direction === "asc" ? raw : -raw;
+    });
 
     if (primary !== 0) {
       return primary;

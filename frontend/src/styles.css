@@ -3715,12 +3715,129 @@ body.modal-open {
   line-height: 1.45;
 }
 
+/*
+ * A secondary sort level — "luego, Proyecto, A → Z, ✕" — under the primary
+ * field list. See components/SortMenu.tsx.
+ */
+.sort-rule-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+}
+
+.sort-rule-then {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.sort-rule-field {
+  flex: 1 1 100px;
+  min-width: 76px;
+  padding: 6px 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: 0.75rem;
+}
+
+/*
+ * Grows evenly with .sort-rule-field for the same reason that one flex-
+ * shrinks: a fixed width either reserved so much room that a long field name
+ * had nowhere to go, or so little that a long direction ("Más recientes
+ * primero") read as "Más recient…". Both now share whatever the popover
+ * has — which itself grows with the viewport, see .sort-popover — and only
+ * fall back to an ellipsis once a screen is too narrow to fit either in full.
+ */
+.sort-rule-direction {
+  flex: 1 1 92px;
+  min-width: 0;
+  overflow: hidden;
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--text-secondary);
+  font-family: var(--font-body);
+  font-size: 0.6875rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.sort-rule-direction:hover {
+  background: var(--paper);
+}
+
+.sort-rule-remove {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.sort-rule-remove:hover {
+  background: var(--paper);
+  color: var(--text-secondary);
+}
+
+.sort-rule-remove svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* Matches .menu-item's own padding, font size, and hover — the primary
+   field list right above it — instead of reading as a separate link. */
+.sort-rule-add {
+  display: block;
+  width: 100%;
+  margin: 2px 0 0;
+  padding: 8px 9px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.8125rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sort-rule-add:hover {
+  background: var(--paper);
+  color: var(--ink);
+}
+
 .filter-popover {
   display: flex;
   flex-direction: column;
   gap: 14px;
   width: 296px;
   padding: 15px;
+}
+
+/*
+ * Wide enough for a secondary sort row — field select, direction toggle and
+ * remove button side by side — to sit on one line rather than wrapping. A
+ * fixed width squeezed long labels ("Estado de pago", "Más recientes
+ * primero") down to nothing on screens with room to spare, so this grows
+ * with the viewport instead: 268px is the floor a narrow desktop window
+ * still gets, 440px is the ceiling wide enough that even the longest field
+ * and direction labels this app has never need to ellipsize.
+ */
+.sort-popover {
+  width: clamp(268px, 34vw, 440px);
 }
 
 .filter-section {
