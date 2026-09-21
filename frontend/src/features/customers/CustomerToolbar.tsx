@@ -2,12 +2,13 @@ import { useMemo, useRef, useState } from "react";
 
 import { IconClose, IconFilter, IconSearch, IconSort } from "../../components/Icons";
 import { MenuSurface } from "../../components/MenuSurface";
+import { SortMenu } from "../../components/SortMenu";
 import { useDismiss } from "../../lib/useDismiss";
 import { useIsMobile } from "../../lib/viewport";
 import type { CustomerFilters, HoldingFilter } from "./customerFilters";
 import { NO_CUSTOMER_FILTERS, countActiveFilters } from "./customerFilters";
 import { SORT_OPTIONS } from "./customerSort";
-import type { CustomerSort, SortField } from "./customerSort";
+import type { CustomerSort } from "./customerSort";
 
 /** The wording used everywhere else for what a person is holding. */
 const HOLDING_LABELS: Array<{ value: HoldingFilter; label: string }> = [
@@ -73,18 +74,10 @@ export function CustomerToolbar({
   );
 
   const activeCount = countActiveFilters(filters);
-  const sortOption = SORT_OPTIONS.find((option) => option.field === sort.field) ?? SORT_OPTIONS[0]!;
-
-  const setSortField = (field: SortField) => {
-    // Picking the field already selected flips the direction — the shortcut
-    // people expect from a column header, kept here so the menu behaves the
-    // same way it does on the Lotes screen.
-    onSortChange(
-      field === sort.field
-        ? { field, direction: sort.direction === "asc" ? "desc" : "asc" }
-        : { field, direction: "asc" },
-    );
-  };
+  // The trigger button names the PRIMARY level; any levels after it show as
+  // the "+N" badge next to it, same as the filter button's count.
+  const primaryOption =
+    SORT_OPTIONS.find((option) => option.field === sort[0]?.field) ?? SORT_OPTIONS[0]!;
 
   const toggleHolding = (value: HoldingFilter) => {
     const next = filters.holdings.includes(value)
@@ -282,43 +275,26 @@ export function CustomerToolbar({
           >
             <IconSort />
             <span>
-              {sortOption.label}
+              {primaryOption.label}
               <span className="menu-trigger-detail">
-                {sort.direction === "asc" ? sortOption.ascLabel : sortOption.descLabel}
+                {sort[0]?.direction === "asc" ? primaryOption.ascLabel : primaryOption.descLabel}
               </span>
             </span>
+            {sort.length > 1 && <span className="filter-count">+{sort.length - 1}</span>}
           </button>
 
           <MenuSurface
             isOpen={openMenu === "sort"}
             title="Ordenar por"
             onClose={() => setOpenMenu(null)}
+            className="sort-popover"
           >
-            <p className="menu-title desktop-only">Ordenar por</p>
-            {SORT_OPTIONS.map((option) => {
-              const isCurrent = option.field === sort.field;
-
-              return (
-                <button
-                  key={option.field}
-                  type="button"
-                  aria-checked={isCurrent}
-                  role="menuitemradio"
-                  className={isCurrent ? "menu-item selected" : "menu-item"}
-                  onClick={() => setSortField(option.field)}
-                >
-                  <span>{option.label}</span>
-                  <span className="menu-item-detail">
-                    {isCurrent
-                      ? sort.direction === "asc"
-                        ? option.ascLabel
-                        : option.descLabel
-                      : ""}
-                  </span>
-                </button>
-              );
-            })}
-            <p className="menu-foot">Vuelve a elegir el mismo campo para invertir el orden.</p>
+            <SortMenu
+              options={SORT_OPTIONS}
+              rules={sort}
+              onChange={onSortChange}
+              hint="Vuelve a elegir el mismo campo para invertir el orden."
+            />
           </MenuSurface>
         </div>
 

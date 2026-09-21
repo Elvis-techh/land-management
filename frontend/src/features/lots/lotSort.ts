@@ -1,18 +1,21 @@
+import type { SortDirection, SortRule } from "../../lib/sortRules";
+import { compareByRules } from "../../lib/sortRules";
 import type { Customer, Lot, LotStatus } from "../../types";
 import { lotStatus } from "./lotStatus";
 import { parseLotCode } from "./lotCode";
 
+export type { SortDirection };
+
 /** The columns worth ordering by. Each maps to a column in the table. */
 export type SortField = "code" | "project" | "area" | "price" | "status" | "customer";
 
-export type SortDirection = "asc" | "desc";
+/**
+ * The screen's whole sort, as a list of levels tried in order — "by project,
+ * then by lot" — not just one field. See lib/sortRules.ts.
+ */
+export type LotSort = SortRule<SortField>[];
 
-export interface LotSort {
-  field: SortField;
-  direction: SortDirection;
-}
-
-export const DEFAULT_SORT: LotSort = { field: "code", direction: "asc" };
+export const DEFAULT_SORT: LotSort = [{ field: "code", direction: "asc" }];
 
 /**
  * How each option reads, and what its two directions are called.
@@ -104,48 +107,59 @@ export function sortLots(
   const holderName = (lot: Lot) =>
     lot.holding ? (customersById.get(lot.holding.customerId)?.fullName ?? "") : "";
 
-  const compare = (a: Lot, b: Lot): number => {
-    switch (sort.field) {
-      case "project":
-        return a.projectName.localeCompare(b.projectName, "es");
-      case "area":
-        return a.areaM2 - b.areaM2;
-      case "price":
-        return a.basePrice - b.basePrice;
-      case "status":
-        return STATUS_ORDER[lotStatus(a)] - STATUS_ORDER[lotStatus(b)];
-      case "customer":
-        // Both sides are known to be non-empty here: blanks were separated out
-        // before this runs, so they cannot sort as "the smallest name".
-        return holderName(a).localeCompare(holderName(b), "es");
-      case "code":
-      default:
-        return compareLotCodes(a.code, b.code);
-    }
-  };
-
-  const factor = sort.direction === "asc" ? 1 : -1;
-
   /**
-   * A lot with nobody on it has nothing to compare when sorting by client.
+   * One rule's comparison, direction already applied — see `compareByRules`.
    *
-   * Blanks sink to the bottom in BOTH directions — the behaviour of every
-   * spreadsheet people have used. Leaving them to the ordinary comparison would
-   * send them to the top on a descending sort, so that "Cliente Z → A" opens on
-   * a screen full of empty cells.
+   * "customer" is the one field direction does not apply to uniformly. A lot
+   * with nobody on it has nothing to compare, and sinks to the bottom in BOTH
+   * directions — the behaviour of every spreadsheet people have used. Applying
+   * the rule's direction the same way every other field does would send blanks
+   * to the TOP on a descending sort, so that "Cliente Z → A" opens on a screen
+   * full of empty cells.
    */
-  const isBlank = (lot: Lot) => sort.field === "customer" && holderName(lot) === "";
+  const compareField = (a: Lot, b: Lot, rule: SortRule<SortField>): number => {
+    if (rule.field === "customer") {
+      const nameA = holderName(a);
+      const nameB = holderName(b);
+      const blankA = nameA === "";
+      const blankB = nameB === "";
+
+      if (blankA !== blankB) {
+        return blankA ? 1 : -1;
+      }
+      if (blankA) {
+        return 0;
+      }
+
+      const raw = nameA.localeCompare(nameB, "es");
+      return rule.direction === "asc" ? raw : -raw;
+    }
+
+    const raw = ((): number => {
+      switch (rule.field) {
+        case "project":
+          return a.projectName.localeCompare(b.projectName, "es");
+        case "area":
+          return a.areaM2 - b.areaM2;
+        case "price":
+          return a.basePrice - b.basePrice;
+        case "status":
+          return STATUS_ORDER[lotStatus(a)] - STATUS_ORDER[lotStatus(b)];
+        case "code":
+        default:
+          return compareLotCodes(a.code, b.code);
+      }
+    })();
+
+    return rule.direction === "asc" ? raw : -raw;
+  };
 
   // A copy: sorting the array we were handed would mutate the caller's state.
   return [...lots].sort((a, b) => {
-    if (isBlank(a) !== isBlank(b)) {
-      return isBlank(a) ? 1 : -1;
-    }
+    const primary = compareByRules(a, b, sort, compareField);
 
-    const result = isBlank(a) ? 0 : compare(a, b);
-
-    if (result !== 0) {
-      return result * factor;
+    if (primary !== 0) {
+      return primary;
     }
 
     // The tiebreaker is NOT flipped by direction, so reversing the sort does

@@ -495,6 +495,31 @@ nav.nav {
   color: var(--text-muted);
 }
 
+/* The sum of everything the search and filters let through, in the
+   transactions list. Big and right-aligned on purpose — see the comment
+   where it's rendered in ReceiptsPage.tsx. */
+.txn-list-total {
+  margin: 0;
+  text-align: right;
+}
+
+.txn-list-total-value {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 1.375rem;
+  font-weight: 600;
+  color: var(--green-dark);
+  white-space: nowrap;
+}
+
+.txn-list-total-count {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
 .attention-list {
   padding: 6px 8px;
 }
@@ -905,25 +930,40 @@ tbody tr:hover {
 }
 
 /*
- * `clip` rather than the `hidden` every other card gets, and the difference is
- * the only reason the selection bar below can stick at all.
+ * Not even `clip`: this card must not clip its OWN children at all, because
+ * one of them is the sort/filter popover, and a popover that can be cut off
+ * by its own container is a popover somebody eventually opens on a card too
+ * short to hold it. See `.menu-popover`.
  *
- * `overflow: hidden` makes an element the scroll container for any sticky
- * descendant. This card is taller than the window and never scrolls itself —
- * the page behind it does — so a sticky child inside it would be pinned to a
- * scrollport that never moves, which is to say it would simply never stick.
- * There is no error and nothing in the devtools to see; the bar just rides up
- * out of view like an ordinary block.
- *
- * `clip` cuts the corners exactly as `hidden` did without creating that scroll
- * container. What it does NOT bring with it is the block formatting context
- * `hidden` came with, so `flow-root` restores that separately — otherwise a
- * first child's top margin would collapse straight out through the card's
- * rounded edge.
+ * The corner-clipping that would otherwise need — so a hovered or checked
+ * last row doesn't poke square corners out past the card's rounded bottom
+ * edge — moves to `.txn-list-body` instead, which wraps the rows but not the
+ * toolbar above them. `display: flow-root` stays here regardless of overflow,
+ * to stop a first child's top margin from collapsing out through the top
+ * edge.
  */
 .receipts-layout > .card {
-  overflow: clip;
+  overflow: visible;
   display: flow-root;
+}
+
+/*
+ * `clip` rather than `hidden`, and the difference is the only reason the
+ * selection bar inside can stick at all.
+ *
+ * `overflow: hidden` makes an element the scroll container for any sticky
+ * descendant. This wrapper is taller than the window and never scrolls
+ * itself — the page behind it does — so a sticky child inside it would be
+ * pinned to a scrollport that never moves, which is to say it would simply
+ * never stick. There is no error and nothing in the devtools to see; the bar
+ * just rides up out of view like an ordinary block.
+ *
+ * `clip` cuts the bottom corners exactly as `hidden` would, without creating
+ * that scroll container.
+ */
+.txn-list-body {
+  overflow: clip;
+  border-radius: 0 0 var(--radius) var(--radius);
 }
 
 /* The ad-hoc sum: what the checked rows add up to, distinct from the "N
@@ -2507,6 +2547,9 @@ body.is-dragging-file .proof-dropzone.is-slot:not(.is-disabled) {
   align-items: center;
   justify-content: center;
   padding: 16px;
+  /* A zoomed-in receipt scales past the padding on purpose — this is what
+     clips it to the stage instead of spilling over the head and the strip. */
+  overflow: hidden;
 }
 
 .viewer-image {
@@ -2517,6 +2560,72 @@ body.is-dragging-file .proof-dropzone.is-slot:not(.is-disabled) {
   /* A receipt and most slips are white documents; the checkerboard-free white
      ground keeps a transparent PNG from reading as black text on black. */
   background: #fff;
+  /* No native drag-ghost or text-selection fighting the click-and-drag pan
+     below — see `onImageMouseDown` in DocumentViewer.tsx. */
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.viewer-image.is-panning {
+  /* Nothing to smooth mid-drag: the transform already follows the mouse
+     one-to-one, and a transition here would make the image lag behind it. */
+  transition: none;
+}
+
+/*
+ * The zoom cluster, floating over the bottom of the stage.
+ *
+ * Its own row rather than folded into `.viewer-head`: the head describes
+ * WHICH document this is, and zoom is a property of how it is being looked
+ * at right now — the two stop competing for space once they are not the same
+ * line, and the cluster can sit centred under the image whatever the
+ * filename runs to.
+ */
+.viewer-zoom {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+}
+
+.viewer-zoom button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  min-width: 32px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #F4EFE9;
+  cursor: pointer;
+}
+
+.viewer-zoom button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.viewer-zoom button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.viewer-zoom button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.viewer-zoom-value {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
 }
 
 /* The browser's own PDF viewer. The response is sandboxed into an opaque

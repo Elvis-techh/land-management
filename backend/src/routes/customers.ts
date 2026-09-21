@@ -64,11 +64,12 @@ const customerBody = z.object({
    */
   identification: z.string().trim().max(40).nullish(),
   /**
-   * As typed. Normalised to E.164 below rather than by the schema, so the
-   * refusal can explain what a usable number looks like instead of failing as
-   * an anonymous validation issue.
+   * As typed, or blank when the customer has never given one. Normalised to
+   * E.164 below rather than by the schema, so the refusal can explain what a
+   * usable number looks like instead of failing as an anonymous validation
+   * issue — and so blank can be told apart from unusable.
    */
-  phone: z.string().trim().min(1).max(40),
+  phone: z.string().trim().max(40).nullish(),
   /** Optional throughout: plenty of customers here have no email address. */
   email: z.string().trim().max(160).email().nullish(),
   address: z.string().trim().max(300).nullish(),
@@ -100,6 +101,22 @@ function identificationOrNull(raw: string | null | undefined): string | null {
   const trimmed = raw?.trim() ?? "";
 
   return trimmed === "" ? null : trimmed;
+}
+
+/**
+ * A phone number as the column stores it: normalised E.164, or NULL when the
+ * customer has never given one — as opposed to given one that will not parse.
+ *
+ * Blank is not sent through `normalizePhone`: an empty string would come back
+ * `null` from that function too, and folding "never asked" together with
+ * "typed something unusable" would turn every blank submission into the
+ * `invalid_phone` refusal below, which is the one case here that is NOT an
+ * error.
+ */
+function phoneOrNull(raw: string | null | undefined): string | null {
+  const trimmed = raw?.trim() ?? "";
+
+  return trimmed === "" ? null : normalizePhone(trimmed);
 }
 
 /**
@@ -192,14 +209,16 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
         });
       }
 
-      const phone = normalizePhone(parsed.data.phone);
+      const typedPhone = parsed.data.phone?.trim() ?? "";
+      const phone = phoneOrNull(typedPhone);
 
-      if (!phone) {
+      if (typedPhone !== "" && phone === null) {
         return reply.code(400).send({
           error: "invalid_phone",
           message:
             "El teléfono no parece un número válido. Escribe los 8 dígitos hondureños " +
-            "(9982-4471) o el número completo con su código de país (+1 305 555 0123).",
+            "(9982-4471) o el número completo con su código de país (+1 305 555 0123), " +
+            "o déjalo en blanco si el cliente no tiene uno registrado.",
         });
       }
 
@@ -276,14 +295,16 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(404).send({ error: "not_found", message: "Cliente no encontrado." });
       }
 
-      const phone = normalizePhone(parsed.data.phone);
+      const typedPhone = parsed.data.phone?.trim() ?? "";
+      const phone = phoneOrNull(typedPhone);
 
-      if (!phone) {
+      if (typedPhone !== "" && phone === null) {
         return reply.code(400).send({
           error: "invalid_phone",
           message:
             "El teléfono no parece un número válido. Escribe los 8 dígitos hondureños " +
-            "(9982-4471) o el número completo con su código de país (+1 305 555 0123).",
+            "(9982-4471) o el número completo con su código de país (+1 305 555 0123), " +
+            "o déjalo en blanco si el cliente no tiene uno registrado.",
         });
       }
 

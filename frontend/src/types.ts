@@ -60,13 +60,16 @@ export interface Customer {
    */
   identification: string | null;
   /**
-   * Stored in E.164, e.g. "+50499824471" — see lib/phone.ts.
+   * Stored in E.164, e.g. "+50499824471" — see lib/phone.ts. `null` when the
+   * customer has never given one: a lot paid outright in one visit may simply
+   * never have come up in a conversation that needed a number.
    *
    * Never printed raw. Run it through `formatPhone` first, which writes it back
    * out as "9982-4471". It is stored with its country code because this is the
-   * number a WhatsApp receipt will be sent to.
+   * number a WhatsApp receipt will be sent to — and the WhatsApp send is
+   * disabled, not faked, when there is nothing to dial.
    */
-  phone: string;
+  phone: string | null;
   email: string | null;
   address: string | null;
   /** Year this person became a customer. */
@@ -303,8 +306,11 @@ export interface Contract {
   customer: {
     id: string;
     fullName: string;
-    /** E.164 — run it through `formatPhone` before showing it. */
-    phone: string;
+    /**
+     * E.164 — run it through `formatPhone` before showing it. `null` when none
+     * was given. The Escribir action is disabled, not hidden.
+     */
+    phone: string | null;
     /** `null` when none was given. The Escribir action is disabled, not hidden. */
     email: string | null;
   };
@@ -428,7 +434,7 @@ export interface Receipt {
   /** Set when the receipt was voided. The row and the number both survive. */
   voidedAt: string | null;
   voidReason: string | null;
-  customer: { id: string; fullName: string; identification: string | null; phone: string };
+  customer: { id: string; fullName: string; identification: string | null; phone: string | null };
   issuedBy: { id: string; name: string };
   /** What the customer handed over. Unaffected by a later void. */
   totalPaid: Cents;

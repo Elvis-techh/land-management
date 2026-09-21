@@ -121,6 +121,57 @@ describe("customers", async () => {
     assert.equal(response.json().error, "invalid_phone");
   });
 
+  it("accepts a customer who has not given a phone number", async () => {
+    // A lot paid outright in one visit may never come up in a conversation
+    // that needed a number. Refusing the customer does not produce it.
+    const response = await create(ownerCookie, {
+      fullName: "Sin Teléfono",
+      identification: "0801-1991-88888",
+      customerSince: 2026,
+    });
+
+    assert.equal(response.statusCode, 201);
+
+    const row = db
+      .select()
+      .from(customers)
+      .where(eq(customers.fullName, "Sin Teléfono"))
+      .get();
+
+    assert.equal(row?.phone, null);
+  });
+
+  it("stores a blank phone as an absence rather than as an empty string", async () => {
+    // Every shape of "nothing" a form or an import can send. Unlike blank
+    // identidad, an empty string colliding in a unique index is not the risk
+    // here — there is no `customers_phone_unique` — but NULL is still the
+    // honest answer for "never given" rather than a false "".
+    const blanks = [
+      ["Sin Teléfono Blanco", ""],
+      ["Sin Teléfono Espacios", "   "],
+      ["Sin Teléfono Nulo", null],
+    ] as const;
+
+    for (const [fullName, phone] of blanks) {
+      const response = await create(ownerCookie, {
+        fullName,
+        phone,
+        customerSince: 2026,
+      });
+
+      assert.equal(response.statusCode, 201, `failed on ${JSON.stringify(phone)}`);
+    }
+
+    const rows = db
+      .select()
+      .from(customers)
+      .where(like(customers.fullName, "Sin Teléfono %"))
+      .all();
+
+    assert.equal(rows.length, 3);
+    assert.ok(rows.every((row) => row.phone === null));
+  });
+
   it("accepts a customer with no email, address or notes", async () => {
     const response = await create(ownerCookie, {
       fullName: "Sin Correo",
@@ -228,6 +279,39 @@ describe("customers", async () => {
       .get();
 
     assert.equal(row?.identification, null);
+  });
+
+  it("lets a customer's phone be cleared once it turns out they never need it", async () => {
+    const created = await create(ownerCookie, {
+      fullName: "Pagó Todo de Contado",
+      identification: "0801-1991-11122",
+      phone: "9700-0005",
+      customerSince: 2026,
+    });
+
+    assert.equal(created.statusCode, 201);
+
+    const response = await app.inject({
+      method: "PATCH",
+      url: `/api/customers/${created.json().customer.id}`,
+      headers: { cookie: ownerCookie },
+      payload: {
+        fullName: "Pagó Todo de Contado",
+        identification: "0801-1991-11122",
+        phone: "",
+        customerSince: 2026,
+      },
+    });
+
+    assert.equal(response.statusCode, 200);
+
+    const row = db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, created.json().customer.id))
+      .get();
+
+    assert.equal(row?.phone, null);
   });
 
   describe("deleting", () => {

@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from "react";
 
 import { IconClose, IconFilter, IconSearch, IconSort } from "../../components/Icons";
 import { MenuSurface } from "../../components/MenuSurface";
+import { SortMenu } from "../../components/SortMenu";
 import { useDismiss } from "../../lib/useDismiss";
 import { useIsMobile } from "../../lib/viewport";
 import type {
@@ -16,7 +17,7 @@ import {
   countActiveFilters,
 } from "./transactionFilters";
 import { SORT_OPTIONS } from "./transactionSort";
-import type { SortField, TransactionSort } from "./transactionSort";
+import type { TransactionSort } from "./transactionSort";
 
 /** Which of the two lists is on screen. */
 export type TransactionView = "date" | "customer";
@@ -73,19 +74,10 @@ export function TransactionToolbar({
   useDismiss(!isMobile && openMenu === "filter", filterRef, () => setOpenMenu(null));
 
   const activeCount = countActiveFilters(filters);
-  const sortOption = SORT_OPTIONS.find((option) => option.field === sort.field) ?? SORT_OPTIONS[0]!;
-
-  const setSortField = (field: SortField) => {
-    // Picking the field already selected flips the direction — the shortcut
-    // people expect from a column header, kept the same on every screen.
-    onSortChange(
-      field === sort.field
-        ? { field, direction: sort.direction === "asc" ? "desc" : "asc" }
-        : // Dates default to newest-first; everything else to A → Z, which is
-          // what each one means by "the obvious way round".
-          { field, direction: field === "date" || field === "amount" ? "desc" : "asc" },
-    );
-  };
+  // The trigger button names the PRIMARY level; any levels after it show as
+  // the "+N" badge next to it, same as the filter button's count.
+  const primaryOption =
+    SORT_OPTIONS.find((option) => option.field === sort[0]?.field) ?? SORT_OPTIONS[0]!;
 
   const toggleMethod = (value: MethodFilter) => {
     onFiltersChange({
@@ -309,47 +301,31 @@ export function TransactionToolbar({
           >
             <IconSort />
             <span>
-              {sortOption.label}
+              {primaryOption.label}
               <span className="menu-trigger-detail">
-                {sort.direction === "asc" ? sortOption.ascLabel : sortOption.descLabel}
+                {sort[0]?.direction === "asc" ? primaryOption.ascLabel : primaryOption.descLabel}
               </span>
             </span>
+            {sort.length > 1 && <span className="filter-count">+{sort.length - 1}</span>}
           </button>
 
           <MenuSurface
             isOpen={openMenu === "sort"}
             title="Ordenar por"
             onClose={() => setOpenMenu(null)}
+            className="sort-popover"
           >
-            <p className="menu-title desktop-only">Ordenar por</p>
-            {SORT_OPTIONS.map((option) => {
-              const isCurrent = option.field === sort.field;
-
-              return (
-                <button
-                  key={option.field}
-                  type="button"
-                  aria-checked={isCurrent}
-                  role="menuitemradio"
-                  className={isCurrent ? "menu-item selected" : "menu-item"}
-                  onClick={() => setSortField(option.field)}
-                >
-                  <span>{option.label}</span>
-                  <span className="menu-item-detail">
-                    {isCurrent
-                      ? sort.direction === "asc"
-                        ? option.ascLabel
-                        : option.descLabel
-                      : ""}
-                  </span>
-                </button>
-              );
-            })}
-            <p className="menu-foot">
-              {view === "customer"
-                ? "Ordena los clientes y también las transacciones dentro de cada uno."
-                : "Vuelve a elegir el mismo campo para invertir el orden."}
-            </p>
+            <SortMenu
+              options={SORT_OPTIONS}
+              rules={sort}
+              onChange={onSortChange}
+              defaultDirection={(field) => (field === "date" || field === "amount" ? "desc" : "asc")}
+              hint={
+                view === "customer"
+                  ? "Ordena los clientes y también las transacciones dentro de cada uno."
+                  : "Vuelve a elegir el mismo campo para invertir el orden."
+              }
+            />
           </MenuSurface>
         </div>
 

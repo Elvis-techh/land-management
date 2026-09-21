@@ -41,10 +41,10 @@ export function hasIdentification(identification: string | null): boolean {
  */
 export function customerLine(customer: {
   identification: string | null;
-  phone: string;
+  phone: string | null;
 }): string {
   const identification = customer.identification?.trim() ?? "";
-  const phone = customer.phone.trim();
+  const phone = customer.phone?.trim() ?? "";
 
   return [identification, phone ? formatPhone(phone) : ""]
     .filter((part) => part !== "")

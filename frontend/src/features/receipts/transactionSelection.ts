@@ -22,91 +22,26 @@ export function idsBetween(list: Transaction[], fromId: string, toId: string): s
 }
 
 /**
- * The rows printed on the same receipt as this one, itself included.
+ * One row in or out — exactly the row clicked, nothing else.
  *
- * A "transaction" on this screen is one row of `payments`, and a customer
- * holding three lots hands over ONE amount against ONE receipt that lands on
- * three contracts — so three rows. Asking what a payment was is therefore
- * almost never a question about one row: L 5,000 split A 2,000 / B 2,000 /
- * C 1,000 is one payment, and summing any single line of it answers nothing
- * anybody asked.
- *
- * A row with no receipt is its own group. This is the case that has to be
- * written down rather than left to fall out: `receiptId` is null for money
- * recorded before the app printed receipts, and grouping by null would make
- * every one of those rows a sibling of every other — checking one payment from
- * 2019 would check forty unrelated ones.
+ * A receipt covering three lots used to check or uncheck all three together,
+ * on the reasoning that they are one payment. That made it impossible to
+ * isolate a single lot's line out of the group: unchecking one always
+ * released the whole receipt, because the row was only "in" as a sibling and
+ * the group would put it straight back. A plain click now only ever touches
+ * the row it landed on — checking every line of a receipt on purpose is a
+ * drag across them, or a click on each box in turn.
  */
-export function receiptGroup(list: Transaction[], id: string): string[] {
-  const row = list.find((transaction) => transaction.id === id);
-
-  if (row === undefined || row.receiptId === null) {
-    return [id];
-  }
-
-  return list
-    .filter((transaction) => transaction.receiptId === row.receiptId)
-    .map((transaction) => transaction.id);
-}
-
-/**
- * Whole receipts, never half of one.
- *
- * Applied as the LAST step of every gesture — click, shift-click and drag
- * alike — rather than woven into each of them. Three implementations of "and
- * also its siblings" is three chances for the click path and the drag path to
- * disagree about what is selected, and the disagreement would only show up on
- * the receipts that span several lots, which are exactly the ones this exists
- * for.
- */
-export function expandToReceipts(
-  list: Transaction[],
-  ids: ReadonlySet<string>,
-): ReadonlySet<string> {
-  const byReceipt = new Set<string>();
-
-  for (const transaction of list) {
-    if (transaction.receiptId !== null && ids.has(transaction.id)) {
-      byReceipt.add(transaction.receiptId);
-    }
-  }
-
-  const expanded = new Set(ids);
-
-  for (const transaction of list) {
-    if (transaction.receiptId !== null && byReceipt.has(transaction.receiptId)) {
-      expanded.add(transaction.id);
-    }
-  }
-
-  return expanded;
-}
-
-/**
- * One row in or out, deciding which by what is on screen.
- *
- * The direction is read from the row's APPARENT state — a row checked only
- * because a sibling pulled it in still looks checked, and clicking something
- * that looks checked has to uncheck it. Turning it off therefore removes the
- * whole receipt: leaving the siblings behind would let `expandToReceipts` put
- * this row straight back, and the box would refuse to clear.
- */
-export function toggleOne(
-  list: Transaction[],
-  checked: ReadonlySet<string>,
-  id: string,
-): ReadonlySet<string> {
+export function toggleOne(checked: ReadonlySet<string>, id: string): ReadonlySet<string> {
   const next = new Set(checked);
 
-  if (checked.has(id)) {
-    for (const sibling of receiptGroup(list, id)) {
-      next.delete(sibling);
-    }
+  if (next.has(id)) {
+    next.delete(id);
   } else {
     next.add(id);
   }
 
-  return expandToReceipts(list, next);
+  return next;
 }
 
 /** Which way a press-and-drag is painting, decided on the row it started from. */
@@ -128,10 +63,9 @@ export type DragMode = "add" | "remove";
  * is what makes a drag one-way — it is how the old version behaved, and why
  * going back over a row you had just selected did nothing at all.
  *
- * The snapshot is the already-expanded set, which is the same thing as "how it
- * looked before this gesture". Shrinking the range therefore also releases the
- * siblings a wider range had pulled in, because they are not in `before` and
- * the expansion below is recomputed from scratch.
+ * Paints exactly the rows the pointer has actually crossed — a receipt with
+ * several lots is only fully selected once the drag has passed over all of
+ * them, not because one of them pulled the rest in. See `toggleOne` for why.
  */
 export function paintedByDrag(
   list: Transaction[],
@@ -146,15 +80,11 @@ export function paintedByDrag(
     if (mode === "add") {
       next.add(id);
     } else {
-      // Same reasoning as `toggleOne`: a row is only truly out once its
-      // receipt is, or the expansion at the end puts it back.
-      for (const sibling of receiptGroup(list, id)) {
-        next.delete(sibling);
-      }
+      next.delete(id);
     }
   }
 
-  return expandToReceipts(list, next);
+  return next;
 }
 
 /**

@@ -60,7 +60,7 @@ export function CustomerPicker({ customers, selected, onSelect }: CustomerPicker
       needle === ""
         ? customers
         : customers.filter((customer) =>
-            `${customer.fullName} ${customer.identification ?? ""} ${customer.phone}`
+            `${customer.fullName} ${customer.identification ?? ""} ${customer.phone ?? ""}`
               .toLowerCase()
               .includes(needle),
           );

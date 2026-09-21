@@ -1,8 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { MouseEvent as ReactMouseEvent } from "react";
 
 import { Dialog } from "./Dialog";
-import { IconChevronDown } from "./Icons";
+import { IconChevronDown, IconZoomIn, IconZoomOut } from "./Icons";
 import { documentKind, formatBadge, isFragileImage, readableSize } from "../lib/documentFiles";
+
+/** How far a click of the zoom buttons, or one wheel tick, moves the scale. */
+const ZOOM_STEP = 0.5;
+const MIN_ZOOM = 1;
+const MAX_ZOOM = 4;
 
 /**
  * One document the viewer can show.
@@ -84,6 +90,20 @@ export function DocumentViewer({ files, startId, onClose, onRemove }: DocumentVi
   // expects; running off the end closes instead of showing a blank frame.
   const safeIndex = Math.min(index, Math.max(0, files.length - 1));
   const current = files[safeIndex];
+  const kind = current ? documentKind(current.contentType) : undefined;
+
+  /*
+   * How far into the image the viewer is zoomed, and by how much its centre
+   * has been dragged off from the middle of the stage. Both reset the moment
+   * the file on screen changes — a receipt zoomed in to check a total should
+   * not leave the NEXT one, a photo of a bank slip, already blown up past
+   * where its own text is legible.
+   */
+  const [zoom, setZoom] = useState(MIN_ZOOM);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [isDragging, setDragging] = useState(false);
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const imageRef = useRef<HTMLImageElement | null>(null);
 
   useEffect(() => {
     if (files.length === 0) {
@@ -107,11 +127,125 @@ export function DocumentViewer({ files, startId, onClose, onRemove }: DocumentVi
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [files.length]);
 
+  useEffect(() => {
+    setZoom(MIN_ZOOM);
+    setPan({ x: 0, y: 0 });
+  }, [current?.id]);
+
+  /*
+   * How far the image may be dragged before its edge would leave the stage
+   * empty on the other side — measured off the boxes actually on screen
+   * rather than carried in state, since `getBoundingClientRect` already
+   * reflects the scale just applied. Locked to (0, 0) at MIN_ZOOM, which is
+   * what keeps a reset snapping the receipt back to centred.
+   */
+  const clampPan = (x: number, y: number) => {
+    const stage = stageRef.current;
+    const image = imageRef.current;
+    if (!stage || !image) {
+      return { x: 0, y: 0 };
+    }
+
+    const stageBox = stage.getBoundingClientRect();
+    const imageBox = image.getBoundingClientRect();
+    const maxX = Math.max(0, (imageBox.width - stageBox.width) / 2);
+    const maxY = Math.max(0, (imageBox.height - stageBox.height) / 2);
+
+    return {
+      x: Math.min(maxX, Math.max(-maxX, x)),
+      y: Math.min(maxY, Math.max(-maxY, y)),
+    };
+  };
+
+  /** Every way of changing the zoom funnels through here, so panning always
+      ends up back inside bounds and a return to MIN_ZOOM always re-centres. */
+  const applyZoom = (next: number) => {
+    const clamped = Math.round(Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, next)) * 100) / 100;
+    setZoom(clamped);
+    setPan((prevPan) => (clamped === MIN_ZOOM ? { x: 0, y: 0 } : clampPan(prevPan.x, prevPan.y)));
+  };
+
+  const zoomIn = () => applyZoom(zoom + ZOOM_STEP);
+  const zoomOut = () => applyZoom(zoom - ZOOM_STEP);
+  const resetZoom = () => applyZoom(MIN_ZOOM);
+  const toggleZoom = () => applyZoom(zoom > MIN_ZOOM ? MIN_ZOOM : 2);
+
+  useEffect(() => {
+    // A magnifying glass is the whole point of this component, so the wheel
+    // zooms rather than doing nothing — but it has to bypass React's `onWheel`,
+    // which Chrome treats as passive by default and would silently ignore the
+    // `preventDefault()` a zoom needs to stop the page moving under it.
+    const stage = stageRef.current;
+    if (!stage || kind !== "image") {
+      return;
+    }
+
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      applyZoom(zoom + (event.deltaY > 0 ? -ZOOM_STEP / 2 : ZOOM_STEP / 2));
+    };
+
+    stage.addEventListener("wheel", onWheel, { passive: false });
+    return () => stage.removeEventListener("wheel", onWheel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kind, current?.id, zoom]);
+
+  useEffect(() => {
+    if (kind !== "image") {
+      return;
+    }
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "+" || event.key === "=") {
+        event.preventDefault();
+        zoomIn();
+      } else if (event.key === "-" || event.key === "_") {
+        event.preventDefault();
+        zoomOut();
+      } else if (event.key === "0") {
+        resetZoom();
+      }
+    };
+
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kind, zoom]);
+
+  /*
+   * Dragging to look at a corner of a zoomed-in receipt. Only starts past
+   * MIN_ZOOM — at 1:1 the whole document already fits the stage, and a drag
+   * that could not move anything is a cursor that lies about what the mouse
+   * does here.
+   */
+  const onImageMouseDown = (event: ReactMouseEvent<HTMLImageElement>) => {
+    if (zoom <= MIN_ZOOM) {
+      return;
+    }
+    event.preventDefault();
+    setDragging(true);
+    const start = { x: event.clientX, y: event.clientY, panX: pan.x, panY: pan.y };
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      setPan(
+        clampPan(start.panX + (moveEvent.clientX - start.x), start.panY + (moveEvent.clientY - start.y)),
+      );
+    };
+
+    const onMouseUp = () => {
+      setDragging(false);
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+  };
+
   if (!current) {
     return null;
   }
 
-  const kind = documentKind(current.contentType);
   const isBroken = broken.has(current.id);
   const hasMany = files.length > 1;
 
@@ -150,7 +284,7 @@ export function DocumentViewer({ files, startId, onClose, onRemove }: DocumentVi
           </button>
         </header>
 
-        <div className="viewer-stage">
+        <div className="viewer-stage" ref={stageRef}>
           {hasMany && (
             <button
               type="button"
@@ -168,14 +302,60 @@ export function DocumentViewer({ files, startId, onClose, onRemove }: DocumentVi
              * with a new `src`. Without the key, paging from a large photo to a
              * small one leaves the previous picture on screen while the next
              * decodes, which reads as the arrow having done nothing.
+             *
+             * The transform is translate-then-scale, in that order: CSS applies
+             * the rightmost function first, so the image scales about its own
+             * centre BEFORE the pan shifts it — which is what keeps `pan` in
+             * plain screen pixels instead of pixels-divided-by-zoom.
              */
             <img
               key={current.id}
-              className="viewer-image"
+              ref={imageRef}
+              className={`viewer-image${isDragging ? " is-panning" : ""}`}
+              style={{
+                transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                transition: isDragging ? "none" : "transform 0.12s ease",
+                cursor: zoom > MIN_ZOOM ? (isDragging ? "grabbing" : "grab") : "zoom-in",
+              }}
               src={current.url}
               alt={current.name}
+              draggable={false}
               onError={() => setBroken((was) => new Set(was).add(current.id))}
+              onMouseDown={onImageMouseDown}
+              onDoubleClick={toggleZoom}
+              title={zoom > MIN_ZOOM ? "Arrastra para moverte por el recibo" : "Doble clic para acercar"}
             />
+          )}
+
+          {kind === "image" && !isBroken && (
+            <div className="viewer-zoom">
+              <button
+                type="button"
+                onClick={zoomOut}
+                disabled={zoom <= MIN_ZOOM}
+                aria-label="Alejar"
+              >
+                <IconZoomOut />
+              </button>
+              <button
+                type="button"
+                className="viewer-zoom-value"
+                onClick={resetZoom}
+                disabled={zoom === MIN_ZOOM}
+                aria-label="Restablecer el zoom"
+                title="Restablecer el zoom"
+              >
+                {Math.round(zoom * 100)}%
+              </button>
+              <button
+                type="button"
+                onClick={zoomIn}
+                disabled={zoom >= MAX_ZOOM}
+                aria-label="Acercar"
+              >
+                <IconZoomIn />
+              </button>
+            </div>
           )}
 
           {kind === "pdf" && (

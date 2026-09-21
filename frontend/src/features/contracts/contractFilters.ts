@@ -139,7 +139,7 @@ function haystack(contract: Contract): string {
   return [
     contract.code,
     contract.customer.fullName,
-    formatPhone(contract.customer.phone),
+    contract.customer.phone ? formatPhone(contract.customer.phone) : "",
     contract.lot.code,
     contract.lot.projectName,
     contract.notes ?? "",

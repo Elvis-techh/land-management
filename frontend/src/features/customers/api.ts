@@ -8,7 +8,7 @@ interface CustomersResponse {
     id: string;
     fullName: string;
     identification: string | null;
-    phone: string;
+    phone: string | null;
     email: string | null;
     address: string | null;
     customerSince: number;
@@ -53,6 +53,7 @@ export interface CustomerDraft {
   fullName: string;
   /** Empty when the customer has not given one; the server stores that as NULL. */
   identification: string;
+  /** Empty when the customer has never given one; the server stores that as NULL. */
   phone: string;
   email: string | null;
   address: string | null;

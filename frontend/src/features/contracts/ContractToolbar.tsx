@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from "react";
 
 import { IconChevronDown, IconClose, IconFilter, IconSearch, IconSort } from "../../components/Icons";
 import { MenuSurface } from "../../components/MenuSurface";
+import { SortMenu } from "../../components/SortMenu";
 import { useDismiss } from "../../lib/useDismiss";
 import { useIsMobile } from "../../lib/viewport";
 import type { Contract, ContractStatus, PaymentHealth, SaleType } from "../../types";
@@ -14,7 +15,7 @@ import {
   STATUS_PRESENTATION,
 } from "./contractPresentation";
 import { SORT_OPTIONS } from "./contractSort";
-import type { ContractSort, SortField } from "./contractSort";
+import type { ContractSort } from "./contractSort";
 
 const HEALTH_ORDER: PaymentHealth[] = ["at_risk", "overdue", "due_soon", "current"];
 const STATUS_ORDER: ContractStatus[] = ["active", "paid_off", "cancelled", "defaulted", "draft"];
@@ -71,17 +72,10 @@ export function ContractToolbar({
   useDismiss(!isMobile && openMenu === "filter", filterRef, () => setOpenMenu(null));
 
   const activeCount = countActiveFilters(filters);
-  const sortOption = SORT_OPTIONS.find((option) => option.field === sort.field) ?? SORT_OPTIONS[0]!;
-
-  const setSortField = (field: SortField) => {
-    // Picking the field already selected flips the direction — the shortcut
-    // people expect from a column header, kept the same across all three tables.
-    onSortChange(
-      field === sort.field
-        ? { field, direction: sort.direction === "asc" ? "desc" : "asc" }
-        : { field, direction: field === "health" ? "desc" : "asc" },
-    );
-  };
+  // The trigger button names the PRIMARY level; any levels after it show as
+  // the "+N" badge next to it, same as the filter button's count.
+  const primaryOption =
+    SORT_OPTIONS.find((option) => option.field === sort[0]?.field) ?? SORT_OPTIONS[0]!;
 
   /** Add or remove one value from one of the list filters. */
   function toggle<K extends "statuses" | "health" | "saleTypes" | "kinds" | "projects">(
@@ -291,43 +285,27 @@ export function ContractToolbar({
           >
             <IconSort />
             <span>
-              {sortOption.label}
+              {primaryOption.label}
               <span className="menu-trigger-detail">
-                {sort.direction === "asc" ? sortOption.ascLabel : sortOption.descLabel}
+                {sort[0]?.direction === "asc" ? primaryOption.ascLabel : primaryOption.descLabel}
               </span>
             </span>
+            {sort.length > 1 && <span className="filter-count">+{sort.length - 1}</span>}
           </button>
 
           <MenuSurface
             isOpen={openMenu === "sort"}
             title="Ordenar por"
             onClose={() => setOpenMenu(null)}
+            className="sort-popover"
           >
-            <p className="menu-title desktop-only">Ordenar por</p>
-            {SORT_OPTIONS.map((option) => {
-              const isCurrent = option.field === sort.field;
-
-              return (
-                <button
-                  key={option.field}
-                  type="button"
-                  aria-checked={isCurrent}
-                  role="menuitemradio"
-                  className={isCurrent ? "menu-item selected" : "menu-item"}
-                  onClick={() => setSortField(option.field)}
-                >
-                  <span>{option.label}</span>
-                  <span className="menu-item-detail">
-                    {isCurrent
-                      ? sort.direction === "asc"
-                        ? option.ascLabel
-                        : option.descLabel
-                      : ""}
-                  </span>
-                </button>
-              );
-            })}
-            <p className="menu-foot">Vuelve a elegir el mismo campo para invertir el orden.</p>
+            <SortMenu
+              options={SORT_OPTIONS}
+              rules={sort}
+              onChange={onSortChange}
+              defaultDirection={(field) => (field === "health" ? "desc" : "asc")}
+              hint="Vuelve a elegir el mismo campo para invertir el orden."
+            />
           </MenuSurface>
         </div>
 

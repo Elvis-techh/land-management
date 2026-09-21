@@ -262,8 +262,12 @@ export function ContractPanel({
           </div>
           <div className="cp-row">
             <span>Teléfono</span>
-            {/* Stored with its country code; read back the local way. */}
-            <span className="mono">{formatPhone(contract.customer.phone)}</span>
+            {/* Stored with its country code; read back the local way. `null`
+                when it was never given — a paid-off lot may never have needed
+                one. */}
+            <span className="mono">
+              {contract.customer.phone ? formatPhone(contract.customer.phone) : "—"}
+            </span>
           </div>
           <div className="cp-row">
             <span>Situación</span>

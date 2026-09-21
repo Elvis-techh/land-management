@@ -3,6 +3,7 @@ import { useMemo, useRef, useState } from "react";
 import { IconClose, IconFilter, IconSort } from "../../components/Icons";
 import { MenuSurface } from "../../components/MenuSurface";
 import { MoneyInput } from "../../components/MoneyInput";
+import { SortMenu } from "../../components/SortMenu";
 import { AREA_UNIT_INFO, fromSquareMetres, toSquareMetres } from "../../lib/area";
 import type { AreaUnit } from "../../lib/area";
 import { formatMoney, fromCurrencyUnits, parseMoneyInput, toMoneyInput } from "../../lib/money";
@@ -13,7 +14,7 @@ import type { LotStatus } from "../../types";
 import type { LotFilters } from "./lotFilters";
 import { NO_FILTERS, countActiveFilters } from "./lotFilters";
 import { SORT_OPTIONS } from "./lotSort";
-import type { LotSort, SortField } from "./lotSort";
+import type { LotSort } from "./lotSort";
 
 /** The wording used everywhere else for each status, in inventory order. */
 const STATUS_LABELS: Array<{ value: LotStatus; label: string }> = [
@@ -96,18 +97,10 @@ export function LotToolbar({
   const [maxAreaText, setMaxAreaText] = useState("");
 
   const activeCount = countActiveFilters(filters);
-  const sortOption = SORT_OPTIONS.find((option) => option.field === sort.field) ?? SORT_OPTIONS[0]!;
-
-  const setSortField = (field: SortField) => {
-    // Picking the field already selected flips the direction — the shortcut
-    // people expect from a column header, kept here so the menu behaves the
-    // same way.
-    onSortChange(
-      field === sort.field
-        ? { field, direction: sort.direction === "asc" ? "desc" : "asc" }
-        : { field, direction: "asc" },
-    );
-  };
+  // The trigger button names the PRIMARY level; any levels after it show as
+  // the "+N" badge next to it, same as the filter button's count.
+  const primaryOption =
+    SORT_OPTIONS.find((option) => option.field === sort[0]?.field) ?? SORT_OPTIONS[0]!;
 
   const toggleStatus = (value: LotStatus) => {
     const next = filters.statuses.includes(value)
@@ -334,43 +327,26 @@ export function LotToolbar({
           >
             <IconSort />
             <span>
-              {sortOption.label}
+              {primaryOption.label}
               <span className="menu-trigger-detail">
-                {sort.direction === "asc" ? sortOption.ascLabel : sortOption.descLabel}
+                {sort[0]?.direction === "asc" ? primaryOption.ascLabel : primaryOption.descLabel}
               </span>
             </span>
+            {sort.length > 1 && <span className="filter-count">+{sort.length - 1}</span>}
           </button>
 
           <MenuSurface
             isOpen={openMenu === "sort"}
             title="Ordenar por"
             onClose={() => setOpenMenu(null)}
+            className="sort-popover"
           >
-            <p className="menu-title desktop-only">Ordenar por</p>
-            {SORT_OPTIONS.map((option) => {
-              const isCurrent = option.field === sort.field;
-
-              return (
-                <button
-                  key={option.field}
-                  type="button"
-                  aria-checked={isCurrent}
-                  role="menuitemradio"
-                  className={isCurrent ? "menu-item selected" : "menu-item"}
-                  onClick={() => setSortField(option.field)}
-                >
-                  <span>{option.label}</span>
-                  <span className="menu-item-detail">
-                    {isCurrent
-                      ? sort.direction === "asc"
-                        ? option.ascLabel
-                        : option.descLabel
-                      : ""}
-                  </span>
-                </button>
-              );
-            })}
-            <p className="menu-foot">Vuelve a elegir el mismo campo para invertir el orden.</p>
+            <SortMenu
+              options={SORT_OPTIONS}
+              rules={sort}
+              onChange={onSortChange}
+              hint="Vuelve a elegir el mismo campo para invertir el orden."
+            />
           </MenuSurface>
         </div>
 

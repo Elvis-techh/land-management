@@ -62,8 +62,12 @@ export function CustomerPanel({
             </div>
             <div className="cp-row">
               <span>Teléfono</span>
-              {/* Stored with its country code; read back the local way. */}
-              <span className="mono">{formatPhone(customer.phone)}</span>
+              {/* Stored with its country code; read back the local way. `null`
+                  when it was never given — a paid-off lot may never have
+                  needed one. */}
+              <span className="mono">
+                {customer.phone ? formatPhone(customer.phone) : "—"}
+              </span>
             </div>
             <div className="cp-row">
               <span>Correo</span>

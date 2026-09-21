@@ -49,7 +49,7 @@ function longDate(isoDate: string): string {
  */
 function clientDetail(customer: Receipt["customer"]): string | null {
   const identification = customer.identification?.trim() ?? "";
-  const phone = customer.phone.trim();
+  const phone = customer.phone?.trim() ?? "";
 
   const parts = [
     identification ? `Identidad ${identification}` : null,

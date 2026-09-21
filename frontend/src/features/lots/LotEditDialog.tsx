@@ -83,6 +83,13 @@ export function LotEditDialog({
       other.code.toUpperCase() === code.trim().toUpperCase(),
   );
 
+  const isDirty =
+    code !== lot.code ||
+    projectName !== lot.projectName ||
+    area !== toAreaInput(lot.areaM2, unit) ||
+    basePrice !== toMoneyInput(lot.basePrice) ||
+    reason.trim() !== "";
+
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
     setError(null);
@@ -142,7 +149,11 @@ export function LotEditDialog({
   };
 
   return (
-    <Dialog ariaLabel={`Editar lote ${lot.code}`} onClose={onCancel}>
+    <Dialog
+      ariaLabel={`Editar lote ${lot.code}`}
+      dismissible={!isDirty && !isSaving}
+      onClose={onCancel}
+    >
       <form onSubmit={handleSubmit}>
         <div className="modal-header">
           <div>

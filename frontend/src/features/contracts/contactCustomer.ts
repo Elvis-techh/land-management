@@ -96,7 +96,7 @@ export function canContact(contract: Contract, channel: ContactChannel): boolean
     return (contract.customer.email ?? "").trim() !== "";
   }
 
-  return contract.customer.phone.trim() !== "";
+  return (contract.customer.phone ?? "").trim() !== "";
 }
 
 /**
@@ -117,7 +117,9 @@ export function contactUrl(
   message: string,
   subject: string,
 ): string {
-  const phone = contract.customer.phone;
+  // Only called once `canContact` has already gated the button on this being
+  // non-empty; the fallback here is for the type checker, not a real case.
+  const phone = contract.customer.phone ?? "";
 
   if (channel === "whatsapp") {
     return `https://wa.me/${phone.replace(/\D/g, "")}?text=${encodeURIComponent(message)}`;

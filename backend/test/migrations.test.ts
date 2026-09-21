@@ -147,6 +147,59 @@ describe("0007 — making the identidad optional", () => {
   });
 });
 
+describe("0015 — making the phone optional", () => {
+  it("rebuilds the customers table without orphaning the contracts pointing at it", () => {
+    const { db, sqlite } = databaseBefore0007();
+
+    sqlite.exec(`
+      INSERT INTO customers (id, full_name, identification, phone, customer_since)
+        VALUES ('c1', 'Ana Portillo', '0801-1990-00001', '+50499824471', 2024);
+      INSERT INTO contracts (id, customer_id) VALUES ('k1', 'c1');
+    `);
+
+    // Same rebuild, same risk, as 0007: `DROP TABLE customers` is a foreign
+    // key violation the instant one contract references one customer.
+    runMigrations(db, sqlite, folderWith("0015_serious_redwing"));
+
+    const joined = sqlite
+      .prepare(
+        "SELECT c.full_name FROM contracts k JOIN customers c ON c.id = k.customer_id WHERE k.id = 'k1'",
+      )
+      .get() as { full_name: string } | undefined;
+
+    assert.equal(joined?.full_name, "Ana Portillo");
+    assert.deepEqual(sqlite.pragma("foreign_key_check"), []);
+    assert.deepEqual(sqlite.pragma("foreign_keys"), [{ foreign_keys: 1 }]);
+
+    sqlite.close();
+  });
+
+  it("lets a phone column that was always NOT NULL start taking NULL", () => {
+    const { db, sqlite } = databaseBefore0007();
+
+    sqlite.exec(`
+      INSERT INTO customers (id, full_name, identification, phone, customer_since)
+        VALUES ('c1', 'Ana Portillo', '0801-1990-00001', '+50499824471', 2024);
+    `);
+
+    runMigrations(db, sqlite, folderWith("0015_serious_redwing"));
+
+    sqlite
+      .prepare(
+        "INSERT INTO customers (id, full_name, identification, phone, customer_since) VALUES (?, ?, ?, ?, ?)",
+      )
+      .run("c2", "Pagó de contado", "0801-1990-00002", null, 2024);
+
+    const row = sqlite.prepare("SELECT phone FROM customers WHERE id = 'c2'").get() as {
+      phone: string | null;
+    };
+
+    assert.equal(row.phone, null);
+
+    sqlite.close();
+  });
+});
+
 describe("0008 — accounts that can be switched off", () => {
   it("leaves every existing account able to sign in", () => {
     const { db, sqlite } = createDb(":memory:");

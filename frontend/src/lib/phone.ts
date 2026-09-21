@@ -158,6 +158,11 @@ export function joinPhone(dialCode: string, national: string): string {
 /**
  * What is wrong with these two fields, in Spanish, or `null` if nothing is.
  *
+ * Blank is not a problem: the phone is optional, and a customer who paid a lot
+ * outright in one visit may simply never have come up in a conversation that
+ * needed a number. This only has something to say once digits have actually
+ * been typed and do not add up to a usable number.
+ *
  * The server validates independently and its answer is the one that counts.
  * This exists so the form can say which part is wrong while the user is still
  * looking at it.
@@ -166,7 +171,7 @@ export function describePhoneProblem(dialCode: string, national: string): string
   const digits = national.replace(/\D/g, "");
 
   if (digits === "") {
-    return "El teléfono es obligatorio.";
+    return null;
   }
 
   const country = COUNTRY_CODES.find((entry) => entry.dial === dialCode);

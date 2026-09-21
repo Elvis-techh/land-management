@@ -34,13 +34,7 @@ import {
 } from "./transactionFilters";
 import { DEFAULT_SORT, groupByCustomer, sortTransactions } from "./transactionSort";
 import type { TransactionSort } from "./transactionSort";
-import {
-  countReceipts,
-  idsBetween,
-  expandToReceipts,
-  paintedByDrag,
-  toggleOne,
-} from "./transactionSelection";
+import { countReceipts, idsBetween, paintedByDrag, toggleOne } from "./transactionSelection";
 import type { DragMode } from "./transactionSelection";
 import { SelectionSummaryBar } from "./SelectionSummaryBar";
 import { ReceiptRedistributeDialog } from "./ReceiptRedistributeDialog";
@@ -859,7 +853,9 @@ export function ReceiptsPage({
    * indistinguishable from a bug.
    */
   const share = async () => {
-    if (detail === null || shareImage === null) {
+    const phone = detail?.customer.phone ?? null;
+
+    if (detail === null || shareImage === null || phone === null) {
       return;
     }
 
@@ -867,11 +863,7 @@ export function ReceiptsPage({
     setShareNote(null);
 
     try {
-      const outcome = await sendReceiptOnWhatsApp(
-        shareImage,
-        receiptCaption(detail),
-        detail.customer.phone,
-      );
+      const outcome = await sendReceiptOnWhatsApp(shareImage, receiptCaption(detail), phone);
 
       if (outcome.status === "copied") {
         setShareNote({
@@ -1190,9 +1182,11 @@ export function ReceiptsPage({
 
   /*
    * Shift-click extends the checked set to every row between the anchor and
-   * this one; a plain click toggles just this one, receipt and all. Both read
-   * `selectionOrder` at click time, so the range always spans what is actually
-   * on screen, in the order the screen is showing it.
+   * this one; a plain click toggles just the row it landed on, and nothing
+   * else — see `toggleOne` for why a receipt with several lots is no longer
+   * pulled in whole. Both read `selectionOrder` at click time, so the range
+   * always spans what is actually on screen, in the order the screen is
+   * showing it.
    *
    * Skipped when a drag already painted this gesture — see `dragRef` — so
    * the click that fires on mouseup does not flip the box a second time.
@@ -1213,10 +1207,10 @@ export function ReceiptsPage({
           next.add(id);
         }
 
-        return expandToReceipts(selectionOrder, next);
+        return next;
       });
     } else {
-      setCheckedIds((current) => toggleOne(selectionOrder, current, transactionId));
+      setCheckedIds((current) => toggleOne(current, transactionId));
     }
 
     setLastCheckedId(transactionId);
@@ -1321,13 +1315,15 @@ export function ReceiptsPage({
           shows its box, not just the one under the pointer. See `.txn-check`. */}
       <div className={`card txn-list${checkedTransactions.length > 0 ? " is-selecting" : ""}`}>
         <div className="card-head">
-          <div>
-            <h2>Transacciones</h2>
-            <p className="cell-sub">
-              {formatMoney(cents(receivedTotal), money)} en {visible.length} transacci
-              {visible.length === 1 ? "ón" : "ones"}
-            </p>
-          </div>
+          <h2>Transacciones</h2>
+          {/* Right-aligned so it sits over the amount column below it — the
+              same spot the eye already goes to read a row's own figure. */}
+          <p className="txn-list-total">
+            <span className="txn-list-total-value">{formatMoney(cents(receivedTotal), money)}</span>
+            <span className="txn-list-total-count">
+              en {visible.length} transacci{visible.length === 1 ? "ón" : "ones"}
+            </span>
+          </p>
         </div>
 
         <TransactionToolbar
@@ -1346,111 +1342,119 @@ export function ReceiptsPage({
           totalCount={transactionsInScope(transactions, filters)}
         />
 
-        {checkedTransactions.length > 0 && (
-          <SelectionSummaryBar
-            count={checkedTransactions.length}
-            receiptCount={checkedReceipts}
-            sumCents={checkedSum}
-            averageCents={checkedAverage}
-            money={money}
-            selectableCount={selectionOrder.length}
-            onSelectAll={selectAll}
-            onClear={clearChecked}
-          />
-        )}
-
-        {visible.length === 0 && (
-          <p className="state-message">
-            {transactions.length === 0
-              ? "Todavía no se ha registrado ninguna transacción."
-              : "Ninguna transacción coincide con la búsqueda."}
-          </p>
-        )}
-
-        {view === "date" &&
-          visible.map((transaction) => (
-            <TransactionRow
-              key={transaction.id}
-              transaction={transaction}
+        {/* Clipped to the card's rounded bottom corners separately from the
+            card itself, so the sort/filter popover above can float past the
+            card's own edge instead of being cut off when the card is short.
+            See `.txn-list-body` in styles.css. */}
+        <div className="txn-list-body">
+          {checkedTransactions.length > 0 && (
+            <SelectionSummaryBar
+              count={checkedTransactions.length}
+              receiptCount={checkedReceipts}
+              sumCents={checkedSum}
+              averageCents={checkedAverage}
               money={money}
-              isSelected={
-                transaction.receiptId !== null && transaction.receiptId === selectedReceiptId
-              }
-              canEdit={canEdit}
-              onSelect={() => select(transaction)}
-              onEdit={() => onEditTransaction(transaction)}
-              onOpenProof={(files, startId) => setViewing({ source: "row", files, startId })}
-              canAttachProof={canRecord}
-              onProofsChanged={onProofsChanged}
-              showCustomer
-              isChecked={checkedIds.has(transaction.id)}
-              canCheck={transaction.reversedAt === null}
-              onCheckMouseDown={() => handleCheckMouseDown(transaction.id)}
-              onCheckMouseEnter={() => handleCheckMouseEnter(transaction.id)}
-              onCheckClick={(shiftKey) => handleCheckClick(transaction.id, shiftKey)}
+              selectableCount={selectionOrder.length}
+              onSelectAll={selectAll}
+              onClear={clearChecked}
             />
-          ))}
+          )}
 
-        {view === "customer" &&
-          groups.map((group) => {
-            const isOpen = expanded.has(group.customerId);
+          {visible.length === 0 && (
+            <p className="state-message">
+              {transactions.length === 0
+                ? "Todavía no se ha registrado ninguna transacción."
+                : "Ninguna transacción coincide con la búsqueda."}
+            </p>
+          )}
 
-            return (
-              <div key={group.customerId} className="txn-group">
-                <button
-                  type="button"
-                  className={`txn-group-head${isOpen ? " is-open" : ""}`}
-                  aria-expanded={isOpen}
-                  onClick={() => toggleCustomer(group.customerId)}
-                >
-                  <span className={`txn-caret${isOpen ? " is-open" : ""}`}>
-                    <IconChevronDown />
-                  </span>
+          {view === "date" &&
+            visible.map((transaction) => (
+              <TransactionRow
+                key={transaction.id}
+                transaction={transaction}
+                money={money}
+                isSelected={
+                  transaction.receiptId !== null && transaction.receiptId === selectedReceiptId
+                }
+                canEdit={canEdit}
+                onSelect={() => select(transaction)}
+                onEdit={() => onEditTransaction(transaction)}
+                onOpenProof={(files, startId) => setViewing({ source: "row", files, startId })}
+                canAttachProof={canRecord}
+                onProofsChanged={onProofsChanged}
+                showCustomer
+                isChecked={checkedIds.has(transaction.id)}
+                canCheck={transaction.reversedAt === null}
+                onCheckMouseDown={() => handleCheckMouseDown(transaction.id)}
+                onCheckMouseEnter={() => handleCheckMouseEnter(transaction.id)}
+                onCheckClick={(shiftKey) => handleCheckClick(transaction.id, shiftKey)}
+              />
+            ))}
 
-                  <span className="txn-who">
-                    <span className="txn-name">{group.customerName}</span>
-                    <span className="txn-detail">
-                      {group.transactions.length} transacci
-                      {group.transactions.length === 1 ? "ón" : "ones"} · última{" "}
-                      {shortDate(group.lastPaidOn)}
+          {view === "customer" &&
+            groups.map((group) => {
+              const isOpen = expanded.has(group.customerId);
+
+              return (
+                <div key={group.customerId} className="txn-group">
+                  <button
+                    type="button"
+                    className={`txn-group-head${isOpen ? " is-open" : ""}`}
+                    aria-expanded={isOpen}
+                    onClick={() => toggleCustomer(group.customerId)}
+                  >
+                    <span className={`txn-caret${isOpen ? " is-open" : ""}`}>
+                      <IconChevronDown />
                     </span>
-                  </span>
 
-                  <span className="txn-amount">{formatMoney(cents(group.totalCents), money)}</span>
-                </button>
+                    <span className="txn-who">
+                      <span className="txn-name">{group.customerName}</span>
+                      <span className="txn-detail">
+                        {group.transactions.length} transacci
+                        {group.transactions.length === 1 ? "ón" : "ones"} · última{" "}
+                        {shortDate(group.lastPaidOn)}
+                      </span>
+                    </span>
 
-                {isOpen && (
-                  <div className="txn-group-body">
-                    {group.transactions.map((transaction) => (
-                      <TransactionRow
-                        key={transaction.id}
-                        transaction={transaction}
-                        money={money}
-                        isSelected={
-                          transaction.receiptId !== null &&
-                          transaction.receiptId === selectedReceiptId
-                        }
-                        canEdit={canEdit}
-                        onSelect={() => select(transaction)}
-                        onEdit={() => onEditTransaction(transaction)}
-                        onOpenProof={(files, startId) =>
-                          setViewing({ source: "row", files, startId })
-                        }
-                        canAttachProof={canRecord}
-                        onProofsChanged={onProofsChanged}
-                        showCustomer={false}
-                        isChecked={checkedIds.has(transaction.id)}
-                        canCheck={transaction.reversedAt === null}
-                        onCheckMouseDown={() => handleCheckMouseDown(transaction.id)}
-                        onCheckMouseEnter={() => handleCheckMouseEnter(transaction.id)}
-                        onCheckClick={(shiftKey) => handleCheckClick(transaction.id, shiftKey)}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+                    <span className="txn-amount">
+                      {formatMoney(cents(group.totalCents), money)}
+                    </span>
+                  </button>
+
+                  {isOpen && (
+                    <div className="txn-group-body">
+                      {group.transactions.map((transaction) => (
+                        <TransactionRow
+                          key={transaction.id}
+                          transaction={transaction}
+                          money={money}
+                          isSelected={
+                            transaction.receiptId !== null &&
+                            transaction.receiptId === selectedReceiptId
+                          }
+                          canEdit={canEdit}
+                          onSelect={() => select(transaction)}
+                          onEdit={() => onEditTransaction(transaction)}
+                          onOpenProof={(files, startId) =>
+                            setViewing({ source: "row", files, startId })
+                          }
+                          canAttachProof={canRecord}
+                          onProofsChanged={onProofsChanged}
+                          showCustomer={false}
+                          isChecked={checkedIds.has(transaction.id)}
+                          canCheck={transaction.reversedAt === null}
+                          onCheckMouseDown={() => handleCheckMouseDown(transaction.id)}
+                          onCheckMouseEnter={() => handleCheckMouseEnter(transaction.id)}
+                          onCheckClick={(shiftKey) => handleCheckClick(transaction.id, shiftKey)}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+        </div>
       </div>
 
       <div className={`receipt-preview-wrap${isSheetOpen ? " is-sheet" : ""}`}>
@@ -1508,13 +1512,20 @@ export function ReceiptsPage({
                 {/* The document itself, not a description of it — see
                     whatsapp.ts. Disabled rather than hidden while the image is
                     being prepared, so the control does not appear a moment
-                    after somebody has looked for it and given up. */}
+                    after somebody has looked for it and given up. Also
+                    disabled — with its own reason in the tooltip — when the
+                    customer has no phone on file, same as the Escribir
+                    buttons on Contratos. See `contactCustomer.ts`. */}
                 <button
                   type="button"
                   className="btn-secondary receipt-send"
-                  disabled={shareImage === null || isSharing}
+                  disabled={shareImage === null || isSharing || detail.customer.phone === null}
                   onClick={() => void share()}
-                  title={`Enviar el recibo a ${detail.customer.fullName} por WhatsApp`}
+                  title={
+                    detail.customer.phone === null
+                      ? "Este cliente no tiene teléfono registrado"
+                      : `Enviar el recibo a ${detail.customer.fullName} por WhatsApp`
+                  }
                 >
                   <IconWhatsApp />
                   {shareImage === null && shareNote?.tone !== "error"

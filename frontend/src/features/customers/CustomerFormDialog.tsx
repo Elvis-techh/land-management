@@ -49,10 +49,10 @@ export function CustomerFormDialog({
   // phone keypad and the commonest thing to leave out — and a number saved
   // without it cannot be dialled by WhatsApp later.
   const [dialCode, setDialCode] = useState(
-    () => (customer ? splitPhone(customer.phone).dialCode : DEFAULT_DIAL),
+    () => (customer?.phone ? splitPhone(customer.phone).dialCode : DEFAULT_DIAL),
   );
   const [national, setNational] = useState(
-    () => (customer ? splitPhone(customer.phone).national : ""),
+    () => (customer?.phone ? splitPhone(customer.phone).national : ""),
   );
   const [email, setEmail] = useState(customer?.email ?? "");
   const [address, setAddress] = useState(customer?.address ?? "");
@@ -64,10 +64,9 @@ export function CustomerFormDialog({
   const [isSaving, setSaving] = useState(false);
 
   // What the number will actually be stored as, and what is wrong with it if
-  // anything. The problem is only shown once the user has typed something —
-  // "obligatorio" on an untouched field reads like a telling-off.
+  // anything. The phone is optional, so a blank field is never a problem —
+  // this only has something to say once digits have actually been typed.
   const phoneProblem = describePhoneProblem(dialCode, national);
-  const phoneIsUnusable = national.trim() !== "" && phoneProblem !== null;
 
   // One person, one identity number. Entering somebody twice splits their
   // contracts across two records and quietly breaks both balances, so this is
@@ -87,6 +86,19 @@ export function CustomerFormDialog({
             other.id !== customer?.id &&
             other.identification?.trim().toLowerCase() === typedIdentification.toLowerCase(),
         );
+
+  // Has anything actually been typed? Compared against the pristine values
+  // above rather than "is any field non-empty", so an edit that opens
+  // pre-filled does not lock the dialog before a single keystroke.
+  const isDirty =
+    fullName !== (customer?.fullName ?? "") ||
+    identification !== (customer?.identification ?? "") ||
+    dialCode !== (customer?.phone ? splitPhone(customer.phone).dialCode : DEFAULT_DIAL) ||
+    national !== (customer?.phone ? splitPhone(customer.phone).national : "") ||
+    email !== (customer?.email ?? "") ||
+    address !== (customer?.address ?? "") ||
+    customerSince !== String(customer?.customerSince ?? businessYear()) ||
+    notes !== (customer?.notes ?? "");
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -119,10 +131,11 @@ export function CustomerFormDialog({
         // Blank travels as blank; the server stores it as NULL. See the note on
         // `identification` in backend/src/db/schema.ts for why not "".
         identification: typedIdentification,
-        // Sent with its country code already attached. The server normalises it
-        // again and its answer is the stored one, so there is only ever one
-        // implementation that counts.
-        phone: joinPhone(dialCode, national),
+        // Blank travels as blank, same as identification above — the server
+        // stores it as NULL. Otherwise sent with its country code already
+        // attached; the server normalises it again and its answer is the
+        // stored one, so there is only ever one implementation that counts.
+        phone: national.trim() === "" ? "" : joinPhone(dialCode, national),
         email: orNull(email),
         address: orNull(address),
         customerSince: year,
@@ -138,6 +151,7 @@ export function CustomerFormDialog({
   return (
     <Dialog
       ariaLabel={isEditing ? `Editar ${customer.fullName}` : "Nuevo cliente"}
+      dismissible={!isDirty && !isSaving}
       onClose={onCancel}
     >
       <form onSubmit={handleSubmit}>
@@ -187,7 +201,7 @@ export function CustomerFormDialog({
           </div>
 
           <div className="form-field">
-            <label htmlFor="customer-phone">Teléfono</label>
+            <label htmlFor="customer-phone">Teléfono (opcional)</label>
             <div className="phone-input">
               <select
                 className="phone-dial"
@@ -207,12 +221,19 @@ export function CustomerFormDialog({
                 autoComplete="tel-national"
                 value={national}
                 placeholder="9982-4471"
-                aria-invalid={phoneIsUnusable}
+                aria-invalid={phoneProblem !== null}
                 onChange={(event) => setNational(event.target.value)}
               />
             </div>
-            {phoneIsUnusable ? (
+            {phoneProblem ? (
               <span className="field-error">{phoneProblem}</span>
+            ) : national.trim() === "" ? (
+              /* Said out loud, same as the identidad hint above: a blank field
+                 with no explanation reads as one the user forgot rather than
+                 one they are allowed to leave. */
+              <span className="field-hint">
+                Déjalo en blanco si nunca ha hecho falta contactar a este cliente.
+              </span>
             ) : (
               <span className="field-hint">
                 {dialCode === "+504"

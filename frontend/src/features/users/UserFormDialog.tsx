@@ -69,6 +69,13 @@ export function UserFormDialog({
     ? null
     : describePasswordProblem(password, confirmation);
 
+  const isDirty =
+    name !== (account?.name ?? "") ||
+    email !== (account?.email ?? "") ||
+    role !== (account?.role ?? "staff") ||
+    password !== "" ||
+    confirmation !== "";
+
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
     setError(null);
@@ -109,6 +116,7 @@ export function UserFormDialog({
   return (
     <Dialog
       ariaLabel={isEditing ? `Editar la cuenta de ${account.name}` : "Nueva cuenta"}
+      dismissible={!isDirty && !isSaving}
       onClose={onCancel}
     >
       <form onSubmit={handleSubmit}>

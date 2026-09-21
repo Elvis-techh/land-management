@@ -2,32 +2,22 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import type { Transaction } from "../src/types";
-import {
-  countReceipts,
-  expandToReceipts,
-  idsBetween,
-  paintedByDrag,
-  receiptGroup,
-  toggleOne,
-} from "../src/features/receipts/transactionSelection";
+import { countReceipts, idsBetween, paintedByDrag, toggleOne } from "../src/features/receipts/transactionSelection";
 
 /*
  * The arithmetic behind dragging across a ledger.
  *
  * Worth pinning down because every one of these rules is invisible until it is
- * wrong: a range that paints one row too many, a sibling that will not let go,
- * a receipt half-selected. None of them throws, none of them shows up in a
- * type, and all of them end with somebody reading a total that is not the total
- * of what they picked.
+ * wrong: a range that paints one row too many, a box that will not let go, a
+ * total that is not the total of what somebody actually picked.
  */
 
 /**
  * Six rows, in the order they appear on screen.
  *
- * Rows 3 and 4 are one receipt covering two lots — the case the whole
- * expansion rule exists for. Rows 5 and 6 have no receipt at all, which is how
- * money recorded before the app printed receipts looks, and they must never be
- * treated as siblings of each other.
+ * Rows 3 and 4 are one receipt covering two lots — the case that used to force
+ * a whole-receipt selection and now must NOT. Rows 5 and 6 have no receipt at
+ * all, which is how money recorded before the app printed receipts looks.
  */
 const rows = [
   { id: "1", receiptId: "r1" },
@@ -64,81 +54,50 @@ describe("idsBetween", () => {
   });
 });
 
-describe("receiptGroup", () => {
-  it("returns the lots of a receipt that covers several", () => {
-    assert.deepEqual(receiptGroup(rows, "3").sort(), ["3", "4"]);
-  });
-
-  it("returns just the row for a receipt covering one lot", () => {
-    assert.deepEqual(receiptGroup(rows, "1"), ["1"]);
-  });
-
-  /* The case that would otherwise join every un-receipted payment ever made. */
-  it("never makes siblings of two payments that simply have no receipt", () => {
-    assert.deepEqual(receiptGroup(rows, "5"), ["5"]);
-    assert.deepEqual(receiptGroup(rows, "6"), ["6"]);
-  });
-
-  it("returns the row itself when it is not in the list at all", () => {
-    assert.deepEqual(receiptGroup(rows, "gone"), ["gone"]);
-  });
-});
-
-describe("expandToReceipts", () => {
-  it("pulls in the other lots of a receipt", () => {
-    assert.deepEqual(ids(expandToReceipts(rows, new Set(["3"]))), ["3", "4"]);
-  });
-
-  it("leaves a one-lot receipt alone", () => {
-    assert.deepEqual(ids(expandToReceipts(rows, new Set(["1"]))), ["1"]);
-  });
-
-  it("leaves an un-receipted payment alone", () => {
-    assert.deepEqual(ids(expandToReceipts(rows, new Set(["5"]))), ["5"]);
-  });
-
-  it("is idempotent, so it can run at the end of every gesture", () => {
-    const once = expandToReceipts(rows, new Set(["3"]));
-    assert.deepEqual(ids(expandToReceipts(rows, once)), ids(once));
-  });
-});
-
 describe("toggleOne", () => {
-  it("checks a row and its receipt in one press", () => {
-    assert.deepEqual(ids(toggleOne(rows, new Set(), "3")), ["3", "4"]);
+  it("checks exactly the row clicked", () => {
+    assert.deepEqual(ids(toggleOne(new Set(), "3")), ["3"]);
+  });
+
+  it("unchecks exactly the row clicked, leaving a sibling from the same receipt alone", () => {
+    const checked = toggleOne(toggleOne(new Set(), "3"), "4");
+    assert.deepEqual(ids(checked), ["3", "4"]);
+    assert.deepEqual(ids(toggleOne(checked, "4")), ["3"]);
   });
 
   /*
-   * The bug this rule exists to prevent: row 4 is only checked because row 3
-   * pulled it in, so clicking row 4 has to release BOTH. Removing row 4 alone
-   * would leave row 3 checked, the expansion would immediately restore row 4,
-   * and the box would look broken.
+   * The exact case this rule exists for: two lots of the same receipt are both
+   * checked, and clicking one of them has to isolate the OTHER — not release
+   * the pair back to nothing, which is what the old whole-receipt expansion did.
    */
-  it("releases the whole receipt when a row that was pulled in is clicked", () => {
-    const checked = toggleOne(rows, new Set(), "3");
-    assert.deepEqual(ids(toggleOne(rows, checked, "4")), []);
+  it("lets a single row be isolated out of a receipt that covers several", () => {
+    const both = toggleOne(toggleOne(new Set(), "3"), "4");
+    assert.deepEqual(ids(toggleOne(both, "3")), ["4"]);
   });
 
   it("leaves everything else where it was", () => {
-    const checked = toggleOne(rows, new Set(["1"]), "3");
-    assert.deepEqual(ids(checked), ["1", "3", "4"]);
-    assert.deepEqual(ids(toggleOne(rows, checked, "3")), ["1"]);
+    const checked = toggleOne(new Set(["1"]), "3");
+    assert.deepEqual(ids(checked), ["1", "3"]);
+    assert.deepEqual(ids(toggleOne(checked, "3")), ["1"]);
   });
 });
 
 describe("paintedByDrag", () => {
-  it("selects the range it is dragged across", () => {
-    assert.deepEqual(ids(paintedByDrag(rows, new Set(), "1", "3", "add")), ["1", "2", "3", "4"]);
+  it("selects exactly the range it is dragged across", () => {
+    assert.deepEqual(ids(paintedByDrag(rows, new Set(), "1", "3", "add")), ["1", "2", "3"]);
   });
 
-  /*
-   * The behaviour that was asked for by name. Dragging down to row 3 and back
-   * up to row 2 must leave rows 1 and 2 — and must also let go of row 4, which
-   * only came along because row 3 was briefly inside the range.
-   */
+  /* A receipt covering several lots is only fully selected once the drag has
+     actually passed over all of them — row 4 is not pulled in just because
+     row 3, its sibling, was crossed. */
+  it("does not pull in a sibling row the drag never reached", () => {
+    assert.deepEqual(ids(paintedByDrag(rows, new Set(), "1", "3", "add")), ["1", "2", "3"]);
+    assert.deepEqual(ids(paintedByDrag(rows, new Set(), "3", "4", "add")), ["3", "4"]);
+  });
+
   it("releases what the range no longer covers when the drag comes back", () => {
     const wide = paintedByDrag(rows, new Set(), "1", "3", "add");
-    assert.deepEqual(ids(wide), ["1", "2", "3", "4"]);
+    assert.deepEqual(ids(wide), ["1", "2", "3"]);
 
     const narrowed = paintedByDrag(rows, new Set(), "1", "2", "add");
     assert.deepEqual(ids(narrowed), ["1", "2"]);
@@ -154,9 +113,9 @@ describe("paintedByDrag", () => {
     assert.deepEqual(ids(paintedByDrag(rows, before, "1", "2", "remove")), ["3", "4"]);
   });
 
-  it("takes whole receipts out when unpainting across one", () => {
+  it("unpaints only the row it crosses, leaving its receipt sibling checked", () => {
     const before = new Set(["1", "2", "3", "4"]);
-    assert.deepEqual(ids(paintedByDrag(rows, before, "3", "3", "remove")), ["1", "2"]);
+    assert.deepEqual(ids(paintedByDrag(rows, before, "3", "3", "remove")), ["1", "2", "4"]);
   });
 });
 

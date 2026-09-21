@@ -32,8 +32,8 @@ function haystack(customer: CustomerRecord): string {
   return [
     customer.fullName,
     customer.identification ?? "",
-    customer.phone,
-    formatPhone(customer.phone),
+    customer.phone ?? "",
+    customer.phone ? formatPhone(customer.phone) : "",
     customer.email ?? "",
     customer.address ?? "",
     customer.notes ?? "",
@@ -151,7 +151,16 @@ export function CustomersPage({
                       </span>
                     </span>
                   </td>
-                  <td className="mono">{formatPhone(customer.phone)}</td>
+                  <td className="mono">
+                    {customer.phone ? (
+                      formatPhone(customer.phone)
+                    ) : (
+                      /* Not blank. An empty cell in a column of numbers reads
+                         as data that failed to load rather than a customer who
+                         never gave one. */
+                      <span className="holder-empty">Sin teléfono</span>
+                    )}
+                  </td>
                   <td className="mono">
                     {hasIdentification(customer.identification) ? (
                       customer.identification

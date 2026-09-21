@@ -288,13 +288,22 @@ export const customers = sqliteTable(
      */
     identification: text("identification"),
     /**
-     * E.164, e.g. "+50499824471" — see src/lib/phone.ts.
+     * E.164, e.g. "+50499824471" — see src/lib/phone.ts. NULL when the customer
+     * has never given one.
      *
-     * Stored with its country code and no punctuation because this is the
-     * address a WhatsApp receipt will be sent to, and WhatsApp cannot dial
-     * "9982-4471". The interface still shows and accepts the local form.
+     * Optional for the same reason `identification` is: a customer who paid a
+     * lot outright in a single visit may simply never have come up in a
+     * conversation that needed a number, and requiring one here would not
+     * produce it — it would produce a made-up placeholder, which is worse than
+     * an honest gap.
+     *
+     * Stored with its country code and no punctuation because, when it IS
+     * given, this is the address a WhatsApp receipt will be sent to, and
+     * WhatsApp cannot dial "9982-4471". The interface still shows and accepts
+     * the local form, and disables — never fakes — the send when there is
+     * nothing to dial.
      */
-    phone: text("phone").notNull(),
+    phone: text("phone"),
     email: text("email"),
     address: text("address"),
     customerSince: integer("customer_since").notNull(),

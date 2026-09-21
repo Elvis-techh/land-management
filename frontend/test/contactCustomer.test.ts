@@ -175,4 +175,16 @@ describe("the link that carries it", () => {
 
     assert.equal(canContact(blank, "email"), false);
   });
+
+  it("reports WhatsApp and SMS unusable for a customer with no phone on file", () => {
+    // The rare case this exists for: a lot paid outright in one visit, with
+    // nobody ever needing to write the number down.
+    const noPhone = buildContract({
+      customer: { id: "cu-4", fullName: "Pagó Todo de Contado", phone: null, email: "x@x.hn" },
+    } as Partial<Contract>);
+
+    assert.equal(canContact(noPhone, "whatsapp"), false);
+    assert.equal(canContact(noPhone, "sms"), false);
+    assert.equal(canContact(noPhone, "email"), true);
+  });
 });

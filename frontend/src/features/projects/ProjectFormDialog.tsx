@@ -26,6 +26,7 @@ export function ProjectFormDialog({ project, onCancel, onSave }: ProjectFormDial
 
   const isEditing = project !== null;
   const unitChanged = isEditing && areaUnit !== project.areaUnit;
+  const isDirty = name !== (project?.name ?? "") || areaUnit !== (project?.areaUnit ?? "m2");
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -48,7 +49,11 @@ export function ProjectFormDialog({ project, onCancel, onSave }: ProjectFormDial
   };
 
   return (
-    <Dialog ariaLabel={isEditing ? `Editar ${project.name}` : "Nuevo proyecto"} onClose={onCancel}>
+    <Dialog
+      ariaLabel={isEditing ? `Editar ${project.name}` : "Nuevo proyecto"}
+      dismissible={!isDirty && !isSaving}
+      onClose={onCancel}
+    >
       <form onSubmit={handleSubmit}>
         <div className="modal-header">
           <div>
