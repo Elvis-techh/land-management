@@ -22,6 +22,9 @@ export const SHARE_PARAM = "compartido";
 /** The worker's own signal that it could not read what was shared. */
 export const SHARE_FAILED = "error";
 
+/** The worker's one-line description of what the browser handed it. */
+export const RECEIVED_PARAM = "recibido";
+
 export interface SharedPayload {
   /** Images or PDFs. Possibly empty — text-only shares are legitimate. */
   files: File[];
@@ -38,19 +41,82 @@ export interface SharedPayload {
 }
 
 /**
+ * A share the URL says is waiting.
+ *
+ * `received` is the worker's own account of what the browser handed it — see
+ * `describeForm` in public/sw.js. It is read from the URL rather than from the
+ * stored record so that it survives the one failure the record cannot report
+ * on: the record itself not being there.
+ */
+export type ShareRequest =
+  | { kind: "payload"; id: string; received: string | null }
+  | { kind: "failed"; received: string | null };
+
+/**
  * What the URL is asking us to do, if anything.
  *
  * Returns `null` for an ordinary page load — which is almost every load, so
  * this stays cheap and never touches IndexedDB to find that out.
  */
-export function readShareRequest(search: string): { id: string } | "failed" | null {
-  const value = new URLSearchParams(search).get(SHARE_PARAM);
+export function readShareRequest(search: string): ShareRequest | null {
+  const params = new URLSearchParams(search);
+  const value = params.get(SHARE_PARAM);
 
   if (!value) {
     return null;
   }
 
-  return value === SHARE_FAILED ? "failed" : { id: value };
+  const received = params.get(RECEIVED_PARAM) || null;
+
+  return value === SHARE_FAILED
+    ? { kind: "failed", received }
+    : { kind: "payload", id: value, received };
+}
+
+/**
+ * How reading the parked share back out went.
+ *
+ * Three outcomes that used to collapse into one `null`, and the collapse is
+ * why a failed share could only ever say "no image": a record that holds no
+ * file (the browser never delivered one), a record that is not there at all,
+ * and a record the browser refused to read are three different faults with
+ * three different fixes.
+ */
+export type TakenShare =
+  | { status: "found"; payload: SharedPayload }
+  | { status: "missing" }
+  | { status: "unreadable"; detail: string };
+
+/**
+ * The notice for a share that opened the form without a comprobante.
+ *
+ * Each case names where the file went missing, and every one ends with what
+ * the worker saw arrive. That last part reads as noise to most people and is
+ * exactly what is needed the one time somebody has to work out why sharing
+ * stopped working on a particular phone.
+ */
+export function describeUndeliveredShare(
+  outcome: TakenShare | { status: "failed" },
+  received: string | null,
+): string {
+  const headline =
+    outcome.status === "failed"
+      ? "No se pudo leer lo que compartiste."
+      : outcome.status === "missing"
+        ? "Lo compartido llegó, pero ya no estaba guardado al abrir Lindero."
+        : outcome.status === "unreadable"
+          ? "Lo compartido llegó, pero este teléfono no dejó leerlo."
+          : "Lo compartido llegó a Lindero sin la imagen.";
+
+  const details = [
+    received ? `recibido: ${received}` : null,
+    outcome.status === "unreadable" ? `error: ${outcome.detail}` : null,
+  ].filter((part): part is string => part !== null);
+
+  return (
+    `${headline} Adjunta el comprobante aquí abajo.` +
+    (details.length > 0 ? ` (Detalle: ${details.join(" — ")})` : "")
+  );
 }
 
 /**
@@ -97,14 +163,15 @@ function openDatabase(): Promise<IDBDatabase> {
  * was already recorded is a genuinely expensive mistake. Read-and-delete
  * together means the payload is handed over exactly once.
  *
- * Returns `null` rather than throwing for every failure — no record, private
- * browsing with IndexedDB disabled, a quota error. The caller's fallback is to
- * open the form empty, which is the app working normally, so none of these are
- * worth interrupting anybody over.
+ * Never throws — no record, private browsing with IndexedDB disabled, a quota
+ * error all come back as an outcome. The caller's fallback is to open the form
+ * empty, which is the app working normally, so none of these are worth
+ * interrupting anybody over; but they are worth telling apart. See
+ * `TakenShare`.
  */
-export async function takeSharedPayload(id: string): Promise<SharedPayload | null> {
+export async function takeSharedPayload(id: string): Promise<TakenShare> {
   if (typeof indexedDB === "undefined") {
-    return null;
+    return { status: "unreadable", detail: "IndexedDB no disponible" };
   }
 
   let database: IDBDatabase | null = null;
@@ -113,7 +180,7 @@ export async function takeSharedPayload(id: string): Promise<SharedPayload | nul
     database = await openDatabase();
     const db = database;
 
-    return await new Promise<SharedPayload | null>((resolve, reject) => {
+    const payload = await new Promise<SharedPayload | null>((resolve, reject) => {
       const transaction = db.transaction(STORE, "readwrite");
       const store = transaction.objectStore(STORE);
       const request = store.get(id);
@@ -129,8 +196,19 @@ export async function takeSharedPayload(id: string): Promise<SharedPayload | nul
         }
 
         found = {
+          /* A Blob is taken too, and given a name. The worker stores Files and
+             IndexedDB is supposed to hand Files back, but a comprobante that
+             came back as a bare Blob is still the comprobante — dropping it on
+             a type check is how a share arrives "without an image" that was
+             sitting right there. */
           files: Array.isArray(record.files)
-            ? record.files.filter((entry): entry is File => entry instanceof File)
+            ? record.files
+                .filter((entry): entry is Blob => entry instanceof Blob && entry.size > 0)
+                .map((entry) =>
+                  entry instanceof File
+                    ? entry
+                    : new File([entry], "comprobante", { type: entry.type }),
+                )
             : [],
           text: typeof record.text === "string" ? record.text : "",
           title: typeof record.title === "string" ? record.title : "",
@@ -145,8 +223,14 @@ export async function takeSharedPayload(id: string): Promise<SharedPayload | nul
       transaction.onerror = () => reject(transaction.error);
       transaction.onabort = () => reject(transaction.error);
     });
-  } catch {
-    return null;
+
+    return payload ? { status: "found", payload } : { status: "missing" };
+  } catch (error) {
+    return {
+      status: "unreadable",
+      // An aborted transaction can reject with `transaction.error` still null.
+      detail: error instanceof Error ? `${error.name}: ${error.message}` : String(error ?? "sin detalle"),
+    };
   } finally {
     database?.close();
   }

@@ -76,7 +76,12 @@ import { ApiError } from "./lib/api";
 import type { Currency, MoneyView } from "./lib/money";
 import type { User } from "./lib/permissions";
 import { useLiveUpdates } from "./lib/liveUpdates";
-import { clearShareFromUrl, readShareRequest, takeSharedPayload } from "./lib/sharedIntake";
+import {
+  clearShareFromUrl,
+  describeUndeliveredShare,
+  readShareRequest,
+  takeSharedPayload,
+} from "./lib/sharedIntake";
 import { useWindowFileDrop } from "./lib/useFileDrop";
 import { windowDropTarget } from "./lib/windowDropTarget";
 import { isMobileViewport } from "./lib/viewport";
@@ -394,31 +399,40 @@ export default function App() {
         "Tu cuenta no puede registrar pagos. Pídele a quien sí pueda que registre el comprobante.",
       );
 
-      if (request !== "failed") {
+      if (request.kind === "payload") {
         void takeSharedPayload(request.id);
       }
 
       return;
     }
 
-    setCreatingReceipt(true);
-
-    if (request === "failed") {
-      setIntakeNotice("No se pudo leer lo que compartiste. Adjunta el comprobante aquí abajo.");
+    if (request.kind === "failed") {
+      setIntakeNotice(describeUndeliveredShare({ status: "failed" }, request.received));
+      setCreatingReceipt(true);
       return;
     }
 
-    void takeSharedPayload(request.id).then((payload) => {
-      if (payload && payload.files.length > 0) {
-        setIntakeFiles(payload.files);
-        return;
+    /*
+     * The form is opened only once the payload is in hand, never before.
+     *
+     * It reads its files and its notice exactly once, when it mounts (see
+     * NewReceiptDialog). Opened first, it could mount in the gap before this
+     * read finishes — whenever contracts and customers had already loaded —
+     * and then sit there empty, with the comprobante arriving a moment later
+     * into a prop nothing reads any more.
+     */
+    void takeSharedPayload(request.id).then((taken) => {
+      if (taken.status === "found" && taken.payload.files.length > 0) {
+        setIntakeFiles(taken.payload.files);
+      } else {
+        /* Text with no attachment is a real share — a forwarded bank
+           notification, say — and so is a payload that expired. Either way the
+           form still opens on the right screen, which is most of the value; it
+           just has nothing to attach, and says where the file went missing. */
+        setIntakeNotice(describeUndeliveredShare(taken, request.received));
       }
 
-      /* Text with no attachment is a real share — a forwarded bank
-         notification, say — and so is a payload that expired. Either way the
-         form is already open on the right screen, which is most of the value;
-         it just has nothing to attach. */
-      setIntakeNotice("Lo compartido no traía una imagen. Adjunta el comprobante aquí abajo.");
+      setCreatingReceipt(true);
     });
   }, [session.status, canRecordPayment]);
 

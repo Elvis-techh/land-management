@@ -74,8 +74,9 @@ self.addEventListener("activate", (event) => {
  * same-origin GET, which carries the session normally.
  *
  * Second, a redirect cannot carry a file. So the file is parked in IndexedDB
- * under a one-time id and the redirect carries only that id. The page picks it
- * up and deletes it — see src/lib/sharedIntake.ts.
+ * under a one-time id and the redirect carries only that id, plus a one-line
+ * description of what arrived (see `describeForm`). The page picks it up and
+ * deletes it — see src/lib/sharedIntake.ts.
  * ========================================================================== */
 
 const SHARE_PATH = "/compartir";
@@ -136,6 +137,35 @@ function storePayload(db, payload) {
   });
 }
 
+/*
+ * What the browser actually handed over, as one line a person can read off a
+ * phone screen: every field, and for each file its type and size.
+ *
+ * "No image arrived" has several causes that look identical from inside the
+ * app — Chrome dropping the file before it ever reaches this worker, Chrome
+ * sending it with zero bytes, the file arriving under a field name nobody
+ * looked at, or the page failing to read back what was stored here. This line
+ * travels with the share (in the redirect as well as in IndexedDB, so it
+ * survives even the last of those) and is what tells them apart without a USB
+ * cable and a remote debugger.
+ *
+ * File names are left out: they can carry a customer's name, and the type and
+ * size are what the diagnosis needs.
+ */
+function describeForm(form) {
+  const parts = [];
+
+  for (const [field, value] of form.entries()) {
+    parts.push(
+      value instanceof File
+        ? `${field}: ${value.type || "sin tipo"}, ${value.size} B`
+        : `${field}: ${String(value).length} caracteres`,
+    );
+  }
+
+  return parts.length > 0 ? parts.join("; ") : "formulario vacío";
+}
+
 async function receiveShare(request) {
   const id =
     self.crypto && typeof self.crypto.randomUUID === "function"
@@ -144,12 +174,19 @@ async function receiveShare(request) {
 
   try {
     const form = await request.formData();
+    const received = describeForm(form);
 
-    /* `getAll`, not `get`: WhatsApp can share several images at once, and the
-     * manifest declares the field so the browser may deliver more than one.
+    /* Every file in the form, not just the "comprobante" field. The manifest
+     * names that field and Chrome is supposed to use it, but a file under any
+     * other name is still the comprobante somebody meant to share — there is
+     * nothing else it could be — and ignoring it would be one more way for a
+     * share to arrive empty.
+     *
      * Empty entries are filtered because some Android builds include a
-     * zero-byte placeholder when the user shares text with no attachment. */
-    const files = form.getAll("comprobante").filter((entry) => entry instanceof File && entry.size > 0);
+     * zero-byte placeholder when the user shares text with no attachment.
+     * They still show up in `received`, which is where a zero-byte IMAGE
+     * would be noticed. */
+    const files = [...form.values()].filter((entry) => entry instanceof File && entry.size > 0);
 
     /* Text matters as much as the files. Plenty of confirmations arrive as a
      * forwarded message rather than a screenshot — the BAC notification, for
@@ -161,18 +198,24 @@ async function receiveShare(request) {
 
     const database = await openDatabase();
 
-    await storePayload(database, { id, files, text, title, receivedAt: Date.now() });
+    await storePayload(database, { id, files, text, title, received, receivedAt: Date.now() });
     database.close();
 
-    return Response.redirect(`/?compartido=${encodeURIComponent(id)}`, 303);
+    return Response.redirect(
+      `/?compartido=${encodeURIComponent(id)}&recibido=${encodeURIComponent(received)}`,
+      303,
+    );
   } catch (error) {
     /* Land in the app regardless, with a flag rather than a payload.
      *
      * The alternative is an error page owned by nobody, reached from inside
      * WhatsApp, on a phone. Better to open Lindero and say the share did not
      * arrive — from there the file is still in the chat, and the dropzone is
-     * two taps away. */
-    return Response.redirect("/?compartido=error", 303);
+     * two taps away. The error rides along so the app can say which step
+     * failed instead of only that one did. */
+    const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+
+    return Response.redirect(`/?compartido=error&recibido=${encodeURIComponent(detail)}`, 303);
   }
 }
 
