@@ -7,10 +7,10 @@ import { IconClose } from "../../components/Icons";
 import { MoneyInput } from "../../components/MoneyInput";
 import { ApiError } from "../../lib/api";
 import { businessToday } from "../../lib/businessTime";
-import { hasIdentification } from "../../lib/identification";
 import type { MoneyView } from "../../lib/money";
 import { cents, formatMoney, parseMoneyInput, toMoneyInput } from "../../lib/money";
 import type { Contract, CustomerRecord, Receipt } from "../../types";
+import { CustomerPicker } from "../contracts/ContractPartyPickers";
 import type { PaymentType } from "./paymentType";
 import {
   PAYMENT_TYPE_OPTIONS,
@@ -23,7 +23,7 @@ import { MAX_PROOFS, ProofDropzone, acceptProofFiles } from "./ProofDropzone";
 import type { ReceiptDraft, ReceiptDraftLine } from "./api";
 import { createReceipt, fetchCustomerSplit, fetchDuplicates, uploadAttachment } from "./api";
 import type { DuplicateMatch } from "./api";
-import { AMOUNT_FIELD, receiptBlocker } from "./receiptBlocker";
+import { AMOUNT_FIELD, CUSTOMER_FIELD, receiptBlocker } from "./receiptBlocker";
 
 interface NewReceiptDialogProps {
   customers: CustomerRecord[];
@@ -122,6 +122,10 @@ export function NewReceiptDialog({
   initialNotice,
 }: NewReceiptDialogProps) {
   const [customerId, setCustomerId] = useState("");
+  /* The customer the amounts on screen were typed for. "Cambiar" clears the
+     choice without clearing them, so re-picking the same person after a
+     mis-tap keeps what was typed; picking somebody else does not. */
+  const amountsCustomerRef = useRef("");
   const [paidOn, setPaidOn] = useState(businessToday);
   const [method, setMethod] = useState<Method>("cash");
   const [reference, setReference] = useState("");
@@ -674,6 +678,29 @@ export function NewReceiptDialog({
 
   const invalidField = attempted && blocker ? blocker.focus : null;
 
+  const chooseCustomer = (customer: CustomerRecord | null) => {
+    const nextId = customer?.id ?? "";
+    setCustomerId(nextId);
+
+    if (nextId === "" || nextId === amountsCustomerRef.current) {
+      return;
+    }
+
+    if (amountsCustomerRef.current !== "") {
+      // Amounts belong to the previous person's lots; keeping them would file
+      // one customer's money against another's contract.
+      setAmountByContract({});
+      // Same for a type chosen by hand: "Prima" was decided about the lot that
+      // is no longer on screen.
+      setTypeByContract({});
+      setAmountText("");
+      setSplitNote(null);
+      setOverpaymentPrompt(null);
+    }
+
+    amountsCustomerRef.current = nextId;
+  };
+
   return (
     /*
      * Wider once the receipt is about more than one lot.
@@ -739,8 +766,10 @@ export function NewReceiptDialog({
 
               // Only if they are still somebody this form can write a receipt
               // for. Everything else is plain text and comes back as typed.
-              if (customers.some((row) => row.id === saved.customerId)) {
-                setCustomerId(saved.customerId);
+              const savedCustomer = customers.find((row) => row.id === saved.customerId);
+
+              if (savedCustomer) {
+                chooseCustomer(savedCustomer);
               }
 
               setPaidOn(saved.paidOn);
@@ -756,37 +785,21 @@ export function NewReceiptDialog({
           />
         )}
 
+        {/* The same picker as "Nuevo contrato": searchable by name, identity and
+            phone — the phone matters here, because a comprobante usually arrives
+            from a WhatsApp number — and collapsed to one row once chosen, so a
+            half-typed search can never sit over the customer being paid for. */}
         <div className="form-field full-width">
-          <label htmlFor="receipt-customer">
+          <p className="picker-label">
             Cliente <span className="required-mark">*</span>
-          </label>
-          <select
-            id="receipt-customer"
-            aria-invalid={invalidField === "receipt-customer"}
-            value={customerId}
-            onChange={(event) => {
-              setCustomerId(event.target.value);
-              // Amounts belong to the previous person's lots; keeping them
-              // would file one customer's money against another's contract.
-              setAmountByContract({});
-              // Same for a type chosen by hand: "Prima" was decided about the
-              // lot that is no longer on screen.
-              setTypeByContract({});
-              setAmountText("");
-              setSplitNote(null);
-              setOverpaymentPrompt(null);
-            }}
-          >
-            <option value="">Selecciona un cliente…</option>
-            {customers.map((customer) => (
-              <option key={customer.id} value={customer.id}>
-                {customer.fullName}
-                {hasIdentification(customer.identification)
-                  ? ` · ${customer.identification}`
-                  : ""}
-              </option>
-            ))}
-          </select>
+          </p>
+          <CustomerPicker
+            customers={customers}
+            selected={customers.find((row) => row.id === customerId) ?? null}
+            onSelect={chooseCustomer}
+            inputId={CUSTOMER_FIELD}
+            invalid={invalidField === CUSTOMER_FIELD}
+          />
         </div>
 
         {/*

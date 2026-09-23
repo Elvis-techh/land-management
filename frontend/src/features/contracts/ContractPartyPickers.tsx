@@ -42,9 +42,23 @@ interface CustomerPickerProps {
   selected: CustomerRecord | null;
   /** `null` clears the choice and puts the list back. */
   onSelect: (customer: CustomerRecord | null) => void;
+  /**
+   * An id for whichever control is on screen — the search box, or "Cambiar"
+   * once someone is chosen — so a form that validates by focusing a field by
+   * id can bring the user straight back here. See receiptBlocker.ts.
+   */
+  inputId?: string;
+  /** Marks the search box invalid, for a form that refused to save without it. */
+  invalid?: boolean;
 }
 
-export function CustomerPicker({ customers, selected, onSelect }: CustomerPickerProps) {
+export function CustomerPicker({
+  customers,
+  selected,
+  onSelect,
+  inputId,
+  invalid,
+}: CustomerPickerProps) {
   // Kept when a choice is made rather than cleared, so pressing "Cambiar"
   // returns you to the list you were looking at instead of to the top of nine
   // hundred names.
@@ -76,7 +90,7 @@ export function CustomerPicker({ customers, selected, onSelect }: CustomerPicker
           <span className="holder-name">{selected.fullName}</span>
           <span className="holder-contract">{customerLine(selected)}</span>
         </span>
-        <button type="button" className="link-btn" onClick={() => onSelect(null)}>
+        <button id={inputId} type="button" className="link-btn" onClick={() => onSelect(null)}>
           Cambiar
         </button>
       </div>
@@ -97,7 +111,9 @@ export function CustomerPicker({ customers, selected, onSelect }: CustomerPicker
       <div className="picker-search">
         <IconSearch />
         <input
+          id={inputId}
           type="search"
+          aria-invalid={invalid}
           value={search}
           placeholder="Buscar por nombre, identidad o teléfono…"
           aria-label="Buscar cliente"
