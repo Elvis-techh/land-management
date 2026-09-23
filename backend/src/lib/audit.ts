@@ -29,6 +29,8 @@ export interface AuditEntry {
     | "restore"
     | "delete"
     | "cancel"
+    /** A contract's lot was corrected — a data-entry mistake, not a new sale. */
+    | "reassign_lot"
     /** A contract the owner declared uncollectable — the customer defaulted. */
     | "default"
     /** A contract whose balance reached zero: it settled on its own. */

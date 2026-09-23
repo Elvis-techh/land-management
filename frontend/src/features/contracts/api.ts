@@ -128,6 +128,23 @@ export function updateContract(contractId: string, draft: ContractTermsDraft) {
   );
 }
 
+/**
+ * Correct the lot on a signed contract — a data-entry mistake, not a new sale.
+ *
+ * Its own endpoint, separate from `updateContract`: everywhere else in this
+ * app a different lot means a different sale, and that stays true here too —
+ * this is a distinct, audited correction, not a field on the regular edit.
+ * What it spares the office is undoing every payment already recorded against
+ * the wrong lot; the balance and every past receipt follow the contract to
+ * its corrected lot automatically.
+ */
+export function reassignContractLot(contractId: string, lotId: string, reason: string) {
+  return api.post<{ contract: { id: string; code: string } }>(
+    `/api/contracts/${contractId}/reassign-lot`,
+    { lotId, reason },
+  );
+}
+
 /** What happens to money the customer already paid — see ContractCancelDialog. */
 export type CancelSettlement = "none" | "held" | "refunded";
 

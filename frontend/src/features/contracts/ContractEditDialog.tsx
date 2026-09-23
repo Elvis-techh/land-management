@@ -45,8 +45,13 @@ interface ContractEditDialogProps {
  * signed, so "who moved the plazo from 24 months to 30, and why?" is a question
  * that gets asked months later, long after whoever typed it has forgotten.
  *
- * What cannot be changed here is the lot and the customer. A different lot is a
- * different sale, so it is a new contract and a cancellation, not an edit.
+ * What cannot be changed here is the customer, and the lot cannot be changed
+ * through this form either. A different lot bought by the same customer is a
+ * different sale — a new contract and a cancellation, not an edit. But a lot
+ * mistyped at signing is a correction, and that one has its own dialog,
+ * `ContractReassignLotDialog`, with its own capability and its own audit
+ * action, precisely because "wrong lot" and "different lot" need to stay two
+ * different questions rather than one unlocked field.
  */
 export function ContractEditDialog({
   contract,
@@ -289,8 +294,9 @@ export function ContractEditDialog({
               fix the wrong lot should find that out now rather than after
               filling in nine fields. */}
           <p className="form-blocked full-width">
-            El lote y el cliente no se cambian aquí: un lote distinto es otra venta, no una
-            corrección. Todo lo demás queda registrado en el Historial con tu nombre, la fecha y
+            El cliente no se cambia aquí: un cliente distinto es otra venta, no una corrección. El
+            lote tampoco se cambia en este formulario — si se capturó mal, usa «Corregir lote» en
+            el contrato. Todo lo demás queda registrado en el Historial con tu nombre, la fecha y
             el motivo que escribas abajo.
           </p>
 

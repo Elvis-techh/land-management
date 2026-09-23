@@ -9,6 +9,7 @@ export type AuditAction =
   | "restore"
   | "delete"
   | "cancel"
+  | "reassign_lot"
   | "reverse"
   | "login"
   | "logout";

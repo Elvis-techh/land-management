@@ -29,6 +29,7 @@ export type Capability =
   | "contract:create"
   | "contract:edit"
   | "contract:reprice"
+  | "contract:reassign_lot"
   | "contract:cancel"
   | "contract:default"
   | "payment:record"
@@ -66,6 +67,7 @@ const DEFAULT_CAPABILITIES_BY_ROLE: Record<Role, ReadonlySet<Capability>> = {
     "contract:create",
     "contract:edit",
     "contract:reprice",
+    "contract:reassign_lot",
     "contract:cancel",
     "contract:default",
     "payment:record",
@@ -144,6 +146,7 @@ export const REQUIRES_REASON: ReadonlySet<Capability> = new Set<Capability>([
   "customer:delete",
   "contract:edit",
   "contract:reprice",
+  "contract:reassign_lot",
   "contract:cancel",
   "contract:default",
   "payment:reverse",

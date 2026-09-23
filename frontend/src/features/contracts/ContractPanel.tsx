@@ -28,6 +28,7 @@ interface ContractPanelProps {
   user: User;
   onClose: () => void;
   onEditContract: (contract: Contract) => void;
+  onReassignLot: (contract: Contract) => void;
   onCancelContract: (contract: Contract) => void;
   onDefaultContract: (contract: Contract) => void;
   /**
@@ -52,6 +53,7 @@ export function ContractPanel({
   user,
   onClose,
   onEditContract,
+  onReassignLot,
   onCancelContract,
   onDefaultContract,
   onDocumentsChanged,
@@ -67,6 +69,7 @@ export function ContractPanel({
   // spoken for either way.
   const isOpen = contract.status === "active" || contract.status === "paid_off";
   const canEdit = can(user, "contract:edit");
+  const canReassignLot = can(user, "contract:reassign_lot");
   const canCancel = can(user, "contract:cancel");
   const canDefault = can(user, "contract:default");
 
@@ -329,6 +332,16 @@ export function ContractPanel({
             onClick={() => onEditContract(contract)}
           >
             <span>Editar términos</span>
+          </button>
+        )}
+        {isOpen && canReassignLot && (
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => onReassignLot(contract)}
+            title="Solo para un lote mal capturado por error, no para vender otro lote."
+          >
+            <span>Corregir lote</span>
           </button>
         )}
         {isOpen && canDefault && (

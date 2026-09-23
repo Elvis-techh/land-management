@@ -17,6 +17,7 @@ const actionPresentation: Record<AuditAction, { label: string; stampClass: strin
   restore: { label: "Restaurado", stampClass: "stamp success" },
   delete: { label: "Eliminado", stampClass: "stamp danger" },
   cancel: { label: "Cancelado", stampClass: "stamp danger" },
+  reassign_lot: { label: "Lote corregido", stampClass: "stamp clay" },
   reverse: { label: "Reversado", stampClass: "stamp danger" },
   login: { label: "Inicio de sesión", stampClass: "stamp neutral" },
   logout: { label: "Cierre de sesión", stampClass: "stamp neutral" },
@@ -25,6 +26,9 @@ const actionPresentation: Record<AuditAction, { label: string; stampClass: strin
 /** Field names as staff would say them, rather than as the database spells them. */
 const fieldLabels: Record<string, string> = {
   code: "Lote",
+  // A contract's lot, corrected — see POST /contracts/:id/reassign-lot.
+  lotCode: "Lote",
+  lotId: "Id del lote",
   fullName: "Cliente",
   identification: "Identidad",
   phone: "Teléfono",

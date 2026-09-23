@@ -66,6 +66,14 @@ const GROUPS: Array<{
           "esto: mover un día de cobro y mover un saldo no son la misma confianza.",
       },
       {
+        capability: "contract:reassign_lot",
+        label: "Corregir el lote de un contrato",
+        hint:
+          "Solo para un lote mal capturado por error: el contrato pasa a otro lote y conserva " +
+          "sus pagos. No es para vender otro lote — eso es un contrato nuevo. Exige escribir " +
+          "un motivo.",
+      },
+      {
         capability: "contract:cancel",
         label: "Cancelar contratos",
         hint: "Libera el lote y deja el contrato en el historial.",

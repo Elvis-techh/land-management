@@ -18,6 +18,7 @@ import { useCustomers } from "./features/customers/useCustomers";
 import { ContractCancelDialog } from "./features/contracts/ContractCancelDialog";
 import { ContractCreateDialog } from "./features/contracts/ContractCreateDialog";
 import { ContractEditDialog } from "./features/contracts/ContractEditDialog";
+import { ContractReassignLotDialog } from "./features/contracts/ContractReassignLotDialog";
 import { ContractPanel } from "./features/contracts/ContractPanel";
 import { ContractsPage } from "./features/contracts/ContractsPage";
 import { SplitPreviewDialog } from "./features/contracts/SplitPreviewDialog";
@@ -26,6 +27,7 @@ import {
   cancelContract,
   createContract,
   defaultContract,
+  reassignContractLot,
   updateContract,
 } from "./features/contracts/api";
 import type {
@@ -199,6 +201,9 @@ export default function App() {
   const [transactionBeingEdited, setTransactionBeingEdited] = useState<Transaction | null>(null);
   const [contractBeingViewed, setContractBeingViewed] = useState<Contract | null>(null);
   const [contractBeingEdited, setContractBeingEdited] = useState<Contract | null>(null);
+  const [contractLotBeingReassigned, setContractLotBeingReassigned] = useState<Contract | null>(
+    null,
+  );
   const [contractBeingCancelled, setContractBeingCancelled] = useState<Contract | null>(null);
   const [contractBeingDefaulted, setContractBeingDefaulted] = useState<Contract | null>(null);
   // The lots of ONE purchase, while their split is being previewed.
@@ -729,6 +734,26 @@ export default function App() {
     setContractBeingEdited(null);
     // The panel underneath is now showing the terms as they were before the
     // save. Close it rather than leave a stale copy on screen.
+    setContractBeingViewed(null);
+  };
+
+  const handleReassignLot = async (lotId: string, reason: string) => {
+    if (!contractLotBeingReassigned) {
+      return;
+    }
+
+    await reassignContractLot(contractLotBeingReassigned.id, lotId, reason).catch(handleApiError);
+
+    // The old lot is free and the new one is taken the instant this commits —
+    // both tables derive that from `contracts.lotId` on read. So does every
+    // lot code shown beside a customer's holdings and beside each payment, so
+    // those two lists are re-read as well; this tab skips its own live-update
+    // event, and would otherwise keep showing the mistyped lot.
+    await reloadContracts();
+    await reloadLots();
+    await reloadCustomers();
+    await reloadTransactions();
+    setContractLotBeingReassigned(null);
     setContractBeingViewed(null);
   };
 
@@ -1442,6 +1467,7 @@ export default function App() {
           user={user}
           onClose={() => setContractBeingViewed(null)}
           onEditContract={setContractBeingEdited}
+          onReassignLot={setContractLotBeingReassigned}
           onCancelContract={setContractBeingCancelled}
           onDefaultContract={setContractBeingDefaulted}
           // The list marks which contracts have their signed copy on file, so
@@ -1457,6 +1483,17 @@ export default function App() {
           canReprice={can(user, "contract:reprice")}
           onCancel={() => setContractBeingEdited(null)}
           onSave={handleSaveContract}
+        />
+      )}
+
+      {contractLotBeingReassigned && lotsState.status === "ready" && (
+        <ContractReassignLotDialog
+          contract={contractLotBeingReassigned}
+          lots={lotsState.data.lots}
+          unitByProject={lotsState.data.unitByProject}
+          money={money}
+          onCancel={() => setContractLotBeingReassigned(null)}
+          onConfirm={handleReassignLot}
         />
       )}
 

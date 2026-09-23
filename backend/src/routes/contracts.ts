@@ -354,6 +354,11 @@ const updateBody = contractBody
     reason: z.string().trim().min(10).max(500).optional(),
   });
 
+const reassignLotBody = z.object({
+  lotId: z.string().uuid(),
+  reason: z.string().trim().min(10).max(500),
+});
+
 const cancelBody = z.object({
   reason: z.string().trim().min(10).max(500),
   /**
@@ -902,6 +907,119 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
         // A new price can push the balance to zero (settling the contract) or,
         // on a paid-off contract repriced upward, reopen it.
         syncContractLifecycle(tx, existing.id, actor.id);
+
+        return next;
+      });
+
+      return reply.send({ contract: { id: updated.id, code: updated.code } });
+    },
+  );
+
+  /**
+   * Correct the lot on a signed contract — a data-entry mistake, not a new sale.
+   *
+   * Deliberately its own route rather than a field on `updateBody`: everywhere
+   * else in this app "a different lot is a different sale" (see the JSDoc above
+   * `updateBody`), and that stays true for an honest mistake too — a lot swap is
+   * still a distinct, heavily-audited act, not a quiet field edit. What it
+   * spares the office is undoing every payment already recorded against the
+   * wrong lot: `payments.contractId` never carried a lot id (see schema.ts), so
+   * moving `contracts.lotId` here is enough — every balance, receipt and lot
+   * status is derived from that column on read and simply follows the contract
+   * to its new lot.
+   */
+  app.post<{ Params: { id: string } }>(
+    "/contracts/:id/reassign-lot",
+    { onRequest: app.requireCapability("contract:reassign_lot") },
+    async (request, reply) => {
+      const parsed = reassignLotBody.safeParse(request.body);
+
+      if (!parsed.success) {
+        return reply.code(400).send({
+          error: "invalid_body",
+          message: "Elige el lote correcto y explica el motivo (mínimo 10 caracteres).",
+        });
+      }
+
+      const actor = request.user!;
+      const existing = app.db
+        .select()
+        .from(contracts)
+        .where(eq(contracts.id, request.params.id))
+        .get();
+
+      if (!existing) {
+        return reply.code(404).send({ error: "not_found", message: "Contrato no encontrado." });
+      }
+
+      if (existing.status !== "active" && existing.status !== "paid_off") {
+        // A closed contract is history, same rule as the terms edit above.
+        return reply.code(409).send({
+          error: "not_active",
+          message: "Este contrato está cerrado y ya no admite cambios.",
+        });
+      }
+
+      if (parsed.data.lotId === existing.lotId) {
+        return reply.code(400).send({
+          error: "same_lot",
+          message: "Ese ya es el lote de este contrato.",
+        });
+      }
+
+      const lot = app.db.select().from(lots).where(eq(lots.id, parsed.data.lotId)).get();
+
+      if (!lot || lot.archivedAt !== null) {
+        return reply.code(400).send({
+          error: "unknown_lot",
+          message: "Ese lote no existe o está archivado.",
+        });
+      }
+
+      // The same uniqueness rule a new contract obeys: a lot can only be held
+      // once. Without re-checking it here, correcting one contract's mistake
+      // could silently create a second one — two contracts pointing at the lot
+      // this one is moving to.
+      const holder = app.db
+        .select({ code: contracts.code })
+        .from(contracts)
+        .where(and(eq(contracts.lotId, lot.id), holdsLot(today())))
+        .get();
+
+      if (holder) {
+        return reply.code(409).send({
+          error: "lot_taken",
+          message: `El lote ${lot.code} ya tiene el contrato ${holder.code} vigente.`,
+        });
+      }
+
+      const previousLot = app.db
+        .select({ code: lots.code })
+        .from(lots)
+        .where(eq(lots.id, existing.lotId))
+        .get();
+      const now = new Date().toISOString();
+
+      const updated = app.db.transaction((tx) => {
+        const next = tx
+          .update(contracts)
+          .set({ lotId: lot.id, updatedAt: now })
+          .where(eq(contracts.id, existing.id))
+          .returning()
+          .get();
+
+        recordAudit(tx, {
+          actorId: actor.id,
+          entityType: "contract",
+          entityId: existing.id,
+          action: "reassign_lot",
+          reason: parsed.data.reason,
+          // The codes ride along with the ids because the Historial shows
+          // whatever changed as-is, and "B-12 → B-21" is the line somebody
+          // will be looking for months from now, not two UUIDs.
+          before: { lotId: existing.lotId, lotCode: previousLot?.code ?? null },
+          after: { lotId: next.lotId, lotCode: lot.code },
+        });
 
         return next;
       });

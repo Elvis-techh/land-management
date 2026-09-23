@@ -735,3 +735,146 @@ describe("cancelling with a refund", async () => {
     assert.equal(ok.statusCode, 200);
   });
 });
+
+describe("correcting the lot on a contract", async () => {
+  const { app, db, sqlite, ids } = await buildTestApp();
+  after(async () => {
+    await app.close();
+    sqlite.close();
+  });
+
+  const ownerCookie = await login(app, "owner@test.hn", OWNER_PASSWORD);
+  const staffCookie = await login(app, "staff@test.hn", STAFF_PASSWORD);
+
+  const list = async (cookie: string) =>
+    app.inject({ method: "GET", url: "/api/contracts", headers: { cookie } });
+
+  const create = async (cookie: string, payload: Record<string, unknown>) =>
+    app.inject({ method: "POST", url: "/api/contracts", headers: { cookie }, payload });
+
+  /** A free lot to sell, made directly so a test never runs out of inventory. */
+  const freshLot = (code: string) => {
+    const id = randomUUID();
+    db.insert(lots)
+      .values({ id, projectId: ids.projectId, code, areaM2: 300, basePriceCents: lempiras(100_000) })
+      .run();
+    return id;
+  };
+
+  /** L 185,000, L 25,000 down, 24 months at L 6,700, due the 5th. */
+  const financedSale = (lotId: string) => ({
+    customerId: ids.customerId,
+    lotId,
+    kind: "contract" as const,
+    saleType: "financed" as const,
+    salePriceCents: lempiras(185_000),
+    downPaymentCents: lempiras(25_000),
+    termMonths: 24,
+    monthlyPaymentCents: lempiras(6_700),
+    dueDay: 5,
+    signedOn: "2026-03-10",
+  });
+
+  const reassign = async (cookie: string, id: string, payload: Record<string, unknown>) =>
+    app.inject({
+      method: "POST",
+      url: `/api/contracts/${id}/reassign-lot`,
+      headers: { cookie },
+      payload,
+    });
+
+  it("does not let an associate reassign a lot by default", async () => {
+    const response = await reassign(staffCookie, ids.contractId, {
+      lotId: ids.freeLotId,
+      reason: "Se capturó el lote equivocado al firmar.",
+    });
+    assert.equal(response.statusCode, 403);
+  });
+
+  it("refuses without a written motive", async () => {
+    const response = await reassign(ownerCookie, ids.contractId, { lotId: ids.freeLotId });
+    assert.equal(response.statusCode, 400);
+
+    const row = db.select().from(contracts).where(eq(contracts.id, ids.contractId)).get();
+    assert.equal(row?.lotId, ids.heldLotId, "the refused reassignment must not have landed");
+  });
+
+  it("moves the contract to the corrected lot, keeping its payments", async () => {
+    const response = await reassign(ownerCookie, ids.contractId, {
+      lotId: ids.freeLotId,
+      reason: "Se capturó el lote A-01 por error; el cliente compró el A-02.",
+    });
+    assert.equal(response.statusCode, 200);
+
+    const row = db.select().from(contracts).where(eq(contracts.id, ids.contractId)).get();
+    assert.equal(row?.lotId, ids.freeLotId);
+
+    // The balance follows the contract, unaffected by which lot it now points
+    // to — nothing about the payments themselves moved.
+    const [reread] = (await list(ownerCookie)).json().contracts;
+    assert.equal(reread.lot.code, "A-02");
+    assert.equal(reread.paidToDate, lempiras(15_000));
+
+    // The old lot reads as free again, and the new one as held — both derived
+    // live from `contracts.lotId`, nothing to reconcile by hand.
+    const lotsResponse = (
+      await app.inject({ method: "GET", url: "/api/lots", headers: { cookie: ownerCookie } })
+    ).json().lots;
+    const oldLot = lotsResponse.find((lot: { id: string }) => lot.id === ids.heldLotId);
+    const newLot = lotsResponse.find((lot: { id: string }) => lot.id === ids.freeLotId);
+    assert.equal(oldLot.holding, null);
+    assert.ok(newLot.holding, "the corrected lot must now read as held");
+
+    // Filed under its own audit action, distinct from a plain terms edit.
+    const audit = db
+      .select()
+      .from(auditEvents)
+      .where(eq(auditEvents.entityId, ids.contractId))
+      .all()
+      .find((entry) => entry.action === "reassign_lot");
+    assert.ok(audit, "the reassignment must be audited");
+    assert.match(audit!.reason ?? "", /A-01/);
+    // The Historial shows the changed fields as-is, so the codes have to be
+    // there — two lot ids tell a reader nothing.
+    assert.deepEqual(JSON.parse(audit!.beforeJson ?? "{}"), {
+      lotId: ids.heldLotId,
+      lotCode: "A-01",
+    });
+    assert.deepEqual(JSON.parse(audit!.afterJson ?? "{}"), {
+      lotId: ids.freeLotId,
+      lotCode: "A-02",
+    });
+  });
+
+  it("refuses to reassign onto a lot another contract already holds", async () => {
+    const takenLot = freshLot("A-03");
+    await create(ownerCookie, financedSale(takenLot));
+
+    const response = await reassign(ownerCookie, ids.contractId, {
+      lotId: takenLot,
+      reason: "Intento de mover el contrato a un lote que ya tiene dueño.",
+    });
+    assert.equal(response.statusCode, 409);
+    assert.equal(response.json().error, "lot_taken");
+  });
+
+  it("refuses to reassign a closed contract", async () => {
+    const freeLot = freshLot("A-04");
+    const created = await create(ownerCookie, financedSale(freeLot));
+    const contractId = created.json().contract.id;
+
+    await app.inject({
+      method: "POST",
+      url: `/api/contracts/${contractId}/cancel`,
+      headers: { cookie: ownerCookie },
+      payload: { reason: "El cliente desistió antes de pagar nada." },
+    });
+
+    const response = await reassign(ownerCookie, contractId, {
+      lotId: ids.freeLotId,
+      reason: "Intento de reasignar un contrato ya cerrado.",
+    });
+    assert.equal(response.statusCode, 409);
+    assert.equal(response.json().error, "not_active");
+  });
+});
