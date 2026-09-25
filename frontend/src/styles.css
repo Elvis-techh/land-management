@@ -2207,6 +2207,7 @@ body.is-dragging-file .proof-dropzone:not(.is-disabled) {
 /* The filename is a second target for the same act, for anyone who reads the
    name before the picture. Styled as text, not as a link-shaped button. */
 .proof-name.link-btn {
+  max-width: 100%;
   padding: 0;
   text-align: left;
   color: inherit;
@@ -3495,6 +3496,10 @@ body.modal-open {
   display: flex;
   flex-direction: column;
   gap: 7px;
+  /* A grid item's default minimum is its content's width, so one long
+     unbreakable value inside (a filename, a pasted reference) could widen the
+     whole form. Zero lets the field shrink and the content truncate instead. */
+  min-width: 0;
 }
 
 /* Any direct child of the grid, not only a .form-field: the archive and cancel
@@ -5026,12 +5031,46 @@ body.modal-open {
     padding-right: 18px;
   }
 
+  /*
+   * `minmax(0, 1fr)`, never a bare `1fr`.
+   *
+   * A bare `1fr` is `minmax(auto, 1fr)`: the column may not be narrower than
+   * its widest unbreakable content. An attached comprobante's filename is
+   * exactly that — `white-space: nowrap`, and straight off WhatsApp it reads
+   * "WhatsApp Image 2026-09-25 at 14.13.22_8f3a2c1d.jpeg". On a phone that name
+   * pushed the whole column to ~500px inside a ~360px sheet, so the dialog
+   * scrolled sideways and every field sat off-centre. A short filename never
+   * did it, which is why the same customer looked fine one time and broken the
+   * next. The desktop rule above already uses `minmax(0, …)`; this matches it,
+   * and the filename's own ellipsis takes over.
+   */
   .modal-form-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .modal-form-grid > .full-width {
     grid-column: auto;
+  }
+
+  /* The comprobante zone is most of a phone screen at desktop spacing. The
+     same content, tighter, so the note and the submit button stay in reach. */
+  .proof-dropzone {
+    gap: 6px;
+    padding: 12px;
+  }
+
+  .proof-dropzone-hint {
+    font-size: 0.6875rem;
+  }
+
+  .proof-item {
+    gap: 8px;
+    padding: 6px 8px;
+  }
+
+  .proof-item .doc-thumb {
+    width: 34px;
+    height: 34px;
   }
 
   .modal-actions {
