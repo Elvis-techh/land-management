@@ -15,7 +15,17 @@ import { defineConfig } from "vite";
  * hostname on port 5173, which nothing is listening on — so the page loads and
  * then silently stops updating.
  */
-const publicHost = process.env.VITE_PUBLIC_HOST;
+/*
+ * In a GitHub Codespace the address is known ahead of time — the codespace's
+ * name, the port, and GitHub's forwarding domain — so it is worked out here
+ * instead of having to be typed on a phone keyboard. See .devcontainer/.
+ */
+const codespaceHost =
+  process.env.CODESPACE_NAME && process.env.GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN
+    ? `${process.env.CODESPACE_NAME}-5173.${process.env.GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN}`
+    : undefined;
+
+const publicHost = process.env.VITE_PUBLIC_HOST ?? codespaceHost;
 
 export default defineConfig({
   plugins: [react()],
@@ -46,6 +56,9 @@ export default defineConfig({
       ".trycloudflare.com",
       ".ngrok-free.app",
       ".ngrok.io",
+      // GitHub Codespaces' forwarded ports, e.g. name-5173.app.github.dev —
+      // how the branch gets tested from a phone with no computer at hand.
+      ".app.github.dev",
       // Tailscale's full MagicDNS name, e.g. laptop.tailXXXX.ts.net
       ".ts.net",
       // Bonjour/mDNS, e.g. http://elvis-msi.local:5173

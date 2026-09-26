@@ -1,0 +1,19 @@
+// GitHub Codespaces: run Lindero on GitHub's machines and open it from any
+// browser, including a phone's, with no computer of your own switched on.
+//
+// Creating a codespace installs everything, builds the SQLite database with the
+// demo data (gerencia@lindero.hn / lindero123) and starts `npm run dev`. Open
+// the "Ports" tab and the globe icon on 5173 — that address is the app.
+//
+// It uses the demo database in the codespace itself, never production data.
+{
+  "name": "Lindero",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:22",
+  "forwardPorts": [5173],
+  "portsAttributes": {
+    "5173": { "label": "Lindero (app)", "onAutoForward": "openBrowser" },
+    "3000": { "label": "API (reached through 5173)", "onAutoForward": "silent" }
+  },
+  "postCreateCommand": "bash .devcontainer/setup.sh",
+  "postAttachCommand": "npm run dev"
+}
