@@ -221,6 +221,39 @@ export function createContract(draft: ContractCreateDraft) {
   );
 }
 
+/**
+ * An adenda, as the "Adenda" dialog sends it — see POST /api/contracts/amendments.
+ *
+ * The schedule (forma de pago, plazo, día, primera cuota) is one for the whole
+ * agreement; only the money is per lot, because the new total is divided
+ * between lots that need not be the same size. Whole centavos throughout.
+ */
+export interface AmendmentDraft {
+  /** YYYY-MM-DD: the day the new terms were agreed. The new contracts are signed on it. */
+  effectiveOn: string;
+  saleType: "financed" | "cash";
+  termMonths: number | null;
+  dueDay: number | null;
+  /** Only when it was negotiated. `null` lets it follow from `effectiveOn`. */
+  firstDueOn: string | null;
+  lines: Array<{
+    /** The running contract this line replaces. */
+    contractId: string;
+    salePriceCents: number;
+    downPaymentCents: number;
+    monthlyPaymentCents: number | null;
+  }>;
+  authorizedBy: string | null;
+  reason: string;
+}
+
+export function amendContracts(draft: AmendmentDraft) {
+  return api.post<{
+    amendment: { id: string };
+    contracts: Array<{ id: string; code: string; replacesContractId: string }>;
+  }>("/api/contracts/amendments", draft);
+}
+
 /* -------------------------------------------------------------------------- */
 /* The signed paperwork                                                        */
 /* -------------------------------------------------------------------------- */

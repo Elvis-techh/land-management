@@ -2,13 +2,15 @@ import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/sqlite-core";
 import multipart from "@fastify/multipart";
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 
 import type { Db } from "../db/client.js";
 import {
+  contractAmendments,
   contractDocuments,
   contracts,
   customers,
@@ -172,6 +174,89 @@ function presentDocument(row: {
   };
 }
 
+/** One side of an adenda, as the contract on the OTHER side reports it. */
+interface AmendmentLink {
+  /** The contract across the adenda: the successor, or the one it replaced. */
+  contractId: string;
+  code: string;
+  amendment: {
+    id: string;
+    /** YYYY-MM-DD, the day the new terms were agreed. */
+    effectiveOn: string;
+    reason: string;
+    authorizedBy: string | null;
+    /** The name of whoever typed it in. */
+    recordedBy: string;
+    recordedAt: string;
+  };
+}
+
+interface AmendmentLinks {
+  /** Keyed by the NEW contract: what it replaced. */
+  bySuccessor: Map<string, AmendmentLink>;
+  /** Keyed by the OLD contract: what replaced it. */
+  byPredecessor: Map<string, AmendmentLink>;
+}
+
+const NO_LINKS: AmendmentLinks = { bySuccessor: new Map(), byPredecessor: new Map() };
+
+/**
+ * Every adenda link in the business, both ways round, in one query.
+ *
+ * The panel of either contract has to be able to say what is on the other
+ * side — "reemplaza a CT-2026-011", "reemplazado por CT-2026-011-A1" — and the
+ * list is the only thing the screen loads. One join over the successors, which
+ * are the only rows carrying the link, answers both directions.
+ */
+function amendmentLinksFor(db: Db): AmendmentLinks {
+  const predecessor = alias(contracts, "predecessor");
+
+  const rows = db
+    .select({
+      successorId: contracts.id,
+      successorCode: contracts.code,
+      predecessorId: predecessor.id,
+      predecessorCode: predecessor.code,
+      amendmentId: contractAmendments.id,
+      effectiveOn: contractAmendments.effectiveOn,
+      reason: contractAmendments.reason,
+      authorizedBy: contractAmendments.authorizedBy,
+      recordedAt: contractAmendments.createdAt,
+      recordedBy: users.name,
+    })
+    .from(contracts)
+    .innerJoin(predecessor, eq(predecessor.id, contracts.replacesContractId))
+    .innerJoin(contractAmendments, eq(contractAmendments.id, contracts.amendmentId))
+    .innerJoin(users, eq(users.id, contractAmendments.recordedBy))
+    .all();
+
+  const links: AmendmentLinks = { bySuccessor: new Map(), byPredecessor: new Map() };
+
+  for (const row of rows) {
+    const amendment = {
+      id: row.amendmentId,
+      effectiveOn: row.effectiveOn,
+      reason: row.reason,
+      authorizedBy: row.authorizedBy,
+      recordedBy: row.recordedBy,
+      recordedAt: row.recordedAt,
+    };
+
+    links.bySuccessor.set(row.successorId, {
+      contractId: row.predecessorId,
+      code: row.predecessorCode,
+      amendment,
+    });
+    links.byPredecessor.set(row.predecessorId, {
+      contractId: row.successorId,
+      code: row.successorCode,
+      amendment,
+    });
+  }
+
+  return links;
+}
+
 /** Every document on one contract, oldest first, with who uploaded each. */
 function documentsFor(db: Db, contractId: string) {
   return db
@@ -206,7 +291,12 @@ function documentsFor(db: Db, contractId: string) {
  * their paperwork on file would be a page of JSON nobody reads. The panel asks
  * for the actual list when a contract is opened.
  */
-function present(row: ContractRow, asOf: string, documentCount = 0) {
+function present(
+  row: ContractRow,
+  asOf: string,
+  documentCount = 0,
+  links: AmendmentLinks = NO_LINKS,
+) {
   const terms: ContractTerms = {
     saleType: row.saleType as SaleType,
     salePriceCents: row.salePriceCents,
@@ -304,6 +394,12 @@ function present(row: ContractRow, asOf: string, documentCount = 0) {
     /** "none" | "held" | "refunded" — what became of money paid, on cancellation. */
     closedSettlement: row.closedSettlement,
     notes: row.notes,
+    /**
+     * The adenda on either side of this contract, if any: what it replaced,
+     * and what replaced it. A contract amended twice has both.
+     */
+    replaces: links.bySuccessor.get(row.id) ?? null,
+    replacedBy: links.byPredecessor.get(row.id) ?? null,
   };
 }
 
@@ -375,6 +471,70 @@ const cancelBody = z.object({
    */
   settlement: z.enum(["none", "held", "refunded"]).optional(),
 });
+
+/**
+ * An adenda, as the "Adenda" dialog sends it.
+ *
+ * The schedule — forma de pago, plazo, día de pago, primera cuota — is one for
+ * the whole agreement, because that is how it is negotiated: "the rest in three
+ * months, on the 15th". What differs per lot is only the money, since the new
+ * total is divided between lots that may not be the same size.
+ */
+const amendmentBody = z.object({
+  /** The day the new terms were agreed. The new contracts are signed on it. */
+  effectiveOn: isoDate,
+  /** A donation is not something an adenda turns a sale into. */
+  saleType: z.enum(["financed", "cash"]),
+  termMonths: z.number().int().min(1).max(600).nullish(),
+  dueDay: z.number().int().min(1).max(31).nullish(),
+  firstDueOn: isoDate.nullish(),
+  lines: z
+    .array(
+      z.object({
+        /** The running contract this line replaces. */
+        contractId: z.string().uuid(),
+        salePriceCents: z.number().int().nonnegative(),
+        downPaymentCents: z.number().int().nonnegative(),
+        monthlyPaymentCents: z.number().int().positive().nullish(),
+      }),
+    )
+    .min(1)
+    .max(50),
+  authorizedBy: z.string().trim().max(120).nullish(),
+  reason: z.string().trim().min(10).max(500),
+});
+
+/** Thrown inside the adenda transaction when a contract closed under it. */
+class AmendmentConflict extends Error {}
+
+/**
+ * The number an adenda gives the contract it writes: CT-2026-011 becomes
+ * CT-2026-011-A1, and a second adenda on the same lot CT-2026-011-A2.
+ *
+ * Derived from the replaced contract's number rather than drawn from the yearly
+ * sequence, so the lineage reads straight off the list — "011-A1" is 011 after
+ * its first adenda — without opening anything. The yearly sequence does not
+ * notice: `nextContractCode` casts whatever follows "CT-2026-" to an integer,
+ * and SQLite reads "011-A1" as 11.
+ */
+function amendedCode(db: Pick<Db, "select">, previousCode: string): string {
+  const root = previousCode.replace(/-A\d+$/, "");
+  const escaped = root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const suffix = new RegExp(`^${escaped}-A(\\d+)$`);
+
+  const taken = db
+    .select({ code: contracts.code })
+    .from(contracts)
+    .where(sql`${contracts.code} LIKE ${`${root}-A%`}`)
+    .all();
+
+  const highest = taken.reduce((max, row) => {
+    const match = suffix.exec(row.code);
+    return match ? Math.max(max, Number(match[1])) : max;
+  }, 0);
+
+  return `${root}-A${highest + 1}`;
+}
 
 /**
  * The terms that do not add up, worded for the person at the screen, or `null`
@@ -514,9 +674,10 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
 
     // One grouped count for the whole screen rather than one query per row.
     const documentCounts = documentCountsFor(app.db);
+    const links = amendmentLinksFor(app.db);
 
     return reply.send({
-      contracts: rows.map((row) => present(row, asOf, documentCounts.get(row.id) ?? 0)),
+      contracts: rows.map((row) => present(row, asOf, documentCounts.get(row.id) ?? 0, links)),
     });
   });
 
@@ -795,11 +956,13 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
         return reply.code(404).send({ error: "not_found", message: "Contrato no encontrado." });
       }
 
-      if (existing.status === "cancelled" || existing.status === "defaulted") {
+      if (existing.status !== "active" && existing.status !== "paid_off") {
         // A closed contract is history. Editing it would rewrite what the
         // parties are recorded as having agreed. A `paid_off` contract, on the
         // other hand, can still be corrected — a reprice upward reopens it (see
-        // the lifecycle sync below).
+        // the lifecycle sync below). Written as the two statuses that stay
+        // OPEN, so a closed status added later (`replaced` was one) is refused
+        // without anybody having to remember this line.
         return reply.code(409).send({
           error: "not_active",
           message: "Este contrato está cerrado y ya no admite cambios.",
@@ -1025,6 +1188,321 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
       });
 
       return reply.send({ contract: { id: updated.id, code: updated.code } });
+    },
+  );
+
+  /**
+   * An adenda: new terms agreed for contracts that are already running.
+   *
+   * Each contract is closed as `replaced` and a successor is written on the
+   * same lot with the new terms, starting from nothing paid. What was paid
+   * before stays exactly where it is — on the old contract, as income — so the
+   * customer's old receipts keep every figure they were printed with. See
+   * `contractAmendments` in src/db/schema.ts for why this is not an edit.
+   *
+   * One adenda usually covers several lots: a customer who bought three
+   * renegotiates the three together. The successors form a purchase of their
+   * own, so one payment can again be split across them. How the new total is
+   * divided between the lots is worked out by the interface, where it can be
+   * seen before it is saved; this route holds each lot's share to the same
+   * rules a new contract is held to.
+   */
+  app.post(
+    "/contracts/amendments",
+    { onRequest: app.requireCapability("contract:amend") },
+    async (request, reply) => {
+      const parsed = amendmentBody.safeParse(request.body);
+
+      if (!parsed.success) {
+        return reply.code(400).send({
+          error: "invalid_body",
+          message: "Revisa los datos de la adenda. El motivo necesita al menos 10 caracteres.",
+          issues: parsed.error.issues.map((issue) => issue.message),
+        });
+      }
+
+      const body = parsed.data;
+      const actor = request.user!;
+      const contractIds = body.lines.map((line) => line.contractId);
+
+      if (new Set(contractIds).size !== contractIds.length) {
+        return reply.code(400).send({
+          error: "duplicate_contract",
+          message: "Un mismo contrato aparece dos veces en la adenda.",
+        });
+      }
+
+      // Recorded on the day it was agreed, never ahead of it. A future date
+      // would close the running contracts today and start the new ones later,
+      // leaving the lots between two agreements in the meantime.
+      if (body.effectiveOn > today()) {
+        return reply.code(400).send({
+          error: "future_date",
+          message: "La fecha de la adenda no puede ser futura: es el día en que se acordó.",
+        });
+      }
+
+      const rows = app.db
+        .select({ contract: contracts, lotCode: lots.code })
+        .from(contracts)
+        .innerJoin(lots, eq(lots.id, contracts.lotId))
+        .where(inArray(contracts.id, contractIds))
+        .all();
+      const byId = new Map(rows.map((row) => [row.contract.id, row]));
+
+      let customerId: string | null = null;
+
+      for (const line of body.lines) {
+        const row = byId.get(line.contractId);
+
+        if (!row) {
+          return reply
+            .code(404)
+            .send({ error: "not_found", message: "Uno de los contratos de la adenda no existe." });
+        }
+
+        const { contract, lotCode } = row;
+
+        // The new contracts are one purchase, and a purchase is one person's.
+        if (customerId !== null && contract.customerId !== customerId) {
+          return reply.code(400).send({
+            error: "customer_mismatch",
+            message: "Una adenda cubre contratos de un solo cliente.",
+          });
+        }
+        customerId = contract.customerId;
+
+        if (contract.status !== "active") {
+          return reply.code(409).send({
+            error: "not_active",
+            message: `${contract.code} no está vigente: solo un contrato vigente admite una adenda.`,
+          });
+        }
+
+        // A reservation is a hold, not a signed sale; turning one into a sale
+        // is what «Editar términos» is for.
+        if (contract.kind !== "contract") {
+          return reply.code(400).send({
+            error: "not_a_contract",
+            message:
+              `${contract.code} es una reserva. Conviértela en contrato con «Editar términos» ` +
+              "antes de hacerle una adenda.",
+          });
+        }
+
+        const signedOn = contract.signedOn ?? contract.createdAt.slice(0, 10);
+
+        if (body.effectiveOn < signedOn) {
+          return reply.code(400).send({
+            error: "before_signing",
+            message: `La adenda no puede ser anterior a la firma de ${contract.code} (${signedOn}).`,
+          });
+        }
+
+        // The same agreement rules a brand-new contract answers to, per lot.
+        const problem = termsProblem({
+          kind: "contract",
+          saleType: body.saleType,
+          salePriceCents: line.salePriceCents,
+          downPaymentCents: line.downPaymentCents,
+          termMonths: body.termMonths ?? null,
+          monthlyPaymentCents: line.monthlyPaymentCents ?? null,
+          dueDay: body.dueDay ?? null,
+          signedOn: body.effectiveOn,
+          firstDueOn: body.firstDueOn ?? null,
+          expiresOn: null,
+        });
+
+        if (problem) {
+          return reply
+            .code(400)
+            .send({ error: "invalid_terms", message: `Lote ${lotCode}: ${problem}` });
+        }
+      }
+
+      /*
+       * A payment on an old contract dated AFTER the adenda is money that
+       * arrived under the new agreement but was filed under the old one. The
+       * adenda would strand it there — kept as income on a closed contract,
+       * never reaching the new balance — so it has to be sorted out first, while
+       * it can still be moved.
+       */
+      const lateItem = app.db
+        .select({
+          contractId: payments.contractId,
+          paidOn: payments.paidOn,
+          amountCents: payments.amountCents,
+        })
+        .from(payments)
+        .where(
+          and(
+            inArray(payments.contractId, contractIds),
+            sql`${payments.reversedAt} IS NULL`,
+            sql`${payments.paidOn} > ${body.effectiveOn}`,
+          ),
+        )
+        .orderBy(asc(payments.paidOn))
+        .get();
+
+      if (lateItem) {
+        const code = byId.get(lateItem.contractId)!.contract.code;
+
+        return reply.code(409).send({
+          error: "payment_after_amendment",
+          message:
+            `${code} tiene un pago del ${lateItem.paidOn} ` +
+            `(L ${(lateItem.amountCents / 100).toLocaleString("es-HN")}), posterior a la fecha ` +
+            "de la adenda. Si ese dinero es del nuevo acuerdo, anula ese pago y regístralo en " +
+            "el contrato nuevo después de la adenda; si era del contrato anterior, pon la " +
+            "adenda en esa fecha o después.",
+        });
+      }
+
+      const now = new Date().toISOString();
+      const amendmentId = randomUUID();
+      // A purchase of its own once there is more than one lot, so a single
+      // payment can be split across the successors the way it was across the
+      // contracts they replace.
+      const saleGroupId = body.lines.length > 1 ? randomUUID() : null;
+
+      let created: Array<{ id: string; code: string; replacesContractId: string }>;
+
+      try {
+        created = withUniqueRetry(() =>
+          app.db.transaction((tx) => {
+            tx.insert(contractAmendments)
+              .values({
+                id: amendmentId,
+                effectiveOn: body.effectiveOn,
+                reason: body.reason,
+                authorizedBy: body.authorizedBy?.trim() ? body.authorizedBy.trim() : null,
+                recordedBy: actor.id,
+                createdAt: now,
+              })
+              .run();
+
+            return body.lines.map((line) => {
+              const { contract: previous, lotCode } = byId.get(line.contractId)!;
+
+              const paidToDateCents =
+                tx
+                  .select({ total: sql<number>`COALESCE(SUM(${payments.amountCents}), 0)` })
+                  .from(payments)
+                  .where(
+                    and(eq(payments.contractId, previous.id), sql`${payments.reversedAt} IS NULL`),
+                  )
+                  .get()?.total ?? 0;
+
+              // Kept as income — the deal being recorded. Null when nothing was
+              // paid, as on any close: there was no money to decide about.
+              const settlement = paidToDateCents > 0 ? ("none" as const) : null;
+
+              // Conditional on still being active, and checked: the checks
+              // above ran outside this transaction, and a contract closed in
+              // between must not be closed twice or given two successors.
+              const closed = tx
+                .update(contracts)
+                .set({
+                  status: "replaced",
+                  closedAt: now,
+                  closedReason: body.reason,
+                  closedSettlement: settlement,
+                  updatedAt: now,
+                })
+                .where(and(eq(contracts.id, previous.id), eq(contracts.status, "active")))
+                .run();
+
+              if (closed.changes !== 1) {
+                throw new AmendmentConflict(previous.code);
+              }
+
+              const next = tx
+                .insert(contracts)
+                .values({
+                  id: randomUUID(),
+                  code: amendedCode(tx, previous.code),
+                  lotId: previous.lotId,
+                  customerId: previous.customerId,
+                  saleGroupId,
+                  kind: "contract",
+                  saleType: body.saleType,
+                  status: "active",
+                  salePriceCents: line.salePriceCents,
+                  downPaymentCents: line.downPaymentCents,
+                  termMonths: body.termMonths ?? null,
+                  monthlyPaymentCents: line.monthlyPaymentCents ?? null,
+                  dueDay: body.dueDay ?? null,
+                  signedOn: body.effectiveOn,
+                  firstDueOn: body.firstDueOn ?? null,
+                  expiresOn: null,
+                  notes: null,
+                  replacesContractId: previous.id,
+                  amendmentId,
+                  createdAt: now,
+                  updatedAt: now,
+                })
+                .returning()
+                .get();
+
+              // `code` rides on both sides so the Historial can name the
+              // contract; it does not change, so it is never listed as a diff.
+              recordAudit(tx, {
+                actorId: actor.id,
+                entityType: "contract",
+                entityId: previous.id,
+                action: "replace",
+                reason: body.reason,
+                before: { code: previous.code, status: previous.status, paidToDateCents },
+                after: {
+                  code: previous.code,
+                  status: "replaced",
+                  replacedBy: next.code,
+                  settlement,
+                  paidToDateCents,
+                },
+              });
+
+              recordAudit(tx, {
+                actorId: actor.id,
+                entityType: "contract",
+                entityId: next.id,
+                action: "create",
+                reason: body.reason,
+                after: {
+                  code: next.code,
+                  replaces: previous.code,
+                  lotCode,
+                  saleGroupId: next.saleGroupId,
+                  saleType: next.saleType,
+                  salePriceCents: next.salePriceCents,
+                  downPaymentCents: next.downPaymentCents,
+                  termMonths: next.termMonths,
+                  monthlyPaymentCents: next.monthlyPaymentCents,
+                  dueDay: next.dueDay,
+                  signedOn: next.signedOn,
+                  firstDueOn: next.firstDueOn,
+                },
+              });
+
+              // Nothing is paid on it yet, but a price of zero is settled from
+              // the start — the same rule every other write follows.
+              syncContractLifecycle(tx, next.id, actor.id);
+
+              return { id: next.id, code: next.code, replacesContractId: previous.id };
+            });
+          }),
+        );
+      } catch (error) {
+        if (error instanceof AmendmentConflict) {
+          return reply.code(409).send({
+            error: "not_active",
+            message: `${error.message} cambió mientras se registraba la adenda. Ábrela de nuevo.`,
+          });
+        }
+        throw error;
+      }
+
+      return reply.code(201).send({ amendment: { id: amendmentId }, contracts: created });
     },
   );
 

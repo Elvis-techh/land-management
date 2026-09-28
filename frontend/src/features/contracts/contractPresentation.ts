@@ -53,6 +53,7 @@ export const STATUS_PRESENTATION: Record<
   paid_off: { label: "Pagado", stampClass: "stamp neutral" },
   cancelled: { label: "Cancelado", stampClass: "stamp neutral" },
   defaulted: { label: "Incumplido", stampClass: "stamp danger" },
+  replaced: { label: "Reemplazado", stampClass: "stamp neutral" },
 };
 
 /** Crédito / Contado / Donación. */

@@ -219,8 +219,43 @@ export interface Lot {
  */
 export type SaleType = "financed" | "cash" | "donation";
 
-/** The contract's own lifecycle. Stored on the row. */
-export type ContractStatus = "draft" | "active" | "paid_off" | "cancelled" | "defaulted";
+/**
+ * The contract's own lifecycle. Stored on the row.
+ *
+ * `replaced` is a contract an adenda closed and succeeded with a new one on the
+ * same lot — see `ContractAmendmentLink`.
+ */
+export type ContractStatus =
+  | "draft"
+  | "active"
+  | "paid_off"
+  | "cancelled"
+  | "defaulted"
+  | "replaced";
+
+/**
+ * One side of an adenda, as seen from the contract on the other side.
+ *
+ * An adenda does not edit a contract: it closes it as `replaced`, with every
+ * payment and receipt left exactly as they were, and writes a successor on the
+ * same lot — CT-2026-011 becomes CT-2026-011-A1. This names the contract across
+ * that line and the agreement that drew it.
+ */
+export interface ContractAmendmentLink {
+  contractId: string;
+  code: string;
+  amendment: {
+    id: string;
+    /** YYYY-MM-DD, the day the new terms were agreed. */
+    effectiveOn: string;
+    reason: string;
+    /** Who approved it, in the office's words. `null` when nobody was named. */
+    authorizedBy: string | null;
+    /** The name of whoever typed it in. */
+    recordedBy: string;
+    recordedAt: string;
+  };
+}
 
 /**
  * Payment health, the THIRD concept, computed by the server from the schedule
@@ -343,6 +378,10 @@ export interface Contract {
    * rather than flagging the ones that do not.
    */
   documentCount: number;
+  /** The contract an adenda replaced with this one, or `null`. */
+  replaces: ContractAmendmentLink | null;
+  /** The contract an adenda replaced this one with, or `null`. */
+  replacedBy: ContractAmendmentLink | null;
 }
 
 /**

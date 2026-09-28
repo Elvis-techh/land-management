@@ -34,6 +34,7 @@ import { syncContractLifecycle } from "../lib/contractLifecycle.js";
 import type { ContractTerms, SaleType } from "../lib/contracts.js";
 import { appliedInstallments, buildSchedule } from "../lib/contracts.js";
 import { orderLedger, receiptFigures, replayContract } from "../lib/ledger.js";
+import { parseTimestamp } from "../lib/time.js";
 import {
   allocateReceiptCode,
   generateLookupCode,
@@ -81,6 +82,51 @@ function creditsForCustomers(db: Db, customerIds: readonly string[]) {
 }
 
 type CustomerCredit = ReturnType<typeof creditsForCustomers>[number];
+
+/**
+ * The contracts an adenda has replaced, per customer, with the moment it did.
+ *
+ * Money paid under a replaced contract stays there — kept by the business, not
+ * credited to the new price — so a receipt issued AFTER the adenda must not add
+ * it into "total pagado acumulado". A receipt issued before keeps it: it was
+ * printed with that figure, and nothing about it changed. `closedAt` is the
+ * instant the adenda was recorded, and receipts compare against their own
+ * `createdAt` — when the paper was issued, not the date written on the payment.
+ */
+function replacedContractsFor(db: Db, customerIds: readonly string[]) {
+  const byCustomer = new Map<string, Array<{ contractId: string; replacedAt: number }>>();
+
+  if (customerIds.length === 0) {
+    return byCustomer;
+  }
+
+  const rows = db
+    .select({
+      id: contracts.id,
+      customerId: contracts.customerId,
+      closedAt: contracts.closedAt,
+    })
+    .from(contracts)
+    .where(and(inArray(contracts.customerId, customerIds), eq(contracts.status, "replaced")))
+    .all();
+
+  for (const row of rows) {
+    if (!row.closedAt) {
+      continue;
+    }
+
+    const entry = { contractId: row.id, replacedAt: parseTimestamp(row.closedAt) };
+    const list = byCustomer.get(row.customerId);
+
+    if (list) {
+      list.push(entry);
+    } else {
+      byCustomer.set(row.customerId, [entry]);
+    }
+  }
+
+  return byCustomer;
+}
 
 /** The sale price of every contract named, so the ledger has its opening charge. */
 function salePricesFor(db: Db, contractIds: readonly string[]): Map<string, number> {
@@ -271,13 +317,20 @@ function presentReceipts(db: Db, rows: readonly ReceiptRow[], includeLines: bool
     db,
     [...new Set(allCredits.map((credit) => credit.contractId))],
   );
+  const replacedByCustomer = replacedContractsFor(db, customerIds);
 
   return rows.map((row) => {
     const own = orderLedger(paymentsByReceipt.get(row.id) ?? []);
+    const issuedAt = parseTimestamp(row.createdAt);
     const figures = receiptFigures({
       paymentIds: own.map((credit) => credit.id),
       customerCredits: creditsByCustomer.get(row.customerId) ?? [],
       salePriceByContract,
+      excludeFromCumulative: new Set(
+        (replacedByCustomer.get(row.customerId) ?? [])
+          .filter((replaced) => replaced.replacedAt < issuedAt)
+          .map((replaced) => replaced.contractId),
+      ),
     });
 
     // A voided receipt's payments are reversed, so the ledger no longer counts
@@ -847,7 +900,10 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
           });
         }
 
-        if (contract.status === "cancelled" || contract.status === "defaulted") {
+        // The two statuses that still take money, rather than the ones that do
+        // not: a closed status added later (`replaced`, by an adenda) is then
+        // refused here without anybody having to remember this line.
+        if (contract.status !== "active" && contract.status !== "paid_off") {
           return reply.code(409).send({
             error: "contract_closed",
             message: `El contrato ${contract.code} está cerrado y no admite pagos.`,
@@ -1271,7 +1327,10 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
           });
         }
 
-        if (contract.status === "cancelled" || contract.status === "defaulted") {
+        // The two statuses that still take money, rather than the ones that do
+        // not: a closed status added later (`replaced`, by an adenda) is then
+        // refused here without anybody having to remember this line.
+        if (contract.status !== "active" && contract.status !== "paid_off") {
           return reply.code(409).send({
             error: "contract_closed",
             message: `El contrato ${contract.code} está cerrado y no admite pagos.`,

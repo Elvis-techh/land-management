@@ -18,7 +18,14 @@ import { SORT_OPTIONS } from "./contractSort";
 import type { ContractSort } from "./contractSort";
 
 const HEALTH_ORDER: PaymentHealth[] = ["at_risk", "overdue", "due_soon", "current"];
-const STATUS_ORDER: ContractStatus[] = ["active", "paid_off", "cancelled", "defaulted", "draft"];
+const STATUS_ORDER: ContractStatus[] = [
+  "active",
+  "paid_off",
+  "replaced",
+  "cancelled",
+  "defaulted",
+  "draft",
+];
 const SALE_TYPE_ORDER: SaleType[] = ["financed", "cash", "donation"];
 const KIND_ORDER: Array<Contract["kind"]> = ["contract", "reservation"];
 
