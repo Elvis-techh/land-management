@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { DEFAULT_SORT, sortTransactions } from "../src/features/receipts/transactionSort";
+import { DEFAULT_SORT, groupByCustomer, sortTransactions } from "../src/features/receipts/transactionSort";
 import type { Transaction } from "../src/types";
 
 /**
@@ -90,5 +90,93 @@ describe("sortTransactions — project", () => {
       ordered.map((row) => row.projectName),
       ["Alameda", "Monte Real", "Valle Verde"],
     );
+  });
+});
+
+describe("groupByCustomer — per-contract breakdown", () => {
+  /**
+   * Josue's Pineda-shaped case: money paid on CT-2026-011 before it was
+   * replaced, plus money paid on its -A1 successor after. `contractStatus`
+   * is what the join returns TODAY — "replaced" on the old contract's rows
+   * even though it was "active" when that money actually moved.
+   */
+  const amendedCustomer = [
+    {
+      id: "1",
+      customerId: "cust-1",
+      customerName: "Josue Pineda",
+      customerIdentification: "0801",
+      paidOn: "2026-01-01",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      amount: 174000_00,
+      reversedAt: null,
+      contractId: "contract-old",
+      contractCode: "CT-2026-011",
+      contractStatus: "replaced",
+    },
+    {
+      id: "2",
+      customerId: "cust-1",
+      customerName: "Josue Pineda",
+      customerIdentification: "0801",
+      paidOn: "2026-09-15",
+      createdAt: "2026-09-15T00:00:00.000Z",
+      amount: 150000_00,
+      reversedAt: null,
+      contractId: "contract-new",
+      contractCode: "CT-2026-011-A1",
+      contractStatus: "active",
+    },
+    // Reversed: must count toward neither the total nor either subtotal.
+    {
+      id: "3",
+      customerId: "cust-1",
+      customerName: "Josue Pineda",
+      customerIdentification: "0801",
+      paidOn: "2026-09-16",
+      createdAt: "2026-09-16T00:00:00.000Z",
+      amount: 5000_00,
+      reversedAt: "2026-09-17T00:00:00.000Z",
+      contractId: "contract-new",
+      contractCode: "CT-2026-011-A1",
+      contractStatus: "active",
+    },
+  ] as unknown as Transaction[];
+
+  it("splits the total by contract, predecessor before successor, reversed rows excluded", () => {
+    const [group] = groupByCustomer(amendedCustomer, DEFAULT_SORT);
+
+    assert.equal(group!.totalCents, 174000_00 + 150000_00);
+    assert.deepEqual(
+      group!.byContract.map((entry) => [entry.contractCode, entry.contractStatus, entry.totalCents]),
+      [
+        ["CT-2026-011", "replaced", 174000_00],
+        ["CT-2026-011-A1", "active", 150000_00],
+      ],
+    );
+    assert.equal(group!.hasAmendment, true);
+  });
+
+  it("leaves an unamended customer with one subtotal and no badge", () => {
+    const rows = [
+      {
+        id: "1",
+        customerId: "cust-2",
+        customerName: "Ana Lucía Paz",
+        customerIdentification: "0802",
+        paidOn: "2026-01-01",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        amount: 7000_00,
+        reversedAt: null,
+        contractId: "contract-a",
+        contractCode: "CT-2026-005",
+        contractStatus: "active",
+      },
+    ] as unknown as Transaction[];
+
+    const [group] = groupByCustomer(rows, DEFAULT_SORT);
+
+    assert.equal(group!.byContract.length, 1);
+    assert.equal(group!.hasAmendment, false);
   });
 });

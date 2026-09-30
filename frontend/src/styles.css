@@ -1939,6 +1939,48 @@ tbody tr:hover {
   padding-left: 42px;
 }
 
+/* Sits in `.txn-who`, its own row under the name and the "N transacciones"
+   line — never inline with the name, which already stretches to fill that
+   column and would drag a `.stamp` full-width with it. */
+.txn-amendment-badge {
+  align-self: flex-start;
+  margin-top: 1px;
+}
+
+/* The per-contract split of a customer's total: what `.txn-amount` up in the
+   head adds up to. Shown only when it touches more than one contract —
+   several lots, or a lot an adenda closed and replaced — so the common case
+   of one lot never renegotiated stays exactly as it was. */
+.txn-contract-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 16px;
+  border-bottom: 1px dashed var(--line);
+}
+
+.txn-contract-breakdown-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  row-gap: 4px;
+}
+
+.txn-contract-breakdown-code {
+  font-family: var(--font-mono);
+  font-size: 0.7188rem;
+  color: var(--text-secondary);
+}
+
+.txn-contract-breakdown-amount {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
 /* ---------- the whole window as a dropzone ---------- */
 
 /*

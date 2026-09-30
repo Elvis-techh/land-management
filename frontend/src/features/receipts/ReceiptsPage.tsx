@@ -13,6 +13,7 @@ import { can } from "../../lib/permissions";
 import { useIsMobile } from "../../lib/viewport";
 import type { Contract, Receipt, Transaction } from "../../types";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
+import { STATUS_PRESENTATION } from "../contracts/contractPresentation";
 import { DocumentViewer, DocumentThumb } from "../../components/DocumentViewer";
 import type { ViewerFile } from "../../components/DocumentViewer";
 import { ReceiptPaper } from "./ReceiptPaper";
@@ -1415,6 +1416,14 @@ export function ReceiptsPage({
                         {group.transactions.length === 1 ? "ón" : "ones"} · última{" "}
                         {shortDate(group.lastPaidOn)}
                       </span>
+                      {group.hasAmendment && (
+                        <span
+                          className="stamp neutral txn-amendment-badge"
+                          title="Uno de sus contratos fue reemplazado por una adenda"
+                        >
+                          Adenda
+                        </span>
+                      )}
                     </span>
 
                     <span className="txn-amount">
@@ -1424,6 +1433,28 @@ export function ReceiptsPage({
 
                   {isOpen && (
                     <div className="txn-group-body">
+                      {group.byContract.length > 1 && (
+                        <div className="txn-contract-breakdown">
+                          {group.byContract.map((entry) => {
+                            const presentation = STATUS_PRESENTATION[entry.contractStatus];
+
+                            return (
+                              <div key={entry.contractId} className="txn-contract-breakdown-row">
+                                <span className="txn-contract-breakdown-code">
+                                  {entry.contractCode}
+                                </span>
+                                <span className={presentation.stampClass}>
+                                  {presentation.label}
+                                </span>
+                                <span className="txn-contract-breakdown-amount">
+                                  {formatMoney(cents(entry.totalCents), money)}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
                       {group.transactions.map((transaction) => (
                         <TransactionRow
                           key={transaction.id}
