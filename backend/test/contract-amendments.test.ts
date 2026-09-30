@@ -323,6 +323,37 @@ describe("an adenda on a purchase of three lots", async () => {
     assert.equal(response.json().lines.length, 3);
   });
 
+  it("tells the transactions list which contract each payment's contract replaced", async () => {
+    const rows = (
+      await app.inject({ method: "GET", url: "/api/transactions", headers: { cookie: ownerCookie } })
+    ).json().transactions as Array<{
+      customerId: string;
+      contractId: string;
+      contractCode: string;
+      contractStatus: string;
+      replacesContractCode: string | null;
+    }>;
+    const mine = rows.filter((row) => row.customerId === customerId);
+
+    const before = mine.filter((row) => old.some((contract) => contract.id === row.contractId));
+    const after = mine.filter((row) => !old.some((contract) => contract.id === row.contractId));
+
+    assert.ok(before.length > 0 && after.length > 0);
+
+    // Money paid before the adenda sits on a contract that replaced nothing.
+    for (const row of before) {
+      assert.equal(row.contractStatus, "replaced");
+      assert.equal(row.replacesContractCode, null);
+    }
+
+    // Money paid after sits on a successor, and names the contract it took over from.
+    for (const row of after) {
+      const predecessor = old.find((contract) => `${contract.code}-A1` === row.contractCode);
+      assert.ok(predecessor, `${row.contractCode} is not a successor of an old contract`);
+      assert.equal(row.replacesContractCode, predecessor.code);
+    }
+  });
+
   it("files the adenda in the history under the motive that was given", async () => {
     const rows = db.select().from(auditEvents).where(eq(auditEvents.action, "replace")).all();
 

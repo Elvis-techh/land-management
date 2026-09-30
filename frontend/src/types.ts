@@ -522,6 +522,12 @@ export interface Transaction {
   contractId: string;
   contractCode: string;
   contractStatus: string;
+  /**
+   * The contract an adenda closed to write THIS row's contract, or `null` for
+   * one signed the ordinary way — what lets a list tell money paid on a
+   * successor from money paid on the contract before it.
+   */
+  replacesContractCode: string | null;
   lotCode: string;
   projectName: string;
   customerId: string;

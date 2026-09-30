@@ -33,6 +33,7 @@ import {
   searchTransactions,
   transactionsInScope,
 } from "./transactionFilters";
+import { contractTag } from "./contractTag";
 import { DEFAULT_SORT, groupByCustomer, sortTransactions } from "./transactionSort";
 import type { TransactionSort } from "./transactionSort";
 import { countReceipts, idsBetween, paintedByDrag, toggleOne } from "./transactionSelection";
@@ -69,12 +70,6 @@ interface ReceiptsPageProps {
    */
   onLedgerChanged: () => void;
 }
-
-const METHOD_LABELS: Record<string, string> = {
-  cash: "Efectivo",
-  transfer: "Transferencia",
-  card: "Tarjeta",
-};
 
 /** "15 mar 2026" — compact, for a list rather than a document. */
 function shortDate(isoDate: string): string {
@@ -194,6 +189,7 @@ function TransactionRow({
   onCheckClick,
 }: RowProps) {
   const isReversed = transaction.reversedAt !== null;
+  const tag = contractTag(transaction);
   const slotInputRef = useRef<HTMLInputElement>(null);
   const slotRef = useRef<HTMLDivElement>(null);
   const [choosingSource, setChoosingSource] = useState(false);
@@ -435,22 +431,28 @@ function TransactionRow({
         </span>
 
         <span className="txn-tags">
-          {transaction.receiptCode ? (
-            <span className="txn-receipt">{transaction.receiptCode}</span>
-          ) : (
+          {/* Prima or cuota: the one fact about a payment that the row does not
+              already say, and that used to take opening payments one by one.
+
+              Not here any more: the receipt code and the payment method. Both
+              are on the receipt itself, a click away. The code stays findable —
+              `searchTransactions` matches it, so typing it, or scanning the
+              printed barcode into the search box, lands on the row. */}
+          <span className="txn-type">{paymentTypeLabel(transaction.type)}</span>
+          {tag !== null && (
+            <span className={`txn-contract is-${tag.side}`} title={tag.title}>
+              {tag.side === "adenda" && "Adenda · "}
+              {tag.code}
+            </span>
+          )}
+          {/* The one thing the old receipt tag also said, and only when it is
+              the exception: this money was never put on paper. */}
+          {transaction.receiptCode === null && (
             <span className="txn-receipt is-missing" title="Este pago nunca se imprimió">
               sin recibo
             </span>
           )}
-          {/* Beside the receipt number, because "what kind of money was this"
-              is read together with "which paper is it on". Until now the type
-              was invisible everywhere except inside the correction dialog, so
-              telling a prima from a cuota meant opening payments one by one. */}
-          <span className="txn-type">{paymentTypeLabel(transaction.type)}</span>
-          <span className="txn-method">
-            {METHOD_LABELS[transaction.method] ?? transaction.method}
-          </span>
-          {isReversed && <span className="txn-method is-void">anulada</span>}
+          {isReversed && <span className="txn-void">anulada</span>}
         </span>
 
         <span className="txn-amount">{formatMoney(transaction.amount, money)}</span>

@@ -1,5 +1,6 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { FastifyPluginAsync } from "fastify";
+import { alias } from "drizzle-orm/sqlite-core";
 import { z } from "zod";
 
 import type { Db } from "../db/client.js";
@@ -32,8 +33,12 @@ const PAYMENT_TYPES = ["down_payment", "installment", "full_payment", "adjustmen
  * every balance, and leaving them out of the transactions screen would mean
  * this list disagreed with the contract it belongs to.
  */
-const transactionsQuery = (db: Db) =>
-  db
+const transactionsQuery = (db: Db) => {
+  // The contract an adenda closed to write this row's contract — the same table
+  // twice in one query, so it needs a name of its own.
+  const predecessor = alias(contracts, "predecessor");
+
+  return db
     .select({
       id: payments.id,
       amount: payments.amountCents,
@@ -51,6 +56,7 @@ const transactionsQuery = (db: Db) =>
       contractId: contracts.id,
       contractCode: contracts.code,
       contractStatus: contracts.status,
+      replacesContractCode: predecessor.code,
       lotCode: lots.code,
       projectName: projects.name,
       customerId: customers.id,
@@ -63,11 +69,13 @@ const transactionsQuery = (db: Db) =>
     })
     .from(payments)
     .innerJoin(contracts, eq(contracts.id, payments.contractId))
+    .leftJoin(predecessor, eq(predecessor.id, contracts.replacesContractId))
     .innerJoin(lots, eq(lots.id, contracts.lotId))
     .innerJoin(projects, eq(projects.id, lots.projectId))
     .innerJoin(customers, eq(customers.id, contracts.customerId))
     .innerJoin(users, eq(users.id, payments.recordedBy))
     .leftJoin(receipts, eq(receipts.id, payments.receiptId));
+};
 
 /**
  * What a transaction edit may change.
