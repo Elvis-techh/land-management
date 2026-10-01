@@ -495,46 +495,6 @@ nav.nav {
   color: var(--text-muted);
 }
 
-/* The sum of everything the search and filters let through, in the
-   transactions list. Big and right-aligned on purpose — see the comment
-   where it's rendered in ReceiptsPage.tsx. */
-.txn-list-total {
-  margin: 0;
-  text-align: right;
-}
-
-.txn-list-total-value {
-  display: block;
-  font-family: var(--font-mono);
-  font-size: 1.375rem;
-  font-weight: 600;
-  color: var(--green-dark);
-  white-space: nowrap;
-}
-
-.txn-list-total-count {
-  display: block;
-  margin-top: 2px;
-  font-size: 0.6875rem;
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
-/* Below 480px the title and the total no longer fit on one line without
-   wrapping into an awkward, uneven split — so the total drops under the
-   title instead, both left-aligned, rather than fighting for the row. */
-@media (max-width: 480px) {
-  .txn-list .card-head {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 4px;
-  }
-
-  .txn-list .txn-list-total {
-    text-align: left;
-  }
-}
-
 .attention-list {
   padding: 6px 8px;
 }

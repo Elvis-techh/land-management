@@ -1179,10 +1179,6 @@ export function ReceiptsPage({
       current !== null && current === transaction.receiptId ? null : transaction.receiptId,
     );
 
-  const receivedTotal = visible
-    .filter((transaction) => transaction.reversedAt === null)
-    .reduce((sum, transaction) => sum + transaction.amount, 0);
-
   /*
    * Shift-click extends the checked set to every row between the anchor and
    * this one; a plain click toggles just the row it landed on, and nothing
@@ -1319,14 +1315,6 @@ export function ReceiptsPage({
       <div className={`card txn-list${checkedTransactions.length > 0 ? " is-selecting" : ""}`}>
         <div className="card-head">
           <h2>Transacciones</h2>
-          {/* Right-aligned so it sits over the amount column below it — the
-              same spot the eye already goes to read a row's own figure. */}
-          <p className="txn-list-total">
-            <span className="txn-list-total-value">{formatMoney(cents(receivedTotal), money)}</span>
-            <span className="txn-list-total-count">
-              en {visible.length} transacci{visible.length === 1 ? "ón" : "ones"}
-            </span>
-          </p>
         </div>
 
         <TransactionToolbar
