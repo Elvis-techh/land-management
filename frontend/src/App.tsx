@@ -15,6 +15,7 @@ import { CustomersPage } from "./features/customers/CustomersPage";
 import { createCustomer, deleteCustomer, updateCustomer } from "./features/customers/api";
 import type { CustomerDraft } from "./features/customers/api";
 import { useCustomers } from "./features/customers/useCustomers";
+import { ContractAmendDialog } from "./features/contracts/ContractAmendDialog";
 import { ContractCancelDialog } from "./features/contracts/ContractCancelDialog";
 import { ContractCreateDialog } from "./features/contracts/ContractCreateDialog";
 import { ContractEditDialog } from "./features/contracts/ContractEditDialog";
@@ -24,6 +25,7 @@ import { ContractsPage } from "./features/contracts/ContractsPage";
 import { SplitPreviewDialog } from "./features/contracts/SplitPreviewDialog";
 import type { ContractFilterPreset } from "./features/contracts/contractFilters";
 import {
+  amendContracts,
   cancelContract,
   createContract,
   defaultContract,
@@ -31,6 +33,7 @@ import {
   updateContract,
 } from "./features/contracts/api";
 import type {
+  AmendmentDraft,
   CancelSettlement,
   ContractCreateDraft,
   ContractTermsDraft,
@@ -208,6 +211,8 @@ export default function App() {
   const [contractBeingDefaulted, setContractBeingDefaulted] = useState<Contract | null>(null);
   // The lots of ONE purchase, while their split is being previewed.
   const [contractsBeingSplit, setContractsBeingSplit] = useState<Contract[] | null>(null);
+  // The running contracts of one purchase, while an adenda is being written.
+  const [contractsBeingAmended, setContractsBeingAmended] = useState<Contract[] | null>(null);
   // As with the project and customer forms, `null` in `accountBeingEdited`
   // means the form is creating rather than editing, so the two are kept apart.
   const [isUserFormOpen, setUserFormOpen] = useState(false);
@@ -779,6 +784,32 @@ export default function App() {
     setContractBeingCancelled(null);
   };
 
+  /**
+   * The purchase an adenda opened from one contract should cover: every signed
+   * lot of the same purchase that is still running. Renegotiating three lots
+   * is one conversation, so it is one dialog — the lots can be unticked there.
+   */
+  const purchaseToAmend = (contract: Contract): Contract[] => {
+    if (contract.saleGroupId === null || contractsState.status !== "ready") {
+      return [contract];
+    }
+
+    return contractsState.contracts.filter(
+      (candidate) =>
+        candidate.saleGroupId === contract.saleGroupId &&
+        candidate.status === "active" &&
+        candidate.kind === "contract",
+    );
+  };
+
+  // An adenda closes contracts and opens others on the same lots, so every
+  // screen that names a contract, a holder or a balance has moved at once.
+  const handleAmendContracts = async (draft: AmendmentDraft) => {
+    await amendContracts(draft).catch(handleApiError);
+    await reloadAfterClose();
+    setContractsBeingAmended(null);
+  };
+
   const handleDefaultContract = async (reason: string, settlement?: CancelSettlement) => {
     if (!contractBeingDefaulted) {
       return;
@@ -1160,6 +1191,7 @@ export default function App() {
               user={user}
               onOpenContract={setContractBeingViewed}
               onSplitPayment={setContractsBeingSplit}
+              onAmendPurchase={setContractsBeingAmended}
               filterPreset={contractsPreset}
               onPresetApplied={() => setContractsPreset(null)}
             />
@@ -1463,6 +1495,22 @@ export default function App() {
                     candidate.id !== contractBeingViewed.id,
                 )
           }
+          // Both sides of an adenda, looked up in the same list, so the panel
+          // can show what the other contract said and open it.
+          predecessor={
+            contractBeingViewed.replaces && contractsState.status === "ready"
+              ? (contractsState.contracts.find(
+                  (candidate) => candidate.id === contractBeingViewed.replaces?.contractId,
+                ) ?? null)
+              : null
+          }
+          successor={
+            contractBeingViewed.replacedBy && contractsState.status === "ready"
+              ? (contractsState.contracts.find(
+                  (candidate) => candidate.id === contractBeingViewed.replacedBy?.contractId,
+                ) ?? null)
+              : null
+          }
           money={money}
           user={user}
           onClose={() => setContractBeingViewed(null)}
@@ -1470,6 +1518,8 @@ export default function App() {
           onReassignLot={setContractLotBeingReassigned}
           onCancelContract={setContractBeingCancelled}
           onDefaultContract={setContractBeingDefaulted}
+          onAmendContract={(contract) => setContractsBeingAmended(purchaseToAmend(contract))}
+          onOpenContract={setContractBeingViewed}
           // The list marks which contracts have their signed copy on file, so
           // filing one from the panel has to re-read the list behind it.
           onDocumentsChanged={() => void reloadContracts()}
@@ -1515,6 +1565,20 @@ export default function App() {
           canRefund={can(user, "payment:reverse")}
           onCancel={() => setContractBeingDefaulted(null)}
           onConfirm={handleDefaultContract}
+        />
+      )}
+
+      {contractsBeingAmended && contractsBeingAmended.length > 0 && (
+        <ContractAmendDialog
+          contracts={contractsBeingAmended}
+          existingCodes={
+            contractsState.status === "ready"
+              ? contractsState.contracts.map((contract) => contract.code)
+              : []
+          }
+          money={money}
+          onCancel={() => setContractsBeingAmended(null)}
+          onSave={handleAmendContracts}
         />
       )}
 

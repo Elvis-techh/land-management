@@ -402,12 +402,13 @@ export const contracts = sqliteTable(
      */
     saleType: text("sale_type").notNull().default("financed"),
     /**
-     * "draft" | "active" | "paid_off" | "cancelled" | "defaulted"
+     * "draft" | "active" | "paid_off" | "cancelled" | "defaulted" | "replaced"
      *
-     * `active`, `paid_off`, `cancelled` and `defaulted` are all reachable.
-     * `paid_off` is set and cleared by `syncContractLifecycle` as the replayed
-     * balance crosses zero; `cancelled` and `defaulted` are set by the close
-     * actions in routes/contracts.ts. `draft` is not written yet. See
+     * `active`, `paid_off`, `cancelled`, `defaulted` and `replaced` are all
+     * reachable. `paid_off` is set and cleared by `syncContractLifecycle` as the
+     * replayed balance crosses zero; `cancelled` and `defaulted` are set by the
+     * close actions in routes/contracts.ts, and `replaced` by an adenda (see
+     * `contractAmendments`). `draft` is not written yet. See
      * docs/architecture.md.
      */
     status: text("status").notNull().default("active"),
@@ -479,6 +480,23 @@ export const contracts = sqliteTable(
     closedSettlement: text("closed_settlement"),
     /** What was agreed verbally, and anything the columns above cannot hold. */
     notes: text("notes"),
+    /**
+     * The contract this one took over from, when an adenda wrote it. Null for
+     * every contract signed the ordinary way.
+     *
+     * Set on the NEW contract and pointing back, never the other way round, so
+     * the link is one column with one writer. The predecessor is the one the
+     * customer's old receipts and payments stay on — see `contractAmendments`.
+     *
+     * Unique: a contract is replaced once. Two adendas racing on the same
+     * contract would otherwise both succeed and leave one lot with two live
+     * successors.
+     */
+    replacesContractId: text("replaces_contract_id").references(
+      (): AnySQLiteColumn => contracts.id,
+    ),
+    /** The adenda that wrote this contract. Set exactly when `replacesContractId` is. */
+    amendmentId: text("amendment_id").references((): AnySQLiteColumn => contractAmendments.id),
     createdAt: timestamp("created_at"),
     /**
      * Nullable and written by the application, for the same reason as
@@ -487,8 +505,58 @@ export const contracts = sqliteTable(
      */
     updatedAt: text("updated_at"),
   },
-  (table) => [uniqueIndex("contracts_code_unique").on(table.code)],
+  (table) => [
+    uniqueIndex("contracts_code_unique").on(table.code),
+    uniqueIndex("contracts_replaces_unique").on(table.replacesContractId),
+  ],
 );
+
+/**
+ * An adenda: new terms agreed for contracts that are already running.
+ *
+ * Deliberately NOT an edit of the contracts it changes. Editing a contract is
+ * a correction — the terms were always meant to be the new ones — and every
+ * figure derived from them, old receipts included, re-derives as if they had
+ * been there from the start. That is right for a mistyped plazo and wrong for a
+ * deal renegotiated in September: the customer's May receipt was true in May.
+ *
+ * So an adenda CLOSES the running contracts as `replaced` and writes new ones
+ * in their place, on the same lots, linked back through
+ * `contracts.replaces_contract_id`. Everything already paid stays on the old
+ * contract, as income (`closed_settlement = 'none'`), and every old receipt
+ * keeps the numbers it was printed with, because nothing it is derived from
+ * moves. The new contract starts from the new price with nothing paid, which
+ * is exactly the deal being recorded: what was paid before is kept by the
+ * business, neither refunded nor credited to the new price.
+ *
+ * The contract numbers say so too: CT-2026-011 becomes CT-2026-011-A1, and a
+ * second adenda CT-2026-011-A2.
+ *
+ * One row per adenda, however many lots it covers: the motive, the date and
+ * who approved it belong to the agreement, not to each lot. The old and new
+ * terms are not copied here — they are the two contracts themselves, and the
+ * old one can no longer be edited.
+ */
+export const contractAmendments = sqliteTable("contract_amendments", {
+  id: text("id").primaryKey(),
+  /**
+   * YYYY-MM-DD: the day the new terms were agreed. The new contracts are signed
+   * on it, and the old ones cannot carry a payment dated after it.
+   */
+  effectiveOn: text("effective_on").notNull(),
+  /** Why the terms changed, in the office's words. Required, like every close. */
+  reason: text("reason").notNull(),
+  /**
+   * Who approved the new terms — "Don Julio", "la gerencia". Free text rather
+   * than a user: the person who agrees a price with a customer is often not the
+   * person who types it in, and may not have an account at all.
+   */
+  authorizedBy: text("authorized_by"),
+  recordedBy: text("recorded_by")
+    .notNull()
+    .references(() => users.id),
+  createdAt: timestamp("created_at"),
+});
 
 /**
  * A receipt: the DOCUMENT, not the money.

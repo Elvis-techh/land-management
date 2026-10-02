@@ -241,6 +241,14 @@ export function TransactionEditDialog({
     [customerTransactions],
   );
 
+  /*
+   * Voided rows stay in the list, struck through, because they are part of the
+   * story — but they are left out of the count, the way their money is left
+   * out of the balances.
+   */
+  const voidedCount = history.filter((entry) => entry.reversedAt !== null).length;
+  const activeCount = history.length - voidedCount;
+
   const hasChanges =
     amountCents !== transaction.amount ||
     paidOn !== transaction.paidOn ||
@@ -848,7 +856,10 @@ export function TransactionEditDialog({
         <aside className="edit-history">
           <p className="cp-section-title">Historial de {transaction.customerName}</p>
           <p className="field-hint">
-            {history.length} transacci{history.length === 1 ? "ón" : "ones"} en total.
+            {activeCount} transacci{activeCount === 1 ? "ón" : "ones"} en total
+            {voidedCount > 0 &&
+              `, sin contar ${voidedCount} anulada${voidedCount === 1 ? "" : "s"}`}
+            .
           </p>
 
           <ul className="edit-history-list">

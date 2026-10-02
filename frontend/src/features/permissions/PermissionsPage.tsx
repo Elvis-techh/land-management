@@ -74,6 +74,14 @@ const GROUPS: Array<{
           "un motivo.",
       },
       {
+        capability: "contract:amend",
+        label: "Registrar adendas",
+        hint:
+          "Un nuevo acuerdo sobre contratos vigentes: los cierra como «Reemplazado», con sus " +
+          "pagos y recibos intactos, y abre contratos nuevos con el nuevo precio y plazo. " +
+          "Exige escribir un motivo.",
+      },
+      {
         capability: "contract:cancel",
         label: "Cancelar contratos",
         hint: "Libera el lote y deja el contrato en el historial.",

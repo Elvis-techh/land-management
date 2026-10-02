@@ -76,6 +76,8 @@ interface ContractsPageProps {
   onOpenContract: (contract: Contract) => void;
   /** Opens the split preview for a purchase of several lots. */
   onSplitPayment: (contracts: Contract[]) => void;
+  /** Opens the adenda dialog for a purchase of several lots. */
+  onAmendPurchase: (contracts: Contract[]) => void;
   /**
    * Filters handed over by another screen — the Panel General drilling into
    * the overdue contracts. `null` when this screen was opened normally.
@@ -91,10 +93,12 @@ export function ContractsPage({
   user,
   onOpenContract,
   onSplitPayment,
+  onAmendPurchase,
   filterPreset = null,
   onPresetApplied,
 }: ContractsPageProps) {
   const canRecordPayment = can(user, "payment:record");
+  const canAmend = can(user, "contract:amend");
 
   const [search, setSearch] = useState("");
   const [filters, setFilters] = useState<ContractFilters>(DEFAULT_CONTRACT_FILTERS);
@@ -289,6 +293,27 @@ export function ContractsPage({
                               Repartir pago
                             </button>
                           )}
+
+                          {/* The new total and plazo for the whole purchase at
+                              once. Only over signed sales still running — a
+                              reservation is converted, not amended. */}
+                          {group.isOnePurchase &&
+                            canAmend &&
+                            group.contracts.every(
+                              (contract) =>
+                                contract.status === "active" && contract.kind === "contract",
+                            ) && (
+                              <button
+                                type="button"
+                                className="link-btn group-split"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  onAmendPurchase(group.contracts);
+                                }}
+                              >
+                                Adenda
+                              </button>
+                            )}
                         </td>
                         <td className="col-money">
                           {moneyCell(group.totalPrice, "is-total")}

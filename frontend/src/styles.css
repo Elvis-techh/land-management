@@ -1783,18 +1783,18 @@ tbody tr:hover {
   gap: 6px;
   flex: 0 1 auto;
   min-width: 0;
-  /* Three chips, not two, since the type joined them. Each one is `nowrap`, so
-     without this the group overflows its neighbours on the narrow middle
-     widths — wide enough that the row has not broken into lines yet, too
-     narrow to hold "REC-2026-0042 · Prima · Transferencia" beside a long
-     name. */
+  /* Up to four chips — type, contract, "sin recibo", "anulada". Each one is
+     `nowrap`, so without this the group overflows its neighbours on the narrow
+     middle widths — wide enough that the row has not broken into lines yet, too
+     narrow to hold "Prima · Adenda · CT-2026-011-A1" beside a long name. */
   flex-wrap: wrap;
   row-gap: 3px;
 }
 
 .txn-receipt,
 .txn-type,
-.txn-method {
+.txn-contract,
+.txn-void {
   padding: 2px 8px;
   border-radius: 10px;
   background: var(--paper);
@@ -1811,19 +1811,35 @@ tbody tr:hover {
 }
 
 /*
+ * Which contract the money landed on, shown only where a lot has had two — see
+ * `contractTag`. The new one is coloured, because it is the one being looked
+ * for; the old one is the same chip, quiet, so the pair still reads as a pair.
+ */
+.txn-contract.is-adenda {
+  background: var(--clay-bg);
+  border-color: var(--clay);
+  color: var(--clay-dark);
+}
+
+.txn-contract.is-replaced {
+  border-style: dashed;
+  color: var(--text-muted);
+}
+
+/*
  * The type reads as a word, not as a code.
  *
- * The receipt number and the method beside it are identifiers — a mono face is
- * right for something you compare character by character. "Prima" is a noun
- * being read, and in mono among two other mono chips it stopped looking like
- * the answer to a different question.
+ * The contract code beside it is an identifier — a mono face is right for
+ * something you compare character by character. "Prima" is a noun being read,
+ * and in mono among mono chips it stopped looking like the answer to a
+ * different question.
  */
 .txn-type {
   font-family: var(--font-body);
   letter-spacing: 0.01em;
 }
 
-.txn-method.is-void {
+.txn-void {
   background: var(--red-bg);
   border-color: var(--red);
   color: var(--red-dark);
@@ -1937,6 +1953,48 @@ tbody tr:hover {
 
 .txn-group-body .txn-main {
   padding-left: 42px;
+}
+
+/* Sits in `.txn-who`, its own row under the name and the "N transacciones"
+   line — never inline with the name, which already stretches to fill that
+   column and would drag a `.stamp` full-width with it. */
+.txn-amendment-badge {
+  align-self: flex-start;
+  margin-top: 1px;
+}
+
+/* The per-contract split of a customer's total: what `.txn-amount` up in the
+   head adds up to. Shown only when it touches more than one contract —
+   several lots, or a lot an adenda closed and replaced — so the common case
+   of one lot never renegotiated stays exactly as it was. */
+.txn-contract-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 16px;
+  border-bottom: 1px dashed var(--line);
+}
+
+.txn-contract-breakdown-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  row-gap: 4px;
+}
+
+.txn-contract-breakdown-code {
+  font-family: var(--font-mono);
+  font-size: 0.7188rem;
+  color: var(--text-secondary);
+}
+
+.txn-contract-breakdown-amount {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 500;
+  white-space: nowrap;
 }
 
 /* ---------- the whole window as a dropzone ---------- */
@@ -8593,4 +8651,166 @@ button.dash-tile.is-open {
 
 .apply-scope-row input:disabled {
   cursor: not-allowed;
+}
+
+/* ---------- adenda ---------- */
+
+/* Two purchase-level links under a customer's name, "Repartir pago · Adenda",
+   need air between them or they read as one link. */
+.group-split + .group-split {
+  margin-left: 14px;
+}
+
+/* The three ways to divide a new total, side by side while they fit. */
+.amend-split-choice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.amend-split-choice .settlement-option {
+  flex: 1 1 11rem;
+}
+
+/* Styled as a label because it heads the table the way a label heads a field,
+   without being attached to one input. */
+.amend-table-title {
+  color: var(--text-primary);
+  font-size: 0.7812rem;
+  font-weight: 500;
+}
+
+/* The last resort on a desktop, same as the split table: a figure must never
+   lose its last digits to a narrow column. On a phone the rows restack below. */
+.amend-table-scroll {
+  overflow-x: auto;
+}
+
+.amend-table {
+  width: 100%;
+}
+
+.amend-table th {
+  padding: 8px 10px;
+}
+
+.amend-table td {
+  padding: 10px;
+  white-space: nowrap;
+  vertical-align: top;
+}
+
+.amend-table th:first-child,
+.amend-table td:first-child {
+  padding-left: 0;
+}
+
+.amend-table th:last-child,
+.amend-table td:last-child {
+  padding-right: 0;
+}
+
+.amend-table .cell-sub {
+  display: block;
+}
+
+.amend-table .input-with-prefix,
+.amend-table .input-with-prefix input {
+  width: 100%;
+  min-width: 7.5rem;
+}
+
+/* A lot left out of the adenda keeps its contract as it is; dimmed so the eye
+   reads it as "not part of this". */
+.amend-table tr.is-excluded td {
+  opacity: 0.55;
+}
+
+.amend-include {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+/* Beats `.form-field input`, which would make the checkbox a full-width box. */
+.amend-include input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--ink, var(--clay));
+}
+
+.amend-total-line {
+  margin-top: 8px;
+}
+
+/* Between the two sides of an adenda on a contract amended twice. */
+.cp-divider {
+  border: 0;
+  border-top: 1px solid var(--line-strong);
+  margin: 10px 0;
+}
+
+/*
+ * On a phone each lot becomes a small card: the lot across the top, then its
+ * figures two by two, each carrying the column name it lost with the header.
+ */
+@media (max-width: 640px) {
+  .amend-table thead {
+    display: none;
+  }
+
+  .amend-table,
+  .amend-table tbody {
+    display: block;
+  }
+
+  .amend-table tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 8px 12px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .amend-table tr:last-child {
+    border-bottom: none;
+  }
+
+  .amend-table td,
+  .amend-table td:first-child,
+  .amend-table td:last-child {
+    display: block;
+    padding: 0;
+    border-bottom: none;
+    white-space: normal;
+    text-align: left;
+  }
+
+  .amend-table td:first-child {
+    grid-column: 1 / -1;
+  }
+
+  .amend-table td[data-label]:not(:first-child)::before {
+    content: attr(data-label);
+    display: block;
+    color: var(--text-secondary);
+    font-size: 0.6875rem;
+    margin-bottom: 2px;
+  }
+}
+
+/* A running contract offers six ways out of its panel, and six do not fit on
+   one line at 620px, let alone on a phone. Unwrapped, the row squeezed every
+   label onto three lines and pushed Cerrar past the left edge where it could
+   not be reached; wrapped, the buttons that do not fit start a second line. */
+.cp-actions {
+  flex-wrap: wrap;
+}
+
+.cp-actions > button {
+  white-space: nowrap;
 }

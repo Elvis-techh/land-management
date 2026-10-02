@@ -130,8 +130,8 @@ agreed with the business before schema implementation.
 
 ### What is actually wired today
 
-- **Contract lifecycle**: `active`, `paid_off`, `cancelled` and `defaulted` are
-  all reachable.
+- **Contract lifecycle**: `active`, `paid_off`, `cancelled`, `defaulted` and
+  `replaced` are all reachable.
   - `paid_off` is written by `syncContractLifecycle` — a contract settles when
     its replayed balance reaches zero, and reopens to `active` if a later void
     or correction brings the balance back. It still holds its lot (the lot is
@@ -141,6 +141,9 @@ agreed with the business before schema implementation.
     cancellation: a cancellation is a sale unwound by agreement, a default is the
     business writing off what it is owed. Both release the lot and both ask the
     settlement question below.
+  - `replaced` is written by an adenda — see below. Like a cancellation it
+    closes the contract for good, but the lot never comes free: it passes
+    straight to the contract that replaced it.
   - `draft` is still unwired — pending a decision on what a draft contract would
     do that a `reservation` does not.
 - **Reservation expiry** *is* wired, as a derivation rather than a sweep: a
@@ -154,6 +157,24 @@ agreed with the business before schema implementation.
   and needs `payment:reverse`). The decision is stored on
   `contracts.closed_settlement` and in the audit entry. "Transfer to another
   contract" is not yet an option.
+- **Adendas** (`POST /contracts/amendments`, capability `contract:amend`): new
+  terms agreed for contracts that are already running — a new total for a
+  purchase, a new plazo. Editing the contracts would be wrong: an edit is a
+  correction, and every old receipt would re-derive from the corrected price as
+  if it had always been the new one. So an adenda closes each contract as
+  `replaced` — its payments stay on it as income, `closed_settlement = 'none'` —
+  and writes a successor on the same lot, numbered after it (CT-2026-011 →
+  CT-2026-011-A1) and linked back through `contracts.replaces_contract_id`.
+  The motive, the date and who approved it live in `contract_amendments`.
+  - Old receipts keep every figure they were printed with, because nothing they
+    are derived from moves. Receipts issued after an adenda leave the replaced
+    contracts out of "Total Pagado Acumulado", so the new agreement's paper adds
+    up on its own.
+  - Money paid before an adenda is kept, never refunded and never credited to
+    the new price. A deal where it should count is the missing "transfer"
+    settlement above, not something to fake by lowering the new price.
+  - A payment on an old contract dated after the adenda is refused, since the
+    adenda would strand it there; it has to be moved first.
 
 ## API boundaries
 

@@ -33,6 +33,8 @@ export interface AuditEntry {
     | "reassign_lot"
     /** A contract the owner declared uncollectable — the customer defaulted. */
     | "default"
+    /** A contract closed by an adenda and succeeded by a new one on the same lot. */
+    | "replace"
     /** A contract whose balance reached zero: it settled on its own. */
     | "settle"
     /** A settled contract whose balance reopened (a payment reversed/corrected). */

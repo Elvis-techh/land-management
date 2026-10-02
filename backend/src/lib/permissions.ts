@@ -31,6 +31,7 @@ export const CAPABILITIES = [
   "contract:edit",
   "contract:reprice",
   "contract:reassign_lot",
+  "contract:amend",
   "contract:cancel",
   "contract:default",
   "payment:record",

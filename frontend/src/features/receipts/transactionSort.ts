@@ -1,7 +1,7 @@
 import type { SortDirection, SortRule } from "../../lib/sortRules";
 import { compareByRules } from "../../lib/sortRules";
 import { parseTimestamp } from "../../lib/time";
-import type { Transaction } from "../../types";
+import type { ContractStatus, Transaction } from "../../types";
 
 export type { SortDirection };
 
@@ -160,6 +160,15 @@ export function sortTransactions(
  * disagree about what exists. Customers with no payments simply do not appear —
  * this is a list of money that moved, not a directory of people.
  */
+/** One contract's slice of a customer's total — see `CustomerGroup.byContract`. */
+export interface ContractSubtotal {
+  contractId: string;
+  contractCode: string;
+  contractStatus: ContractStatus;
+  /** Non-reversed only, same filter as `CustomerGroup.totalCents`. */
+  totalCents: number;
+}
+
 export interface CustomerGroup {
   customerId: string;
   customerName: string;
@@ -167,6 +176,22 @@ export interface CustomerGroup {
   transactions: Transaction[];
   /** Non-reversed only: what this person has actually paid. */
   totalCents: number;
+  /**
+   * `totalCents`, split by the contract each payment actually landed on —
+   * ordered by contract code, which puts a predecessor right before the
+   * successor(s) an adenda gave it ("CT-2026-011" < "CT-2026-011-A1"). Length
+   * 1 for the common case of one lot never renegotiated; longer when the
+   * customer holds several lots, or a lot's contract was replaced.
+   *
+   * `contractStatus` is read live off the join in `GET /transactions`, not
+   * frozen at payment time — so a payment made while a contract was still
+   * `active` shows up here under `replaced` once an adenda later closes it.
+   * That is the point: this reflects what the contract IS now, which is what
+   * "part of the old contract vs. the new adenda" is actually asking.
+   */
+  byContract: ContractSubtotal[];
+  /** Any contract behind this total was closed by an adenda. */
+  hasAmendment: boolean;
   /** The most recent payment, for the collapsed summary line. */
   lastPaidOn: string;
 }
@@ -189,6 +214,8 @@ export function groupByCustomer(
         customerIdentification: transaction.customerIdentification,
         transactions: [transaction],
         totalCents: 0,
+        byContract: [],
+        hasAmendment: false,
         lastPaidOn: transaction.paidOn,
       });
     }
@@ -199,9 +226,28 @@ export function groupByCustomer(
     // "mayor a menor" expects it to hold within the person they expand.
     group.transactions = sortTransactions(group.transactions, sort);
 
-    group.totalCents = group.transactions
-      .filter((transaction) => transaction.reversedAt === null)
-      .reduce((sum, transaction) => sum + transaction.amount, 0);
+    const settled = group.transactions.filter((transaction) => transaction.reversedAt === null);
+
+    group.totalCents = settled.reduce((sum, transaction) => sum + transaction.amount, 0);
+
+    const byContract = new Map<string, ContractSubtotal>();
+    for (const transaction of settled) {
+      const existing = byContract.get(transaction.contractId);
+      if (existing) {
+        existing.totalCents += transaction.amount;
+      } else {
+        byContract.set(transaction.contractId, {
+          contractId: transaction.contractId,
+          contractCode: transaction.contractCode,
+          contractStatus: transaction.contractStatus as ContractStatus,
+          totalCents: transaction.amount,
+        });
+      }
+    }
+    group.byContract = [...byContract.values()].sort((a, b) =>
+      a.contractCode.localeCompare(b.contractCode, "es"),
+    );
+    group.hasAmendment = group.byContract.some((entry) => entry.contractStatus === "replaced");
 
     group.lastPaidOn = group.transactions.reduce(
       (latest, transaction) => (transaction.paidOn > latest ? transaction.paidOn : latest),

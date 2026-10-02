@@ -4,6 +4,8 @@ import { businessTimeZone } from "../../lib/businessTime";
 import type { MoneyView } from "../../lib/money";
 import { cents, formatMoney } from "../../lib/money";
 import { ROLE_LABELS } from "../../lib/permissions";
+import type { ContractStatus } from "../../types";
+import { STATUS_PRESENTATION } from "../contracts/contractPresentation";
 import type { AuditAction, AuditEvent, AuditPage as AuditPageData } from "./api";
 import { fetchAudit } from "./api";
 
@@ -18,6 +20,7 @@ const actionPresentation: Record<AuditAction, { label: string; stampClass: strin
   delete: { label: "Eliminado", stampClass: "stamp danger" },
   cancel: { label: "Cancelado", stampClass: "stamp danger" },
   reassign_lot: { label: "Lote corregido", stampClass: "stamp clay" },
+  replace: { label: "Reemplazado por adenda", stampClass: "stamp clay" },
   reverse: { label: "Reversado", stampClass: "stamp danger" },
   login: { label: "Inicio de sesión", stampClass: "stamp neutral" },
   logout: { label: "Cierre de sesión", stampClass: "stamp neutral" },
@@ -45,10 +48,31 @@ const fieldLabels: Record<string, string> = {
   role: "Rol",
   deactivatedAt: "Cuenta desactivada",
   passwordResetAt: "Contraseña cambiada",
+  // A contract's terms — edits, reprices, and the two sides of an adenda.
+  status: "Situación",
+  saleType: "Forma de pago",
+  salePriceCents: "Precio de venta",
+  downPaymentCents: "Prima",
+  termMonths: "Plazo (meses)",
+  monthlyPaymentCents: "Cuota",
+  dueDay: "Día de pago",
+  signedOn: "Firma",
+  firstDueOn: "Primera cuota",
+  paidToDateCents: "Pagado",
+  settlement: "Lo ya pagado",
+  replacedBy: "Reemplazado por",
+  replaces: "Reemplaza a",
 };
 
 /** Money fields are stored in centavos and must not be printed raw. */
-const moneyFields = new Set(["basePriceCents", "salePriceCents", "amountCents"]);
+const moneyFields = new Set([
+  "basePriceCents",
+  "salePriceCents",
+  "amountCents",
+  "downPaymentCents",
+  "monthlyPaymentCents",
+  "paidToDateCents",
+]);
 
 function formatValue(field: string, value: unknown, money: MoneyView): string {
   if (value === null || value === undefined) {
@@ -59,6 +83,10 @@ function formatValue(field: string, value: unknown, money: MoneyView): string {
   }
   if (field === "areaM2") {
     return `${String(value)} m²`;
+  }
+  // "replaced" is how the database spells it; "Reemplazado" is how it is said.
+  if (field === "status" && typeof value === "string" && value in STATUS_PRESENTATION) {
+    return STATUS_PRESENTATION[value as ContractStatus].label;
   }
   return String(value);
 }
