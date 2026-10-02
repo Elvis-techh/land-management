@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
+import { useRememberedState } from "../../lib/viewMemory";
 
 import { IconEdit, IconTrash } from "../../components/Icons";
 import { hasIdentification } from "../../lib/identification";
@@ -77,9 +78,12 @@ export function CustomersPage({
   const canDelete = can(user, "customer:delete");
   const showActions = canEdit || canDelete;
 
-  const [search, setSearch] = useState("");
-  const [filters, setFilters] = useState<CustomerFilters>(NO_CUSTOMER_FILTERS);
-  const [sort, setSort] = useState<CustomerSort>(DEFAULT_SORT);
+  const [search, setSearch] = useRememberedState("customers.search", "");
+  const [filters, setFilters] = useRememberedState<CustomerFilters>(
+    "customers.filters",
+    NO_CUSTOMER_FILTERS,
+  );
+  const [sort, setSort] = useRememberedState<CustomerSort>("customers.sort", DEFAULT_SORT);
 
   // Derived from state, recalculated when something it depends on changes.
   // There is no second copy of the list to keep in sync: search, filter and

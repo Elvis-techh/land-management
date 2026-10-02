@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
+import { useRememberedState } from "../../lib/viewMemory";
 
 import { IconChevronDown, IconPaperclip } from "../../components/Icons";
 import { getInitials } from "../../lib/initials";
@@ -100,20 +101,26 @@ export function ContractsPage({
   const canRecordPayment = can(user, "payment:record");
   const canAmend = can(user, "contract:amend");
 
-  const [search, setSearch] = useState("");
-  const [filters, setFilters] = useState<ContractFilters>(DEFAULT_CONTRACT_FILTERS);
-  const [sort, setSort] = useState<ContractSort>(DEFAULT_SORT);
+  const [search, setSearch] = useRememberedState("contracts.search", "");
+  const [filters, setFilters] = useRememberedState<ContractFilters>(
+    "contracts.filters",
+    DEFAULT_CONTRACT_FILTERS,
+  );
+  const [sort, setSort] = useRememberedState<ContractSort>("contracts.sort", DEFAULT_SORT);
   // Which customers are folded shut. Everything starts open: a collapsed group
   // hides a balance, and this screen exists to show balances.
-  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
+  const [collapsed, setCollapsed] = useRememberedState<ReadonlySet<string>>(
+    "contracts.collapsed",
+    new Set(),
+  );
 
   /*
    * Adopt filters another screen arrived with, exactly once.
    *
    * Applied in an effect and then handed back, rather than read straight into
-   * the initial state: this component is not remounted when the tab changes, so
-   * initial state would be whatever was there the first time Contratos was
-   * opened and the drill-down would work only once per session. Clearing it
+   * the initial state: the initial state is whatever the reader last left
+   * Contratos at (see `viewMemory`), and the preset has to win over that — it
+   * is also overwritten in place if Contratos is already open. Clearing it
    * afterwards is what lets the reader then change the filters freely — without
    * that, every render would reset them to the preset.
    */

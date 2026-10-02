@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
+import { useRememberedState } from "../../lib/viewMemory";
 
 import { IconArchive, IconEdit, IconRestore } from "../../components/Icons";
 import { formatAreaParts } from "../../lib/area";
@@ -72,10 +73,11 @@ export function LotsPage({
   const archivedLots = useMemo(() => lots.filter((lot) => lot.archivedAt !== null), [lots]);
 
   // `useState` gives a component memory. Calling the setter tells React to
-  // re-render with the new value — you never touch the DOM yourself.
-  const [filters, setFilters] = useState<LotFilters>(NO_FILTERS);
-  const [sort, setSort] = useState<LotSort>(DEFAULT_SORT);
-  const [showArchived, setShowArchived] = useState(false);
+  // re-render with the new value — you never touch the DOM yourself. The
+  // remembered flavour also keeps it across a tab change; see `viewMemory`.
+  const [filters, setFilters] = useRememberedState<LotFilters>("lots.filters", NO_FILTERS);
+  const [sort, setSort] = useRememberedState<LotSort>("lots.sort", DEFAULT_SORT);
+  const [showArchived, setShowArchived] = useRememberedState("lots.showArchived", false);
 
   // Derived from state, recalculated when something it depends on changes.
   // There is no second copy of the list to keep in sync, which is the whole

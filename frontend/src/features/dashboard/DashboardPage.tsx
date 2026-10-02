@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { useRememberedState } from "../../lib/viewMemory";
 import { Fragment, useEffect, useMemo, useState } from "react";
 
 import { IconChevronDown, IconDrag, IconEye, IconEyeOff } from "../../components/Icons";
@@ -170,10 +171,16 @@ export function DashboardPage({
    * month change would silently be showing a different month's rows under a
    * tile the reader is no longer looking at.
    */
-  const [openTile, setOpenTile] = useState<"payers" | "signed" | null>(null);
+  const [openTile, setOpenTile] = useRememberedState<"payers" | "signed" | null>(
+    "dashboard.openTile",
+    null,
+  );
 
   /** Which project's payments are open, by id. `null` for none. */
-  const [openProject, setOpenProject] = useState<string | null>(null);
+  const [openProject, setOpenProject] = useRememberedState<string | null>(
+    "dashboard.openProject",
+    null,
+  );
 
   const [layout, setLayout] = useState<DashboardLayout>(() => resolveLayout(data.layout));
   const [draft, setDraft] = useState<DashboardLayout | null>(null);
@@ -202,11 +209,24 @@ export function DashboardPage({
    * against the old one stays open. Keyed on the month rather than on the data
    * object, which is replaced on every live refresh — closing these panels
    * every few seconds would make them unusable.
+   *
+   * Only on an actual CHANGE of month, not on arrival: the panels are
+   * remembered across a tab change (see `viewMemory`), and an effect that also
+   * ran on mount would close them every time somebody came back. The month is
+   * remembered with them, so one changed while this screen was away still
+   * counts as a change.
    */
+  const [panelsMonth, setPanelsMonth] = useRememberedState("dashboard.panelsMonth", data.month);
+
   useEffect(() => {
+    if (data.month === panelsMonth) {
+      return;
+    }
+
     setOpenTile(null);
     setOpenProject(null);
-  }, [data.month]);
+    setPanelsMonth(data.month);
+  }, [data.month, panelsMonth, setOpenTile, setOpenProject, setPanelsMonth]);
 
   const visible = draft ?? layout;
   const hiddenIds = useMemo(() => new Set(visible.hidden), [visible.hidden]);

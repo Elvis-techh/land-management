@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRememberedState } from "../../lib/viewMemory";
 import type { RefObject } from "react";
 
 import { IconChevronDown, IconEdit, IconPaperclip, IconWhatsApp } from "../../components/Icons";
@@ -497,12 +498,24 @@ export function ReceiptsPage({
   onProofsChanged,
   onLedgerChanged,
 }: ReceiptsPageProps) {
-  const [view, setView] = useState<TransactionView>("date");
-  const [search, setSearch] = useState("");
-  const [sort, setSort] = useState<TransactionSort>(DEFAULT_SORT);
-  const [filters, setFilters] = useState<TransactionFilters>(NO_TRANSACTION_FILTERS);
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
-  const [selectedReceiptId, setSelectedReceiptId] = useState<string | null>(null);
+  const [view, setView] = useRememberedState<TransactionView>("receipts.view", "date");
+  const [search, setSearch] = useRememberedState("receipts.search", "");
+  const [sort, setSort] = useRememberedState<TransactionSort>("receipts.sort", DEFAULT_SORT);
+  const [filters, setFilters] = useRememberedState<TransactionFilters>(
+    "receipts.filters",
+    NO_TRANSACTION_FILTERS,
+  );
+  const [expanded, setExpanded] = useRememberedState<ReadonlySet<string>>(
+    "receipts.expanded",
+    new Set(),
+  );
+  // Remembered too: coming back to Recibos reopens the receipt that was being
+  // read. The detail effect below fetches it again on the way in, so a receipt
+  // changed in the meantime is shown as it is now, not as it was.
+  const [selectedReceiptId, setSelectedReceiptId] = useRememberedState<string | null>(
+    "receipts.selectedReceiptId",
+    null,
+  );
   /*
    * The ad-hoc sum: whichever rows somebody has checked by hand, independent
    * of the receipt shown in the panel. `lastCheckedId` is the anchor a
@@ -510,8 +523,16 @@ export function ReceiptsPage({
    * still checked, same as a spreadsheet keeps its anchor after a range is
    * clicked again to shrink it.
    */
-  const [checkedIds, setCheckedIds] = useState<ReadonlySet<string>>(new Set());
-  const [lastCheckedId, setLastCheckedId] = useState<string | null>(null);
+  // Remembered across a tab change. Rows that have since left the screen are
+  // pruned on the way back in by the same effect that prunes them on a search.
+  const [checkedIds, setCheckedIds] = useRememberedState<ReadonlySet<string>>(
+    "receipts.checkedIds",
+    new Set(),
+  );
+  const [lastCheckedId, setLastCheckedId] = useRememberedState<string | null>(
+    "receipts.lastCheckedId",
+    null,
+  );
   /*
    * A press-and-drag across several boxes, in progress.
    *

@@ -90,6 +90,7 @@ import {
 import { useWindowFileDrop } from "./lib/useFileDrop";
 import { windowDropTarget } from "./lib/windowDropTarget";
 import { isMobileViewport } from "./lib/viewport";
+import { forgetViewMemory } from "./lib/viewMemory";
 import { can } from "./lib/permissions";
 import type { AreaUnit } from "./lib/area";
 import type { Contract, CustomerRecord, Lot, Project, Receipt, TabId, Transaction } from "./types";
@@ -240,6 +241,7 @@ export default function App() {
   // generic "no se pudo cargar" card with a Retry button that could only 401
   // again.
   const handleSessionExpired = useCallback(() => {
+    forgetViewMemory();
     setSession({ status: "anonymous" });
   }, []);
 
@@ -618,6 +620,8 @@ export default function App() {
 
   const handleSignOut = async () => {
     await authApi.logout().catch(() => undefined);
+    // The next person to sign in on this phone starts from default views.
+    forgetViewMemory();
     setSession({ status: "anonymous" });
   };
 
