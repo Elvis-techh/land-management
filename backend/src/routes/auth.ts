@@ -4,7 +4,6 @@ import { z } from "zod";
 
 import { users } from "../db/schema.js";
 import { resolveCapabilities } from "../lib/capabilities.js";
-import { recordAudit } from "../lib/audit.js";
 import { verifyPassword } from "../lib/password.js";
 import type { Role } from "../lib/permissions.js";
 import { SESSION_COOKIE, createSession, destroySession } from "../auth/session.js";
@@ -90,12 +89,14 @@ export const authRoutes: FastifyPluginAsync<AuthRoutesOptions> = async (app, opt
       }
 
       const sessionId = createSession(app.db, user.id, options.sessionDays);
-      recordAudit(app.db, {
-        actorId: user.id,
-        entityType: "user",
-        entityId: user.id,
-        action: "login",
-      });
+
+      // Overwritten, not appended: the Usuarios screen wants the latest sign-in
+      // and nothing else, so a login leaves no row in the Historial.
+      app.db
+        .update(users)
+        .set({ lastSignInAt: new Date().toISOString() })
+        .where(eq(users.id, user.id))
+        .run();
 
       reply.setCookie(SESSION_COOKIE, sessionId, {
         path: "/",

@@ -643,8 +643,11 @@ Target is under a minute, most of it spent reading.
   changed before saving. This needs a migration, so back up first. It is what
   lets you answer "did the AI get this wrong, or did I mistype it" in six
   months, and it is the data that tells you when auto-posting is safe.
-- **Audit note** on payments created through this path, via the existing
-  `recordAudit` in [lib/audit.ts](../backend/src/lib/audit.ts).
+- **No audit note.** Creating a receipt is not written to the Historial,
+  however it was entered — see `AuditEntry` in
+  [lib/audit.ts](../backend/src/lib/audit.ts) — so there is nothing here to add
+  one to. "Did the AI read this or did somebody type it" is answered by the
+  provenance table above, which is where it belongs.
 - **Rate limit** the extraction endpoint per user, following the pattern
   `LOGIN_ATTEMPTS_PER_MINUTE` already establishes.
 

@@ -74,14 +74,14 @@ describe("a contract that is paid in full", async () => {
     assert.equal(view.status, "paid_off");
     assert.equal(view.balance, 0);
 
-    // The transition is in the history.
-    const settle = db
-      .select()
-      .from(auditEvents)
-      .where(eq(auditEvents.entityId, contractId))
-      .all()
-      .find((row) => row.action === "settle");
-    assert.ok(settle, "the settle transition must be audited");
+    // The payment that caused it is the record; the status following it is not
+    // a second event. See `syncContractLifecycle`.
+    const rows = db.select().from(auditEvents).where(eq(auditEvents.entityId, contractId)).all();
+    assert.equal(
+      rows.some((row) => row.action === "settle"),
+      false,
+      "a settle is a consequence, not a row in the Historial",
+    );
   });
 
   it("still holds its lot — the lot reads as sold, not available", async () => {
@@ -127,13 +127,14 @@ describe("a contract that is paid in full", async () => {
 
     assert.equal(statusOf(), "active");
 
-    const reopen = db
-      .select()
-      .from(auditEvents)
-      .where(eq(auditEvents.entityId, contractId))
-      .all()
-      .find((row) => row.action === "reopen");
-    assert.ok(reopen, "the reopen transition must be audited");
+    // The void is in the history under the receipt it took back; the contract
+    // going back to active is not filed separately.
+    const rows = db.select().from(auditEvents).where(eq(auditEvents.entityId, contractId)).all();
+    assert.equal(
+      rows.some((row) => row.action === "reopen"),
+      false,
+      "a reopen is a consequence, not a row in the Historial",
+    );
   });
 });
 

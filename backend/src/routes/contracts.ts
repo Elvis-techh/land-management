@@ -772,8 +772,6 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
         return reply.code(400).send({ error: "invalid_terms", message: problem });
       }
 
-      const actor = request.user!;
-
       const lot = app.db.select().from(lots).where(eq(lots.id, parsed.data.lotId)).get();
 
       if (!lot || lot.archivedAt !== null) {
@@ -894,27 +892,8 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
             .returning()
             .get();
 
-          recordAudit(tx, {
-            actorId: actor.id,
-            entityType: "contract",
-            entityId: next.id,
-            action: "create",
-            after: {
-              code: next.code,
-              lotId: next.lotId,
-              customerId: next.customerId,
-              saleGroupId: next.saleGroupId,
-              kind: next.kind,
-              saleType: next.saleType,
-              salePriceCents: next.salePriceCents,
-              downPaymentCents: next.downPaymentCents,
-              termMonths: next.termMonths,
-              monthlyPaymentCents: next.monthlyPaymentCents,
-              dueDay: next.dueDay,
-              signedOn: next.signedOn,
-            },
-          });
-
+          // Not in the Historial: the contract is its own record, and an edit's
+          // `before` carries the terms it had. See `AuditEntry`.
           return next;
         }),
       );
@@ -1069,7 +1048,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
 
         // A new price can push the balance to zero (settling the contract) or,
         // on a paid-off contract repriced upward, reopen it.
-        syncContractLifecycle(tx, existing.id, actor.id);
+        syncContractLifecycle(tx, existing.id);
 
         return next;
       });
@@ -1382,7 +1361,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
               .run();
 
             return body.lines.map((line) => {
-              const { contract: previous, lotCode } = byId.get(line.contractId)!;
+              const { contract: previous } = byId.get(line.contractId)!;
 
               const paidToDateCents =
                 tx
@@ -1444,17 +1423,14 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
                 .returning()
                 .get();
 
-              // `code` rides on both sides so the Historial can name the
-              // contract; it does not change, so it is never listed as a diff.
               recordAudit(tx, {
                 actorId: actor.id,
                 entityType: "contract",
                 entityId: previous.id,
                 action: "replace",
                 reason: body.reason,
-                before: { code: previous.code, status: previous.status, paidToDateCents },
+                before: { status: previous.status, paidToDateCents },
                 after: {
-                  code: previous.code,
                   status: "replaced",
                   replacedBy: next.code,
                   settlement,
@@ -1462,31 +1438,14 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
                 },
               });
 
-              recordAudit(tx, {
-                actorId: actor.id,
-                entityType: "contract",
-                entityId: next.id,
-                action: "create",
-                reason: body.reason,
-                after: {
-                  code: next.code,
-                  replaces: previous.code,
-                  lotCode,
-                  saleGroupId: next.saleGroupId,
-                  saleType: next.saleType,
-                  salePriceCents: next.salePriceCents,
-                  downPaymentCents: next.downPaymentCents,
-                  termMonths: next.termMonths,
-                  monthlyPaymentCents: next.monthlyPaymentCents,
-                  dueDay: next.dueDay,
-                  signedOn: next.signedOn,
-                  firstDueOn: next.firstDueOn,
-                },
-              });
+              // The successor gets no row of its own: creating a contract is not
+              // filed, and the new terms are on the contract itself, linked back
+              // by `replaces_contract_id` and explained by the amendment. The
+              // row above is the part that took something away.
 
               // Nothing is paid on it yet, but a price of zero is settled from
               // the start — the same rule every other write follows.
-              syncContractLifecycle(tx, next.id, actor.id);
+              syncContractLifecycle(tx, next.id);
 
               return { id: next.id, code: next.code, replacesContractId: previous.id };
             });
@@ -1768,7 +1727,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
     { onRequest: app.requireCapability("contract:create") },
     async (request, reply) => {
       const contract = app.db
-        .select({ id: contracts.id, code: contracts.code })
+        .select({ id: contracts.id })
         .from(contracts)
         .where(eq(contracts.id, request.params.id))
         .get();
@@ -1840,31 +1799,23 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
 
       let createdAt = "";
 
+      // Attaching is not in the Historial — adding a file takes nothing away.
+      // Removing one is; see DELETE /contract-documents/:id.
       try {
-        app.db.transaction((tx) => {
-          createdAt =
-            tx
-              .insert(contractDocuments)
-              .values({
-                id: documentId,
-                contractId: contract.id,
-                storageKey,
-                fileName,
-                contentType: part.mimetype,
-                byteSize: buffer.byteLength,
-                uploadedBy: request.user!.id,
-              })
-              .returning({ createdAt: contractDocuments.createdAt })
-              .get()?.createdAt ?? "";
-
-          recordAudit(tx, {
-            actorId: request.user!.id,
-            entityType: "contract",
-            entityId: contract.id,
-            action: "update",
-            after: { attachedDocument: fileName, contractCode: contract.code },
-          });
-        });
+        createdAt =
+          app.db
+            .insert(contractDocuments)
+            .values({
+              id: documentId,
+              contractId: contract.id,
+              storageKey,
+              fileName,
+              contentType: part.mimetype,
+              byteSize: buffer.byteLength,
+              uploadedBy: request.user!.id,
+            })
+            .returning({ createdAt: contractDocuments.createdAt })
+            .get()?.createdAt ?? "";
       } catch (error) {
         // The row is what makes the file findable. If it could not be written,
         // the bytes on disk are unreachable rubbish, so they go too rather than

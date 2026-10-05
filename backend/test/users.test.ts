@@ -100,7 +100,7 @@ describe("user accounts", async () => {
     assert.equal(owner.role, "owner");
     assert.equal(owner.isSelf, true);
     assert.equal(owner.deactivatedAt, null);
-    // Read back out of the audit log rather than from a stored column.
+    // Stamped on the account at sign-in, not read back out of the Historial.
     assert.ok(owner.lastSignInAt);
     assert.equal(JSON.stringify(response.json()).includes("scrypt$"), false);
   });

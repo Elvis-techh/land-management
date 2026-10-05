@@ -2,11 +2,10 @@ import { eq } from "drizzle-orm";
 
 import type { Db } from "../db/client.js";
 import { contracts, payments } from "../db/schema.js";
-import { recordAudit } from "./audit.js";
 import { replayContract } from "./ledger.js";
 
 /** A database or transaction handle — enough of one to read and settle a contract. */
-type LifecycleWriter = Pick<Db, "select" | "update" | "insert">;
+type LifecycleWriter = Pick<Db, "select" | "update">;
 
 /**
  * Move a contract between `active` and `paid_off` to match its replayed balance.
@@ -21,13 +20,14 @@ type LifecycleWriter = Pick<Db, "select" | "update" | "insert">;
  * reason, and a later payment correction must not silently reopen it. Those are
  * left untouched here.
  *
- * The audit row is written against the actor who triggered the payment change.
- * There is always one, so this never needs a system user.
+ * Nothing is written to the Historial. A settle or a reopen is only ever the
+ * consequence of a payment change, and that change is already in the history
+ * under the person who made it — a second row saying the status followed would
+ * be the same fact twice.
  */
 export function syncContractLifecycle(
   db: LifecycleWriter,
   contractId: string,
-  actorId: string,
 ): "settled" | "reopened" | "unchanged" {
   const contract = db
     .select({
@@ -69,15 +69,6 @@ export function syncContractLifecycle(
     .set({ status: target, updatedAt: new Date().toISOString() })
     .where(eq(contracts.id, contractId))
     .run();
-
-  recordAudit(db, {
-    actorId,
-    entityType: "contract",
-    entityId: contractId,
-    action: target === "paid_off" ? "settle" : "reopen",
-    before: { status: contract.status },
-    after: { status: target, balanceCents },
-  });
 
   return target === "paid_off" ? "settled" : "reopened";
 }

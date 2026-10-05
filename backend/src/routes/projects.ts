@@ -165,32 +165,20 @@ export const projectRoutes: FastifyPluginAsync = async (app) => {
         });
       }
 
-      const actor = request.user!;
       const now = new Date().toISOString();
 
-      const created = app.db.transaction((tx) => {
-        const next = tx
-          .insert(projects)
-          .values({
-            id: randomUUID(),
-            name: parsed.data.name,
-            areaUnit: parsed.data.areaUnit,
-            createdAt: now,
-            updatedAt: now,
-          })
-          .returning()
-          .get();
-
-        recordAudit(tx, {
-          actorId: actor.id,
-          entityType: "project",
-          entityId: next.id,
-          action: "create",
-          after: { name: next.name, areaUnit: next.areaUnit },
-        });
-
-        return next;
-      });
+      // Not in the Historial: a new project is its own record. See `AuditEntry`.
+      const created = app.db
+        .insert(projects)
+        .values({
+          id: randomUUID(),
+          name: parsed.data.name,
+          areaUnit: parsed.data.areaUnit,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .returning()
+        .get();
 
       return reply.code(201).send({
         project: { id: created.id, name: created.name, areaUnit: created.areaUnit },

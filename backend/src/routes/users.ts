@@ -4,7 +4,7 @@ import { and, asc, eq, isNull, ne, sql } from "drizzle-orm";
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 
-import { auditEvents, users } from "../db/schema.js";
+import { users } from "../db/schema.js";
 import { deleteSessionsForUser } from "../auth/session.js";
 import { recordAudit } from "../lib/audit.js";
 import { hashPassword } from "../lib/password.js";
@@ -122,40 +122,18 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
         email: users.email,
         role: users.role,
         deactivatedAt: users.deactivatedAt,
+        // Kept on the account itself. It used to be read back out of the
+        // Historial, one `login` row per sign-in; see `AuditEntry`.
+        lastSignInAt: users.lastSignInAt,
         createdAt: users.createdAt,
       })
       .from(users)
       .orderBy(asc(users.name))
       .all();
 
-    /*
-     * When each account last signed in, read back out of the audit log.
-     *
-     * There is no `last_login` column, and there should not be: the login
-     * events are already written, and a stored column would be a second copy of
-     * the same fact that can disagree with the history beside it.
-     *
-     * One grouped query for everybody, joined in memory, rather than one query
-     * per account. The list is a handful of rows, but the shape of the mistake
-     * is not.
-     */
-    const signIns = new Map(
-      app.db
-        .select({
-          userId: auditEvents.entityId,
-          at: sql<string>`MAX(${auditEvents.createdAt})`,
-        })
-        .from(auditEvents)
-        .where(and(eq(auditEvents.entityType, "user"), eq(auditEvents.action, "login")))
-        .groupBy(auditEvents.entityId)
-        .all()
-        .map((row) => [row.userId, row.at] as const),
-    );
-
     return reply.send({
       users: rows.map((row) => ({
         ...row,
-        lastSignInAt: signIns.get(row.id) ?? null,
         // So the screen can grey out the actions that would lock this person
         // out of their own session. The server refuses them anyway.
         isSelf: row.id === request.user!.id,

@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { after, describe, it } from "node:test";
 
-import { auditEvents } from "../src/db/schema.js";
-import { OWNER_PASSWORD, buildTestApp, login } from "./helpers.js";
+import { eq } from "drizzle-orm";
+
+import { auditEvents, users } from "../src/db/schema.js";
+import { OWNER_PASSWORD, STAFF_PASSWORD, buildTestApp, login } from "./helpers.js";
 
 describe("authentication", async () => {
   const { app, db, sqlite } = await buildTestApp();
@@ -104,13 +106,39 @@ describe("authentication", async () => {
     assert.equal(response.statusCode, 401);
   });
 
-  it("records every login in the audit trail", async () => {
+  it("leaves no row in the Historial for a login", async () => {
+    // A permanent row per sign-in said only that somebody opened the app. See
+    // `AuditEntry`.
     const before = db.select().from(auditEvents).all().length;
     await login(app, "owner@test.hn", OWNER_PASSWORD);
-    const rows = db.select().from(auditEvents).all();
 
-    assert.equal(rows.length, before + 1);
-    assert.equal(rows.at(-1)?.action, "login");
+    assert.equal(db.select().from(auditEvents).all().length, before);
+  });
+
+  it("keeps the last sign-in on the account instead", async () => {
+    const lastSignIn = () =>
+      db
+        .select({ at: users.lastSignInAt })
+        .from(users)
+        .where(eq(users.email, "staff@test.hn"))
+        .get()?.at;
+
+    assert.equal(lastSignIn(), null, "an account that has never signed in has no date");
+
+    // A wrong password is not a sign-in.
+    await app.inject({
+      method: "POST",
+      url: "/api/auth/login",
+      payload: { email: "staff@test.hn", password: "incorrecta" },
+    });
+    assert.equal(lastSignIn(), null);
+
+    const started = Date.now();
+    await login(app, "staff@test.hn", STAFF_PASSWORD);
+
+    const stamped = lastSignIn();
+    assert.ok(stamped, "a successful sign-in stamps the account");
+    assert.ok(Date.parse(stamped) >= started, "and the stamp is when it happened");
   });
 });
 

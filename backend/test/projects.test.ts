@@ -181,7 +181,7 @@ describe("projects", async () => {
     assert.equal((await list()).find((project) => project.id === empty.id)?.archivedAt, null);
   });
 
-  it("files every project change in the history", async () => {
+  it("files every change to a project in the history, and not its creation", async () => {
     const events = (
       await app.inject({ method: "GET", url: "/api/audit", headers: { cookie: ownerCookie } })
     ).json().events;
@@ -190,9 +190,12 @@ describe("projects", async () => {
       .filter((event: { entityType: string }) => event.entityType === "project")
       .map((event: { action: string }) => event.action);
 
-    for (const action of ["create", "update", "archive", "restore"]) {
+    for (const action of ["update", "archive", "restore"]) {
       assert.ok(actions.includes(action), `expected a project ${action} in the history`);
     }
+
+    // Creating one is not a change to anything on file.
+    assert.equal(actions.includes("create"), false);
   });
 });
 

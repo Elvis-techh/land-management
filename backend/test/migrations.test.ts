@@ -390,3 +390,107 @@ describe("0014 — dropping the receipt that was never superseded", () => {
     sqlite.close();
   });
 });
+
+/** `users` and `audit_events` as they stood before 0017: one `login` row per sign-in. */
+function databaseBefore0017() {
+  const { db, sqlite } = createDb(":memory:");
+
+  sqlite.exec(`
+    CREATE TABLE users (
+      id text PRIMARY KEY NOT NULL,
+      email text NOT NULL,
+      name text NOT NULL
+    );
+    CREATE TABLE audit_events (
+      id text PRIMARY KEY NOT NULL,
+      actor_id text NOT NULL,
+      entity_type text NOT NULL,
+      entity_id text NOT NULL,
+      action text NOT NULL,
+      created_at text DEFAULT CURRENT_TIMESTAMP NOT NULL
+    );
+  `);
+
+  return { db, sqlite };
+}
+
+describe("0017 — the last sign-in moves onto the account", () => {
+  const signIn = (sqlite: ReturnType<typeof createDb>["sqlite"], id: string, user: string, at: string) =>
+    sqlite
+      .prepare(
+        "INSERT INTO audit_events (id, actor_id, entity_type, entity_id, action, created_at) VALUES (?, ?, 'user', ?, 'login', ?)",
+      )
+      .run(id, user, user, at);
+
+  const lastSignInOf = (sqlite: ReturnType<typeof createDb>["sqlite"], id: string) =>
+    (
+      sqlite.prepare("SELECT last_sign_in_at AS at FROM users WHERE id = ?").get(id) as {
+        at: string | null;
+      }
+    ).at;
+
+  it("backfills each account from its newest login, so nobody's date goes blank on deploy", () => {
+    const { db, sqlite } = databaseBefore0017();
+
+    sqlite.exec(`
+      INSERT INTO users (id, email, name) VALUES ('u1', 'ana@test.hn', 'Ana');
+      INSERT INTO users (id, email, name) VALUES ('u2', 'beto@test.hn', 'Beto');
+      INSERT INTO users (id, email, name) VALUES ('u3', 'nunca@test.hn', 'Nunca entró');
+    `);
+    signIn(sqlite, "e1", "u1", "2026-09-01 10:00:00");
+    signIn(sqlite, "e2", "u1", "2026-09-29 20:00:54");
+    signIn(sqlite, "e3", "u2", "2026-08-30 07:15:00");
+
+    runMigrations(db, sqlite, folderWith("0017_user_last_sign_in"));
+
+    // The newest one, restated as the ISO text every other timestamp on `users`
+    // is written in.
+    assert.equal(lastSignInOf(sqlite, "u1"), "2026-09-29T20:00:54Z");
+    assert.equal(lastSignInOf(sqlite, "u2"), "2026-08-30T07:15:00Z");
+    // Never signed in: nothing to read, so nothing invented.
+    assert.equal(lastSignInOf(sqlite, "u3"), null);
+
+    sqlite.close();
+  });
+
+  it("reads only logins, and only the account's own", () => {
+    const { db, sqlite } = databaseBefore0017();
+
+    sqlite.exec(`
+      INSERT INTO users (id, email, name) VALUES ('u1', 'ana@test.hn', 'Ana');
+      INSERT INTO users (id, email, name) VALUES ('u2', 'beto@test.hn', 'Beto');
+      -- Newer than any login, but an edit of Ana's account, not a sign-in.
+      INSERT INTO audit_events (id, actor_id, entity_type, entity_id, action, created_at)
+        VALUES ('e1', 'u2', 'user', 'u1', 'update', '2026-10-01 09:00:00');
+      -- A login-shaped row about something that is not a user.
+      INSERT INTO audit_events (id, actor_id, entity_type, entity_id, action, created_at)
+        VALUES ('e2', 'u2', 'lot', 'u1', 'login', '2026-10-01 09:30:00');
+    `);
+    signIn(sqlite, "e3", "u1", "2026-09-02 08:00:00");
+
+    runMigrations(db, sqlite, folderWith("0017_user_last_sign_in"));
+
+    assert.equal(lastSignInOf(sqlite, "u1"), "2026-09-02T08:00:00Z");
+    assert.equal(lastSignInOf(sqlite, "u2"), null);
+
+    sqlite.close();
+  });
+
+  it("deletes nothing: the old login rows stay until somebody chooses to remove them", () => {
+    const { db, sqlite } = databaseBefore0017();
+
+    sqlite.exec(`INSERT INTO users (id, email, name) VALUES ('u1', 'ana@test.hn', 'Ana');`);
+    signIn(sqlite, "e1", "u1", "2026-09-01 10:00:00");
+    signIn(sqlite, "e2", "u1", "2026-09-29 20:00:54");
+
+    runMigrations(db, sqlite, folderWith("0017_user_last_sign_in"));
+
+    const logins = sqlite
+      .prepare("SELECT COUNT(*) AS n FROM audit_events WHERE action = 'login'")
+      .get() as { n: number };
+
+    assert.equal(logins.n, 2);
+
+    sqlite.close();
+  });
+});

@@ -229,41 +229,26 @@ export const customerRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(409).send({ error: "duplicate_identification", message: clash });
       }
 
-      const actor = request.user!;
       const now = new Date().toISOString();
 
-      const created = app.db.transaction((tx) => {
-        const next = tx
-          .insert(customers)
-          .values({
-            id: randomUUID(),
-            fullName: parsed.data.fullName,
-            identification,
-            phone,
-            email: parsed.data.email ?? null,
-            address: parsed.data.address ?? null,
-            customerSince: parsed.data.customerSince,
-            notes: parsed.data.notes ?? null,
-            createdAt: now,
-            updatedAt: now,
-          })
-          .returning()
-          .get();
-
-        recordAudit(tx, {
-          actorId: actor.id,
-          entityType: "customer",
-          entityId: next.id,
-          action: "create",
-          after: {
-            fullName: next.fullName,
-            identification: next.identification,
-            phone: next.phone,
-          },
-        });
-
-        return next;
-      });
+      // Not in the Historial: a new customer is its own record, and an edit's
+      // `before` says what it used to be. See `AuditEntry`.
+      const created = app.db
+        .insert(customers)
+        .values({
+          id: randomUUID(),
+          fullName: parsed.data.fullName,
+          identification,
+          phone,
+          email: parsed.data.email ?? null,
+          address: parsed.data.address ?? null,
+          customerSince: parsed.data.customerSince,
+          notes: parsed.data.notes ?? null,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .returning()
+        .get();
 
       return reply.code(201).send({
         customer: { id: created.id, fullName: created.fullName, phone: created.phone },

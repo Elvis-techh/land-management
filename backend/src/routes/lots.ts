@@ -206,8 +206,6 @@ export const lotRoutes: FastifyPluginAsync = async (app) => {
       });
     }
 
-    const actor = request.user!;
-
     const project = app.db
       .select()
       .from(projects)
@@ -229,38 +227,21 @@ export const lotRoutes: FastifyPluginAsync = async (app) => {
 
     const now = new Date().toISOString();
 
-    const created = app.db.transaction((tx) => {
-      const next = tx
-        .insert(lots)
-        .values({
-          id: randomUUID(),
-          projectId: project.id,
-          code: parsed.data.code,
-          areaM2: parsed.data.areaM2,
-          basePriceCents: parsed.data.basePriceCents,
-          createdAt: now,
-          updatedAt: now,
-        })
-        .returning()
-        .get();
-
-      recordAudit(tx, {
-        actorId: actor.id,
-        entityType: "lot",
-        entityId: next.id,
-        action: "create",
-        // Nothing existed before, so `before` stays absent rather than being a
-        // row of nulls pretending to be a previous state.
-        after: {
-          code: next.code,
-          projectId: next.projectId,
-          areaM2: next.areaM2,
-          basePriceCents: next.basePriceCents,
-        },
-      });
-
-      return next;
-    });
+    // Not in the Historial: a new lot is its own record, and an edit's `before`
+    // says what it used to be. See `AuditEntry`.
+    const created = app.db
+      .insert(lots)
+      .values({
+        id: randomUUID(),
+        projectId: project.id,
+        code: parsed.data.code,
+        areaM2: parsed.data.areaM2,
+        basePriceCents: parsed.data.basePriceCents,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning()
+      .get();
 
     return reply.code(201).send({ lot: { id: created.id, code: created.code } });
   });

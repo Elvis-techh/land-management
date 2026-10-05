@@ -91,6 +91,11 @@ describe("customers", async () => {
 
     assert.equal(row?.phone, "+50498001122");
     assert.equal(row?.notes, "Pregunta por lotes de esquina.");
+
+    // A new customer is its own record. Changing or deleting one is what the
+    // Historial keeps — see `AuditEntry`.
+    const filed = db.select().from(auditEvents).where(eq(auditEvents.entityId, row!.id)).all();
+    assert.deepEqual(filed, []);
   });
 
   it("refuses an identity number already on file, naming who holds it", async () => {

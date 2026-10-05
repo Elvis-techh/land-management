@@ -9,6 +9,30 @@ import { auditEvents } from "../db/schema.js";
  */
 type AuditWriter = Pick<Db, "insert">;
 
+/**
+ * What the Historial keeps, and what it deliberately does not.
+ *
+ * This is a small office app on a disk it shares with another business, not a
+ * compliance system, and an audit row is never deleted. So it records the
+ * moments somebody changed, took back or destroyed something that was already
+ * on file — an edit, a reprice, an archive, a restore, a delete, a void, a
+ * cancellation, a removed file — and nothing else. Left out on purpose:
+ *
+ *  - Creating a lot, a contract, a project, a customer or a receipt. The row
+ *    itself is the record, and a later edit's `before` says what it used to be.
+ *    A void is the one exception: it takes the whole receipt back, so that row
+ *    restates the receipt in full. (A new user account is still filed — who was
+ *    given access to the system is worth knowing.)
+ *  - Sign-ins. A permanent row per sign-in that said only "somebody opened
+ *    the app"; `users.last_sign_in_at` keeps the one fact anybody read.
+ *  - A contract settling or reopening, which only ever follows a payment that
+ *    is already in the history.
+ *  - Receipt notes, and a file being attached. Only removing one is recorded.
+ *
+ * Before adding a call to `recordAudit`, ask whether somebody will ever need to
+ * know who did it and what it replaced. If the answer is "it was added", it is
+ * not worth a row.
+ */
 export interface AuditEntry {
   actorId: string;
   entityType:
@@ -35,13 +59,7 @@ export interface AuditEntry {
     | "default"
     /** A contract closed by an adenda and succeeded by a new one on the same lot. */
     | "replace"
-    /** A contract whose balance reached zero: it settled on its own. */
-    | "settle"
-    /** A settled contract whose balance reopened (a payment reversed/corrected). */
-    | "reopen"
-    | "reverse"
-    | "login"
-    | "logout";
+    | "reverse";
   reason?: string | null;
   before?: unknown;
   after?: unknown;

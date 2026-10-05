@@ -47,6 +47,15 @@ export const users = sqliteTable(
      * whenever its session happened to expire.
      */
     deactivatedAt: text("deactivated_at"),
+    /**
+     * When this account last signed in, or NULL if it never has.
+     *
+     * One value that is overwritten, not a row per sign-in. The Usuarios screen
+     * used to read this back out of the Historial, which meant every login was
+     * a permanent row there, for the sake of one date. See `AuditEntry` in
+     * src/lib/audit.ts for what the Historial keeps instead.
+     */
+    lastSignInAt: text("last_sign_in_at"),
     createdAt: timestamp("created_at"),
   },
   (table) => [uniqueIndex("users_email_unique").on(table.email)],
@@ -878,6 +887,10 @@ export const payments = sqliteTable(
  * Written for every role including the owner. `reason` is only populated for
  * the few actions that demand a justification (archiving, cancelling,
  * reversing, repricing) — asking on every edit trains people to type "x".
+ *
+ * Rows are never deleted, so what is worth a row is decided where they are
+ * written. See `AuditEntry` in src/lib/audit.ts. Rows from before that policy
+ * — sign-ins, creations, settles — are still here, and still readable.
  */
 export const auditEvents = sqliteTable("audit_events", {
   id: text("id").primaryKey(),
@@ -887,7 +900,7 @@ export const auditEvents = sqliteTable("audit_events", {
   /** "lot" | "project" | "customer" | "contract" | "payment" | "user" | "role" | "exchange_rate" */
   entityType: text("entity_type").notNull(),
   entityId: text("entity_id").notNull(),
-  /** "create" | "update" | "archive" | "cancel" | "reverse" | "login" */
+  /** "update" | "reprice" | "archive" | "restore" | "delete" | "cancel" | "reverse" … */
   action: text("action").notNull(),
   reason: text("reason"),
   /** JSON snapshots of the changed fields, so a diff can be shown later. */

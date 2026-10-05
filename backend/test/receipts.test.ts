@@ -779,39 +779,91 @@ describe("permissions and history", () => {
     await app.close();
   });
 
-  it("files the issue and the void in the history", async () => {
+  it("files nothing when a receipt is issued, and the void restates it in full", async () => {
     const { app, ids } = await buildTestApp();
     const cookie = await login(app, "owner@test.hn", OWNER_PASSWORD);
 
-    const issued = await app.inject({
-      method: "POST",
-      url: "/api/receipts",
-      headers: { cookie },
-      payload: {
-        customerId: ids.customerId,
-        paidOn: "2026-03-15",
-        method: "cash",
-        lines: [{ contractId: ids.contractId, amountCents: lempiras(1_000), type: "installment" }],
-      },
-    });
+    const issue = async (payload: Record<string, unknown>) =>
+      (
+        await app.inject({
+          method: "POST",
+          url: "/api/receipts",
+          headers: { cookie },
+          payload: {
+            customerId: ids.customerId,
+            lines: [
+              { contractId: ids.contractId, amountCents: lempiras(1_000), type: "installment" },
+            ],
+            ...payload,
+          },
+        })
+      ).json().receipt;
 
-    await app.inject({
-      method: "POST",
-      url: `/api/receipts/${issued.json().receipt.id}/void`,
-      headers: { cookie },
-      payload: { reason: "Depósito no acreditado por el banco emisor." },
-    });
+    const cash = await issue({ paidOn: "2026-03-15", method: "cash" });
+    const transfer = await issue({ paidOn: "2026-03-20", method: "transfer", reference: "TRX-4471" });
 
-    const history = await app.inject({ method: "GET", url: "/api/audit", headers: { cookie } });
-    const events = history
-      .json()
-      .events.filter((event: any) => event.entityId === issued.json().receipt.id);
+    const eventsOf = async () =>
+      (await app.inject({ method: "GET", url: "/api/audit?limit=200", headers: { cookie } }))
+        .json()
+        .events.filter(
+          (event: any) => event.entityId === cash.id || event.entityId === transfer.id,
+        );
 
-    assert.equal(events.length, 2);
+    // Issuing is not a change to anything on file.
+    assert.deepEqual(await eventsOf(), []);
+
+    const reason = "Depósito no acreditado por el banco emisor.";
+
+    for (const receipt of [cash, transfer]) {
+      const voided = await app.inject({
+        method: "POST",
+        url: `/api/receipts/${receipt.id}/void`,
+        headers: { cookie },
+        payload: { reason },
+      });
+      assert.equal(voided.statusCode, 200);
+    }
+
+    const events = await eventsOf();
     assert.deepEqual(
-      events.map((event: any) => event.action).sort(),
-      ["create", "reverse"],
+      events.map((event: any) => event.action),
+      ["reverse", "reverse"],
     );
+
+    const rowFor = (receipt: { id: string }) =>
+      events.find((event: any) => event.entityId === receipt.id);
+
+    const cashRow = rowFor(cash);
+
+    assert.equal(cashRow.reason, reason);
+    // Findable by the code printed on the paper, not a UUID.
+    assert.equal(cashRow.entityLabel, cash.code);
+    // Issuing wrote no row, so this one says what the receipt was.
+    assert.deepEqual(cashRow.before, {
+      receiptNumber: cash.number,
+      receiptCode: cash.code,
+      customerName: "Cliente Prueba",
+      issuedBy: "Owner",
+      paidOn: "2026-03-15",
+      method: "cash",
+      totalCents: lempiras(1_000),
+      lines: [
+        {
+          lotCode: "A-01",
+          contractCode: "CT-TEST-001",
+          amountCents: lempiras(1_000),
+          type: "installment",
+        },
+      ],
+    });
+    // The code is on both sides so the screen names the receipt without
+    // listing it as something that changed.
+    assert.deepEqual(cashRow.after, { receiptCode: cash.code });
+
+    // A reference only appears when there is one.
+    assert.equal("reference" in cashRow.before, false);
+    assert.equal(rowFor(transfer).before.reference, "TRX-4471");
+    assert.equal(rowFor(transfer).before.method, "transfer");
 
     await app.close();
   });

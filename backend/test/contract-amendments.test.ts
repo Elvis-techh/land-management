@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { after, describe, it } from "node:test";
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 
 import { auditEvents, lots } from "../src/db/schema.js";
 import { OWNER_PASSWORD, STAFF_PASSWORD, buildTestApp, login } from "./helpers.js";
@@ -362,6 +362,19 @@ describe("an adenda on a purchase of three lots", async () => {
       assert.equal(row.reason, newTerms.reason);
       assert.match(row.afterJson ?? "", /"replacedBy":"CT-2026-\d{3}-A1"/);
     }
+  });
+
+  it("files nothing for the successors themselves", () => {
+    // Creating a contract is not filed, and an adenda is no exception: the new
+    // terms are on the successor, linked back to what it replaced. The row that
+    // took something away is the one in the history.
+    const creations = db
+      .select()
+      .from(auditEvents)
+      .where(and(eq(auditEvents.entityType, "contract"), eq(auditEvents.action, "create")))
+      .all();
+
+    assert.deepEqual(creations, []);
   });
 
   it("numbers a second adenda A2, and leaves the yearly sequence alone", async () => {

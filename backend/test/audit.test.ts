@@ -201,9 +201,18 @@ describe("audit history endpoint", async () => {
   });
 
   it("can filter for a project event", async () => {
-    await app.inject({
+    const created = await app.inject({
       method: "POST",
       url: "/api/projects",
+      headers: { cookie: ownerCookie },
+      payload: { name: "Proyecto Auditorí", areaUnit: "m2" },
+    });
+
+    // Creating a project is not filed, so it takes a change to give the filter
+    // something to find.
+    await app.inject({
+      method: "PATCH",
+      url: `/api/projects/${created.json().project.id}`,
       headers: { cookie: ownerCookie },
       payload: { name: "Proyecto Auditoría", areaUnit: "m2" },
     });

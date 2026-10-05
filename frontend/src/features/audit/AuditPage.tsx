@@ -6,8 +6,11 @@ import { cents, formatMoney } from "../../lib/money";
 import { ROLE_LABELS } from "../../lib/permissions";
 import type { ContractStatus } from "../../types";
 import { STATUS_PRESENTATION } from "../contracts/contractPresentation";
+import { paymentTypeLabel } from "../receipts/paymentType";
+import { METHOD_LABELS } from "../receipts/transactionFilters";
 import type { AuditAction, AuditEvent, AuditPage as AuditPageData } from "./api";
 import { fetchAudit } from "./api";
+import { formatAuditList } from "./auditLines";
 
 const PAGE_SIZE = 25;
 
@@ -22,6 +25,8 @@ const actionPresentation: Record<AuditAction, { label: string; stampClass: strin
   reassign_lot: { label: "Lote corregido", stampClass: "stamp clay" },
   replace: { label: "Reemplazado por adenda", stampClass: "stamp clay" },
   reverse: { label: "Reversado", stampClass: "stamp danger" },
+  // No longer written — sign-ins are kept on the account, not here — but the
+  // rows recorded before that are still on file and still have to read.
   login: { label: "Inicio de sesión", stampClass: "stamp neutral" },
   logout: { label: "Cierre de sesión", stampClass: "stamp neutral" },
 };
@@ -62,6 +67,21 @@ const fieldLabels: Record<string, string> = {
   settlement: "Lo ya pagado",
   replacedBy: "Reemplazado por",
   replaces: "Reemplaza a",
+  // A payment corrected, and a receipt voided — which restates the whole
+  // receipt, since issuing one leaves no row of its own.
+  amountCents: "Monto",
+  paidOn: "Fecha del pago",
+  method: "Método",
+  type: "Tipo",
+  reference: "Referencia",
+  receiptNumber: "Número de recibo",
+  customerName: "Cliente",
+  issuedBy: "Emitido por",
+  totalCents: "Total",
+  lines: "Lotes",
+  // A file taken off a contract or a receipt. Putting one there is not filed.
+  removedDocument: "Documento quitado",
+  removedFile: "Comprobante quitado",
 };
 
 /** Money fields are stored in centavos and must not be printed raw. */
@@ -72,6 +92,7 @@ const moneyFields = new Set([
   "downPaymentCents",
   "monthlyPaymentCents",
   "paidToDateCents",
+  "totalCents",
 ]);
 
 function formatValue(field: string, value: unknown, money: MoneyView): string {
@@ -83,6 +104,17 @@ function formatValue(field: string, value: unknown, money: MoneyView): string {
   }
   if (field === "areaM2") {
     return `${String(value)} m²`;
+  }
+  // The lines of a receipt are a list of objects, which `String()` would turn
+  // into "[object Object]".
+  if (Array.isArray(value)) {
+    return formatAuditList(value, money);
+  }
+  if (field === "method" && typeof value === "string") {
+    return METHOD_LABELS.find((option) => option.value === value)?.label ?? value;
+  }
+  if (field === "type" && typeof value === "string") {
+    return paymentTypeLabel(value);
   }
   // "replaced" is how the database spells it; "Reemplazado" is how it is said.
   if (field === "status" && typeof value === "string" && value in STATUS_PRESENTATION) {

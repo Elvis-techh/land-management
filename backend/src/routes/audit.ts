@@ -4,7 +4,7 @@ import { alias } from "drizzle-orm/sqlite-core";
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 
-import { auditEvents, customers, lots, projects, users } from "../db/schema.js";
+import { auditEvents, contracts, customers, lots, projects, users } from "../db/schema.js";
 
 const auditQuery = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(50),
@@ -22,14 +22,17 @@ const auditQuery = z.object({
 /**
  * The name a row carries in its own snapshot, when nothing is left to join to.
  *
- * Deleting a customer is the one action that leaves the joins below with
- * nothing to find: the row they would have named no longer exists. The delete
- * event stores the whole record in `before` precisely so the history can still
- * say who it was, and this reads it back. Without it, the last thing the log
- * ever says about a person is a UUID.
+ * Deleting a customer leaves the joins below with nothing to find: the row they
+ * would have named no longer exists. The delete event stores the whole record
+ * in `before` precisely so the history can still say who it was, and this reads
+ * it back. Without it, the last thing the log ever says about a person is a
+ * UUID.
+ *
+ * Receipts are not joined, so the rows that are about one — a void, a removed
+ * file — carry its code in their snapshot for the same reason.
  */
 function snapshotLabel(snapshot: Record<string, unknown> | null): string | null {
-  const name = snapshot?.fullName ?? snapshot?.name ?? snapshot?.code;
+  const name = snapshot?.fullName ?? snapshot?.name ?? snapshot?.code ?? snapshot?.receiptCode;
 
   return typeof name === "string" ? name : null;
 }
@@ -85,6 +88,7 @@ export const auditRoutes: FastifyPluginAsync = async (app) => {
         lotCode: lots.code,
         customerName: customers.fullName,
         projectName: projects.name,
+        contractCode: contracts.code,
         subjectName: subject.name,
       })
       .from(auditEvents)
@@ -94,6 +98,10 @@ export const auditRoutes: FastifyPluginAsync = async (app) => {
       .leftJoin(lots, eq(lots.id, auditEvents.entityId))
       .leftJoin(customers, eq(customers.id, auditEvents.entityId))
       .leftJoin(projects, eq(projects.id, auditEvents.entityId))
+      // A contract is never deleted, so this always finds it. Without it, an
+      // edit, a cancel or a lot correction said WHAT changed and not which
+      // contract it was about.
+      .leftJoin(contracts, eq(contracts.id, auditEvents.entityId))
       .leftJoin(subject, eq(subject.id, auditEvents.entityId))
       .where(where)
       .orderBy(desc(auditEvents.createdAt), desc(auditEvents.id))
@@ -123,6 +131,7 @@ export const auditRoutes: FastifyPluginAsync = async (app) => {
             row.customerName ??
             row.projectName ??
             row.subjectName ??
+            row.contractCode ??
             snapshotLabel(before),
           actorName: row.actorName,
           actorRole: row.actorRole,

@@ -1001,26 +1001,14 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
               .run();
           });
 
-          recordAudit(tx, {
-            actorId: actor.id,
-            entityType: "payment",
-            entityId: receiptId,
-            action: "create",
-            after: {
-              receiptNumber: number,
-              receiptCode: code,
-              customerId: body.customerId,
-              paidOn: body.paidOn,
-              method: body.method,
-              totalCents,
-              lines: body.lines,
-            },
-          });
+          // Not in the Historial: the receipt and its payments are the record.
+          // If it is voided, the void restates all of it — see
+          // POST /receipts/:id/void.
 
           // A payment that clears a contract's balance settles it — active
           // becomes paid_off, once, here.
           for (const contractId of seen) {
-            syncContractLifecycle(tx, contractId, actor.id);
+            syncContractLifecycle(tx, contractId);
           }
         });
       } catch (error) {
@@ -1098,10 +1086,51 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
           id: payments.id,
           amountCents: payments.amountCents,
           contractId: payments.contractId,
+          type: payments.type,
+          paidOn: payments.paidOn,
+          method: payments.method,
+          reference: payments.reference,
         })
         .from(payments)
         .where(and(eq(payments.receiptId, existing.id), sql`${payments.reversedAt} IS NULL`))
         .all();
+
+      /*
+       * What the receipt was, for the Historial.
+       *
+       * Issuing a receipt writes no row there, so a void is the only place the
+       * history restates one — who it was for, who issued it, what it covered —
+       * next to the reason it was taken back. Read now, before the lines stop
+       * counting.
+       */
+      const customer = app.db
+        .select({ fullName: customers.fullName })
+        .from(customers)
+        .where(eq(customers.id, existing.customerId))
+        .get();
+
+      const issuer = app.db
+        .select({ name: users.name })
+        .from(users)
+        .where(eq(users.id, existing.issuedBy))
+        .get();
+
+      const contractIds = [...new Set(affected.map((payment) => payment.contractId))];
+      const lotsByContract = new Map(
+        (contractIds.length === 0
+          ? []
+          : app.db
+              .select({ id: contracts.id, code: contracts.code, lotCode: lots.code })
+              .from(contracts)
+              .innerJoin(lots, eq(lots.id, contracts.lotId))
+              .where(inArray(contracts.id, contractIds))
+              .all()
+        ).map((row) => [row.id, row] as const),
+      );
+
+      // Every line of one receipt shares its date, method and reference; only
+      // the amount and the type belong to the line.
+      const [anchor] = affected;
 
       app.db.transaction((tx) => {
         tx.update(receipts)
@@ -1122,6 +1151,8 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
           .where(and(eq(payments.receiptId, existing.id), sql`${payments.reversedAt} IS NULL`))
           .run();
 
+        // `receiptCode` is on both sides so the Historial can name the receipt
+        // without listing it as a change — see the adenda row.
         recordAudit(tx, {
           actorId: actor.id,
           entityType: "payment",
@@ -1130,15 +1161,27 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
           reason: parsed.data.reason,
           before: {
             receiptNumber: existing.number,
-            reversedPayments: affected.map((payment) => payment.id),
+            receiptCode: existing.code,
+            customerName: customer?.fullName ?? null,
+            issuedBy: issuer?.name ?? null,
+            paidOn: anchor?.paidOn ?? existing.issuedOn,
+            method: anchor?.method ?? null,
+            ...(anchor?.reference ? { reference: anchor.reference } : {}),
             totalCents: affected.reduce((total, payment) => total + payment.amountCents, 0),
+            lines: affected.map((payment) => ({
+              lotCode: lotsByContract.get(payment.contractId)?.lotCode ?? null,
+              contractCode: lotsByContract.get(payment.contractId)?.code ?? null,
+              amountCents: payment.amountCents,
+              type: payment.type,
+            })),
           },
+          after: { receiptCode: existing.code },
         });
 
         // Reversing these payments can push a paid-off contract's balance back
         // above zero — it returns to active.
         for (const contractId of new Set(affected.map((payment) => payment.contractId))) {
-          syncContractLifecycle(tx, contractId, actor.id);
+          syncContractLifecycle(tx, contractId);
         }
       });
 
@@ -1575,7 +1618,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
          * status until something unrelated happens to touch it.
          */
         for (const contractId of touched) {
-          syncContractLifecycle(tx, contractId, actor.id);
+          syncContractLifecycle(tx, contractId);
         }
       });
 
@@ -1605,7 +1648,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
     { onRequest: app.requireCapability("payment:record") },
     async (request, reply) => {
       const receipt = app.db
-        .select({ id: receipts.id, code: receipts.code })
+        .select({ id: receipts.id })
         .from(receipts)
         .where(eq(receipts.id, request.params.id))
         .get();
@@ -1719,32 +1762,24 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
       // different format from every other attachment the client is holding.
       let createdAt = "";
 
+      // Attaching is not in the Historial — adding a comprobante takes nothing
+      // away. Removing one is; see DELETE /attachments/:id.
       try {
-        app.db.transaction((tx) => {
-          createdAt =
-            tx
-              .insert(attachments)
-              .values({
-                id: attachmentId,
-                receiptId: receipt.id,
-                paymentId,
-                storageKey,
-                fileName: safeDisplayName(part.filename ?? "comprobante"),
-                contentType: part.mimetype,
-                byteSize: buffer.byteLength,
-                uploadedBy: request.user!.id,
-              })
-              .returning({ createdAt: attachments.createdAt })
-              .get()?.createdAt ?? "";
-
-          recordAudit(tx, {
-            actorId: request.user!.id,
-            entityType: "payment",
-            entityId: receipt.id,
-            action: "update",
-            after: { attachedFile: safeDisplayName(part.filename ?? "comprobante"), receiptCode: receipt.code },
-          });
-        });
+        createdAt =
+          app.db
+            .insert(attachments)
+            .values({
+              id: attachmentId,
+              receiptId: receipt.id,
+              paymentId,
+              storageKey,
+              fileName: safeDisplayName(part.filename ?? "comprobante"),
+              contentType: part.mimetype,
+              byteSize: buffer.byteLength,
+              uploadedBy: request.user!.id,
+            })
+            .returning({ createdAt: attachments.createdAt })
+            .get()?.createdAt ?? "";
       } catch (error) {
         // The row is what makes the file findable. If it could not be written,
         // the bytes on disk are unreachable rubbish, so they go too rather than
@@ -1824,15 +1859,24 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
         return reply.code(404).send({ error: "not_found", message: "Ese archivo no existe." });
       }
 
+      const receipt = app.db
+        .select({ code: receipts.code })
+        .from(receipts)
+        .where(eq(receipts.id, row.receiptId))
+        .get();
+
       app.db.transaction((tx) => {
         tx.delete(attachments).where(eq(attachments.id, row.id)).run();
 
+        // `receiptCode` is on both sides so the Historial can name the receipt
+        // without listing it as a change — see the adenda row.
         recordAudit(tx, {
           actorId: request.user!.id,
           entityType: "payment",
           entityId: row.receiptId,
           action: "update",
-          before: { removedFile: row.fileName },
+          before: { removedFile: row.fileName, receiptCode: receipt?.code ?? null },
+          after: { receiptCode: receipt?.code ?? null },
         });
       });
 

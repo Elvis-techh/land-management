@@ -229,7 +229,7 @@ describe("the signed contract on file", () => {
     await app.close();
   });
 
-  it("removes the document and files the removal in the history", async () => {
+  it("removes the document and files the removal, but not the upload, in the history", async () => {
     const { app, ids } = await buildTestApp();
     const cookie = await login(app, "owner@test.hn", OWNER_PASSWORD);
     const documentId = (await upload(app, cookie, ids.contractId)).json().document.id;
@@ -250,13 +250,16 @@ describe("the signed contract on file", () => {
 
     assert.equal(gone.statusCode, 404);
 
-    // The audit entry naming the file is what remains of it.
+    // The audit entry naming the file is what remains of it. Putting the file
+    // there was not filed — adding takes nothing away — so this is the only row.
     const events = (
       await app.inject({ method: "GET", url: "/api/audit", headers: { cookie } })
     ).json().events.filter((event: any) => event.entityId === ids.contractId);
 
-    assert.ok(events.some((event: any) => event.after?.attachedDocument === "contrato-firmado.pdf"));
-    assert.ok(events.some((event: any) => event.before?.removedDocument === "contrato-firmado.pdf"));
+    assert.equal(events.length, 1);
+    assert.equal(events[0].before.removedDocument, "contrato-firmado.pdf");
+    // Named by its contract rather than a UUID.
+    assert.equal(events[0].entityLabel, "CT-TEST-001");
 
     await app.close();
   });

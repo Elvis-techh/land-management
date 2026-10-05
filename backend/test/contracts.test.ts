@@ -202,17 +202,18 @@ describe("contracts", async () => {
     assert.equal(response.statusCode, 400);
   });
 
-  it("writes an audit row naming the terms that were agreed", async () => {
+  it("leaves a new contract out of the Historial", async () => {
+    // The contract is its own record; an edit's `before` says what it used to
+    // be. See `AuditEntry`.
     const created = await create(ownerCookie, financedSale(freshLot("N-10")));
-    const entry = db
+    const entries = db
       .select()
       .from(auditEvents)
       .where(eq(auditEvents.entityId, created.json().contract.id))
-      .get();
+      .all();
 
-    assert.equal(entry?.action, "create");
-    assert.equal(entry?.entityType, "contract");
-    assert.equal(JSON.parse(entry!.afterJson!).monthlyPaymentCents, lempiras(6_700));
+    assert.equal(created.statusCode, 201);
+    assert.deepEqual(entries, []);
   });
 });
 
@@ -597,6 +598,31 @@ describe("editing and cancelling", async () => {
       reason: "Intento de cancelar dos veces el mismo contrato.",
     });
     assert.equal(cancelled.statusCode, 409);
+  });
+
+  it("names the contract on every row of the Historial that is about it", async () => {
+    // An edit, a reprice and a cancel used to say WHAT changed and not which
+    // contract it was about — the screen had nothing to show but a UUID.
+    const events = (
+      await app.inject({
+        method: "GET",
+        url: "/api/audit?entityType=contract&limit=200",
+        headers: { cookie: ownerCookie },
+      })
+    ).json().events as Array<{ action: string; entityId: string; entityLabel: string | null }>;
+
+    const mine = events.filter((event) => event.entityId === ids.contractId);
+
+    for (const action of ["update", "reprice", "cancel"]) {
+      assert.ok(
+        mine.some((event) => event.action === action),
+        `expected a ${action} on the contract`,
+      );
+    }
+
+    for (const event of mine) {
+      assert.equal(event.entityLabel, "CT-TEST-001", `the ${event.action} row is unnamed`);
+    }
   });
 });
 

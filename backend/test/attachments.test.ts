@@ -432,24 +432,45 @@ describe("attaching proof of payment", () => {
     await app.close();
   });
 
-  it("files the attachment in the history", async () => {
+  it("files the removal of a file in the history, and not the attaching of one", async () => {
     const { app, ids } = await buildTestApp();
     const cookie = await login(app, "owner@test.hn", OWNER_PASSWORD);
     const receiptId = await issueReceipt(app, cookie, ids);
 
     const { payload, headers } = multipartBody("comprobante.png", "image/png", PNG_PIXEL);
-    await app.inject({
+    const upload = await app.inject({
       method: "POST",
       url: `/api/receipts/${receiptId}/attachments`,
       headers: { cookie, ...headers },
       payload,
     });
 
-    const events = (
-      await app.inject({ method: "GET", url: "/api/audit", headers: { cookie } })
-    ).json().events.filter((event: any) => event.entityId === receiptId);
+    const eventsOf = async () =>
+      (await app.inject({ method: "GET", url: "/api/audit?limit=200", headers: { cookie } }))
+        .json()
+        .events.filter((event: any) => event.entityId === receiptId);
 
-    assert.ok(events.some((event: any) => event.after?.attachedFile === "comprobante.png"));
+    // Adding a file takes nothing away.
+    assert.deepEqual(await eventsOf(), []);
+
+    await app.inject({
+      method: "DELETE",
+      url: `/api/attachments/${upload.json().attachment.id}`,
+      headers: { cookie },
+    });
+
+    const events = await eventsOf();
+    assert.equal(events.length, 1);
+
+    const { code } = (
+      await app.inject({ method: "GET", url: `/api/receipts/${receiptId}`, headers: { cookie } })
+    ).json().receipt;
+
+    // What was taken away, and from which receipt: the file is gone from the
+    // disk, so this row is all that is left of it.
+    assert.equal(events[0].before.removedFile, "comprobante.png");
+    assert.equal(events[0].entityLabel, code);
+    assert.deepEqual(events[0].after, { receiptCode: code });
 
     await app.close();
   });

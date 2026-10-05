@@ -555,7 +555,7 @@ export const transactionRoutes: FastifyPluginAsync = async (app) => {
           existing.contractId,
           ...siblings.map((sibling) => sibling.contractId),
         ])) {
-          syncContractLifecycle(tx, contractId, request.user!.id);
+          syncContractLifecycle(tx, contractId);
         }
       });
 

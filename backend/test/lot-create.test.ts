@@ -45,7 +45,8 @@ describe("creating a lot", async () => {
     assert.equal(created.basePrice, 17_000_000);
   });
 
-  it("files the creation in the history", async () => {
+  it("leaves the creation out of the history", async () => {
+    // A new lot is its own record. Changing it later is what gets filed.
     const events = (
       await app.inject({ method: "GET", url: "/api/audit", headers: { cookie: ownerCookie } })
     ).json().events;
@@ -54,7 +55,7 @@ describe("creating a lot", async () => {
       (event: { action: string; entityType: string }) =>
         event.action === "create" && event.entityType === "lot",
     );
-    assert.ok(created, "the new lot should appear in the audit history");
+    assert.equal(created, undefined);
   });
 
   it("refuses a lot number that already exists in the project", async () => {
