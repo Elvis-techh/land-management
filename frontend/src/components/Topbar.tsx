@@ -150,6 +150,10 @@ export function Topbar({
         type="button"
         onClick={onPrimaryAction}
         disabled={!onPrimaryAction}
+        // Narrow screens show only the "+", so the label also lives here: read
+        // aloud by a screen reader and shown as a tooltip on hover.
+        aria-label={primaryActionLabel}
+        title={primaryActionLabel}
       >
         <IconPlus />
         <span>{primaryActionLabel}</span>
