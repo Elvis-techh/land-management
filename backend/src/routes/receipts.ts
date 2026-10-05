@@ -474,6 +474,15 @@ const voidBody = z.object({
 });
 
 /**
+ * Rewriting a receipt's internal note. An empty string clears it, the same as
+ * `null` — a form that sends back what is in the box should not have to know
+ * the difference.
+ */
+const noteBody = z.object({
+  note: z.string().trim().max(500).nullable(),
+});
+
+/**
  * Moving money that is already on a receipt from one lot to another.
  *
  * `lines` is the COMPLETE new distribution, not a patch: every contract that
@@ -1034,6 +1043,58 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
       const row = receiptsListQuery(app.db).where(eq(receipts.id, receiptId)).get()!;
 
       return reply.code(201).send({ receipt: presentReceipts(app.db, [row], true)[0] });
+    },
+  );
+
+  /* ---------------------------------------------------------------------- */
+  /* The internal note                                                       */
+  /* ---------------------------------------------------------------------- */
+
+  /**
+   * Write, change or clear the note on a receipt.
+   *
+   * On `payment:record`, the same power that attaches a comprobante, and
+   * deliberately NOT the `payment:edit` that rewrites an amount: the note says
+   * nothing the ledger depends on and never appears on the document, so
+   * leaving a message for the next person should not need the trust, or the
+   * written motive, that changing a posted figure does.
+   *
+   * Allowed on a voided receipt as well. Explaining WHY somebody voided one is
+   * exactly the kind of thing the next reader wants to find.
+   *
+   * Not in the Historial. A note is a message between colleagues, not a figure
+   * anything depends on, so rewriting one leaves no row behind.
+   */
+  app.patch<{ Params: { id: string } }>(
+    "/receipts/:id/note",
+    { onRequest: app.requireCapability("payment:record") },
+    async (request, reply) => {
+      const parsed = noteBody.safeParse(request.body);
+
+      if (!parsed.success) {
+        return reply.code(400).send({
+          error: "invalid_body",
+          message: "La nota no puede pasar de 500 caracteres.",
+        });
+      }
+
+      const existing = app.db
+        .select()
+        .from(receipts)
+        .where(eq(receipts.id, request.params.id))
+        .get();
+
+      if (!existing) {
+        return reply.code(404).send({ error: "not_found", message: "Ese recibo no existe." });
+      }
+
+      const next = parsed.data.note === null || parsed.data.note === "" ? null : parsed.data.note;
+
+      app.db.update(receipts).set({ note: next }).where(eq(receipts.id, existing.id)).run();
+
+      const row = receiptsListQuery(app.db).where(eq(receipts.id, existing.id)).get()!;
+
+      return { receipt: presentReceipts(app.db, [row], true)[0] };
     },
   );
 

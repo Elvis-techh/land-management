@@ -178,6 +178,7 @@ export function searchTransactions(
       transaction.receiptCode ?? "",
       transaction.reference ?? "",
       transaction.notes ?? "",
+      transaction.receiptNote ?? "",
     ]
       .join(" ")
       .toLowerCase();

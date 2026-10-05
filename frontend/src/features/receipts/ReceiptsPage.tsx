@@ -23,7 +23,14 @@ import { MAX_PROOFS, PROOF_ACCEPT, acceptProofFiles, pickProofsFromDrive } from 
 import { TransactionToolbar } from "./TransactionToolbar";
 import { useProofAttach } from "./useProofAttach";
 import type { TransactionView } from "./TransactionToolbar";
-import { deleteAttachment, fetchReceipt, storedProof, uploadAttachment } from "./api";
+import {
+  deleteAttachment,
+  fetchReceipt,
+  storedProof,
+  updateReceiptNote,
+  uploadAttachment,
+} from "./api";
+import { ReceiptNote } from "./ReceiptNote";
 import { receiptToPng } from "./receiptImage";
 import { copyGesture, pasteInstruction, receiptCaption, sendReceiptOnWhatsApp } from "./whatsapp";
 import type { TransactionFilters } from "./transactionFilters";
@@ -54,11 +61,12 @@ interface ReceiptsPageProps {
   onVoidReceipt: (receipt: Receipt) => void;
   onEditTransaction: (transaction: Transaction) => void;
   /**
-   * Re-read the list after a comprobante is attached or removed.
+   * Re-read the list after a comprobante is attached or removed, or a receipt's
+   * note is written.
    *
-   * The thumbnails live on the transaction rows, which are the parent's data —
-   * so attaching a file from the receipt panel has to reach back up, or the row
-   * that prompted the upload keeps showing nothing.
+   * The thumbnails and the "Nota" chip live on the transaction rows, which are
+   * the parent's data — so changing either from the receipt panel has to reach
+   * back up, or the row that prompted it keeps showing the old state.
    */
   onProofsChanged: () => void;
   /**
@@ -443,6 +451,13 @@ function TransactionRow({
             <span className={`txn-contract is-${tag.side}`} title={tag.title}>
               {tag.side === "adenda" && "Adenda · "}
               {tag.code}
+            </span>
+          )}
+          {/* A message was left on this receipt. Only THAT it exists — the
+              sentence is the tooltip here and the box in the panel. */}
+          {transaction.receiptNote !== null && (
+            <span className="txn-note" title={transaction.receiptNote}>
+              Nota
             </span>
           )}
           {/* The one thing the old receipt tag also said, and only when it is
@@ -961,6 +976,23 @@ export function ReceiptsPage({
       ),
     );
   }, [detail]);
+
+  /**
+   * Save the note on the open receipt.
+   *
+   * The server answers with the receipt as it now stands, so the panel updates
+   * without a second round trip; the list is told to re-read so the row's
+   * "Nota" chip appears, changes or goes in step with it. A refusal rejects,
+   * and `ReceiptNote` shows the server's own sentence.
+   */
+  const saveNote = async (note: string | null) => {
+    if (detail === null) {
+      return;
+    }
+
+    setDetail(await updateReceiptNote(detail.id, note));
+    onProofsChanged();
+  };
 
   /** Re-read the receipt, and the list behind it, after the files change. */
   const refreshAfterProofChange = async (receiptId: string) => {
@@ -1512,6 +1544,16 @@ export function ReceiptsPage({
 
         {detail && (
           <>
+            {/* Above the paper, not down with the comprobantes: the paper is a
+                full sheet tall, and a message left for the next reader is no
+                use at the bottom of that scroll. */}
+            <ReceiptNote
+              key={detail.id}
+              receipt={detail}
+              canWrite={canRecord}
+              onSave={saveNote}
+            />
+
             <div className="receipt-actions">
               <div className="receipt-actions-main">
                 {/* The document at full size, inside Lindero. The preview

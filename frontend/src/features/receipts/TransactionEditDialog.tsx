@@ -12,7 +12,13 @@ import type { MoneyView } from "../../lib/money";
 import { cents, formatMoney, parseMoneyInput, toMoneyInput } from "../../lib/money";
 import type { ReceiptAttachment, Transaction } from "../../types";
 import type { TransactionEdit } from "./api";
-import { deleteAttachment, storedProof, updateTransaction, uploadAttachment } from "./api";
+import {
+  deleteAttachment,
+  storedProof,
+  updateReceiptNote,
+  updateTransaction,
+  uploadAttachment,
+} from "./api";
 import { useFileDrop } from "../../lib/useFileDrop";
 import { googleDriveConfigured, preloadGoogleDrive } from "../../lib/googleDrive";
 import type { PaymentType } from "./paymentType";
@@ -95,7 +101,24 @@ export function TransactionEditDialog({
   const [method, setMethod] = useState<Method>(transaction.method as Method);
   const [type, setType] = useState<PaymentType>(transaction.type as PaymentType);
   const [reference, setReference] = useState(transaction.reference ?? "");
-  const [notes, setNotes] = useState(transaction.notes ?? "");
+
+  /*
+   * Which note the Nota field is editing.
+   *
+   * On a line with a receipt it is the RECEIPT's note — the Nota del equipo, the
+   * one the panel shows and every line of the receipt shares. It used to be the
+   * payment's own note, which nothing else on screen displayed: typing in it
+   * saved something, and the box meant for exactly that message stayed empty.
+   * Money recorded before there were receipts has no receipt to hold a note, so
+   * for those the field keeps meaning the payment's own.
+   */
+  const receiptBacked = transaction.receiptId !== null;
+  const savedNote = receiptBacked ? transaction.receiptNote : transaction.notes;
+  // Locked rather than hidden, like the price on a contract: somebody who may
+  // correct a payment but not record one still reads what the note says.
+  const noteLocked = receiptBacked && !canAttachProof;
+
+  const [notes, setNotes] = useState(savedNote ?? "");
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [overpaymentPrompt, setOverpaymentPrompt] = useState<string | null>(null);
@@ -114,7 +137,7 @@ export function TransactionEditDialog({
     method !== (transaction.method as Method) ||
     type !== (transaction.type as PaymentType) ||
     reference !== (transaction.reference ?? "") ||
-    notes !== (transaction.notes ?? "") ||
+    notes !== (savedNote ?? "") ||
     reason.trim() !== "";
 
   /*
@@ -249,16 +272,36 @@ export function TransactionEditDialog({
   const voidedCount = history.filter((entry) => entry.reversedAt !== null).length;
   const activeCount = history.length - voidedCount;
 
-  const hasChanges =
+  const noteChanged = (notes.trim() || null) !== (savedNote ?? null);
+
+  /*
+   * A correction, and the team note, are different acts.
+   *
+   * Moving an amount or a date rewrites something the ledger stands on, and
+   * that is what the written motive is for. The note is a message: it says
+   * nothing the ledger depends on, never appears on the receipt, and the box in
+   * the panel changes it with no motive at all. Asking for ten characters of
+   * justification here for the same words would make this dialog the one place
+   * a note costs something — so a change to the note ALONE needs none. The old
+   * per-payment note, on money with no receipt, is still part of the payment
+   * and still counts as a correction.
+   */
+  const teamNoteChanged = receiptBacked && noteChanged;
+  const correctionChanged =
     amountCents !== transaction.amount ||
     paidOn !== transaction.paidOn ||
     method !== transaction.method ||
     type !== transaction.type ||
     (reference.trim() || null) !== (transaction.reference ?? null) ||
-    (notes.trim() || null) !== (transaction.notes ?? null);
+    (!receiptBacked && noteChanged);
+  const hasChanges = correctionChanged || teamNoteChanged;
+  const isNoteOnly = teamNoteChanged && !correctionChanged;
 
   const canSubmit =
-    amountCents > 0 && trimmedReason.length >= MINIMUM_REASON && hasChanges && !isSaving;
+    amountCents > 0 &&
+    hasChanges &&
+    (isNoteOnly || trimmedReason.length >= MINIMUM_REASON) &&
+    !isSaving;
 
   /**
    * The comprobante was the whole errand.
@@ -311,13 +354,27 @@ export function TransactionEditDialog({
     setError(null);
     setSaving(true);
 
+    const noteValue = notes.trim() === "" ? null : notes.trim();
+
     const edit: TransactionEdit = {
       amountCents,
       paidOn,
       method,
       type,
       reference: reference.trim() === "" ? null : reference.trim(),
-      notes: notes.trim() === "" ? null : notes.trim(),
+      /*
+       * Which note travels, and only when it moved.
+       *
+       * Left out otherwise, which the server reads as "leave it": sending the
+       * old value back would be harmless for the team note but would wipe, on a
+       * line with a receipt, whatever the payment's own note still holds from
+       * before this field changed meaning.
+       */
+      ...(receiptBacked
+        ? teamNoteChanged
+          ? { receiptNote: noteValue }
+          : {}
+        : { notes: noteValue }),
       reason: trimmedReason,
       allowOverpayment,
       /*
@@ -332,7 +389,14 @@ export function TransactionEditDialog({
     };
 
     try {
-      await updateTransaction(transaction.id, edit);
+      if (isNoteOnly && transaction.receiptId !== null) {
+        // Nothing here was corrected, so this is the same write the box in the
+        // receipt panel makes — no motive, nothing for the ledger to re-derive.
+        await updateReceiptNote(transaction.receiptId, noteValue);
+      } else {
+        await updateTransaction(transaction.id, edit);
+      }
+
       onSaved();
     } catch (caught) {
       if (caught instanceof ApiError && caught.code === "overpayment") {
@@ -579,13 +643,22 @@ export function TransactionEditDialog({
             </div>
 
             <div className="form-field full-width">
-              <label htmlFor="edit-notes">Nota</label>
-              <input
+              <label htmlFor="edit-notes">{receiptBacked ? "Nota del equipo" : "Nota"}</label>
+              <textarea
                 id="edit-notes"
-                type="text"
+                rows={2}
+                maxLength={receiptBacked ? 500 : 300}
                 value={notes}
+                readOnly={noteLocked}
                 onChange={(event) => setNotes(event.target.value)}
               />
+              <span className="field-hint">
+                {noteLocked
+                  ? "Tu usuario no puede cambiar la nota del recibo."
+                  : receiptBacked
+                    ? "Es la nota del recibo: la ven todos los usuarios y la comparten todas sus transacciones. No se imprime. Cambiar solo la nota no pide motivo."
+                    : "Este pago es anterior a los recibos, así que su nota queda solo en esta transacción."}
+              </span>
             </div>
 
             {/*
@@ -659,7 +732,9 @@ export function TransactionEditDialog({
 
             <div className="form-field full-width">
               <label htmlFor="edit-reason">
-                Motivo del cambio <span className="required-mark">*</span>
+                Motivo del cambio{" "}
+                {/* Not asked for when the note is all that moved — see `isNoteOnly`. */}
+                {!isNoteOnly && <span className="required-mark">*</span>}
               </label>
               <textarea
                 id="edit-reason"
@@ -679,7 +754,9 @@ export function TransactionEditDialog({
               )}
             </div>
 
-            {transaction.receiptId && (
+            {/* About the amounts, so not when only the note is changing: that
+                touches no figure on the receipt. */}
+            {transaction.receiptId && !isNoteOnly && (
               <p className="form-warning full-width">
                 Esta transacción está impresa en el recibo {transaction.receiptCode}. Al guardar,
                 los montos de ese recibo cambian — si el cliente ya tiene una copia en papel,
@@ -908,7 +985,7 @@ export function TransactionEditDialog({
             disabled={!canSubmit}
             onClick={() => void submit(false)}
           >
-            {isSaving ? "Guardando…" : "Guardar corrección"}
+            {isSaving ? "Guardando…" : isNoteOnly ? "Guardar nota" : "Guardar corrección"}
           </button>
         )}
       </div>

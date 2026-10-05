@@ -1119,14 +1119,21 @@ export function NewReceiptDialog({
         </div>
 
         <div className="form-field full-width">
-          <label htmlFor="receipt-note">Nota (opcional)</label>
-          <input
+          <label htmlFor="receipt-note">Nota para el equipo (opcional)</label>
+          <textarea
             id="receipt-note"
-            type="text"
+            rows={2}
+            maxLength={500}
             value={note}
             onChange={(event) => setNote(event.target.value)}
-            placeholder="Lo que quede impreso en el recibo"
+            placeholder="Ej. Pagará el resto el viernes. Falta el comprobante."
           />
+          {/* Said here, where it is typed: this field used to be printed on the
+              receipt, and somebody who remembers that would otherwise keep
+              writing for the customer. */}
+          <span className="field-hint">
+            La ven todos los usuarios en Recibos. No se imprime en el recibo ni se envía al cliente.
+          </span>
         </div>
 
         {error && <p className="form-error full-width">{error}</p>}

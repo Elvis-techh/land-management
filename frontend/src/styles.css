@@ -355,6 +355,13 @@ nav.nav {
   cursor: not-allowed;
 }
 
+/* The same button for a small card rather than a dialog footer — see
+   `.btn-secondary.is-small`, which it sits beside. */
+.btn-primary.is-small {
+  padding: 5px 12px;
+  font-size: 0.75rem;
+}
+
 .btn-primary svg {
   width: 14px;
   height: 14px;
@@ -1771,6 +1778,23 @@ tbody tr:hover {
 }
 
 /*
+ * "There is a message on this receipt." A chip rather than the note's text:
+ * the row has no room for a sentence, and what the list has to say is only that
+ * it is worth opening. The sentence itself is the tooltip, and the panel.
+ */
+.txn-note {
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--amber-bg);
+  border: 1px solid var(--amber);
+  font-family: var(--font-body);
+  font-size: 0.6562rem;
+  letter-spacing: 0.01em;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+/*
  * Which contract the money landed on, shown only where a lot has had two — see
  * `contractTag`. The new one is coloured, because it is the one being looked
  * for; the old one is the same chip, quiet, so the pair still reads as a pair.
@@ -2290,6 +2314,85 @@ body.is-dragging-file .proof-dropzone:not(.is-disabled) {
 .receipt-proofs .state-message {
   padding: 8px 0;
   font-size: 0.7188rem;
+}
+
+/* ---------- the internal note beside a receipt ---------- */
+
+/*
+ * A message for the office, beside the document and never on it.
+ *
+ * It sits ABOVE the paper, not below it with the comprobantes: the paper is a
+ * full sheet tall, and a note somebody left so the next person would see it is
+ * no use at the bottom of a scroll. Amber because it is the one thing in the
+ * panel addressed to whoever is reading, rather than describing the payment.
+ * Hidden when printing, with the rest of what is not the document.
+ */
+.receipt-memo {
+  margin-bottom: 14px;
+  padding: 11px 13px;
+  border: 1px solid var(--amber);
+  border-radius: 10px;
+  background: var(--amber-bg);
+}
+
+/* Nothing written yet, and the user may write something: quiet, so a panel
+   full of receipts without notes is not a panel full of amber boxes. */
+.receipt-memo.is-empty {
+  border-color: var(--line-strong);
+  border-style: dashed;
+  background: transparent;
+}
+
+.receipt-memo-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.receipt-memo-label {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.6562rem;
+  font-weight: 500;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.receipt-memo-text {
+  margin: 6px 0 0;
+  color: var(--text-primary);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  /* A note is typed by a person: keep their line breaks, and never let one
+     unbroken string push the panel wider than the screen. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.receipt-memo-hint {
+  margin: 6px 0 0;
+  color: var(--text-secondary);
+  font-size: 0.6875rem;
+  line-height: 1.4;
+}
+
+.receipt-memo textarea {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+}
+
+.receipt-memo-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.receipt-memo .form-error {
+  margin: 6px 0 0;
 }
 
 /*
@@ -2985,13 +3088,6 @@ body.is-dragging-file .proof-dropzone.is-slot:not(.is-disabled) {
   text-transform: uppercase;
 }
 
-.receipt-note {
-  margin: 0 0 1.5em;
-  color: var(--r-muted);
-  font-size: 0.875em;
-  font-style: italic;
-}
-
 /* Who issued it, and the code for looking it up. Ours — the original had
    neither. Last on the page because it is for the office, not the customer. */
 .receipt-stamp {
@@ -3160,6 +3256,7 @@ body.is-dragging-file .proof-dropzone.is-slot:not(.is-disabled) {
   .receipt-sheet-head,
   .receipt-tear,
   .receipt-proofs,
+  .receipt-memo,
   .receipt-share-note,
   /* Not merely invisible clutter: the stage holds a SECOND `.receipt-paper`,
      which the rules below would size to a sheet and print as a duplicate. Every
@@ -4768,6 +4865,13 @@ body.modal-open {
 .btn-secondary:hover {
   color: var(--text-primary);
   background: var(--paper);
+}
+
+/* The same button, sized for a section header instead of a form footer. A full
+   9px/16px box beside a 10px mono title would out-shout the thing it labels. */
+.btn-secondary.is-small {
+  padding: 5px 12px;
+  font-size: 0.75rem;
 }
 
 /*

@@ -469,6 +469,11 @@ export interface Receipt {
    */
   lookupCode: string;
   issuedOn: string;
+  /**
+   * An internal message from whoever recorded the payment to everyone who reads
+   * it after. Shown beside the receipt, never on it — the document is also the
+   * image sent to the customer.
+   */
   note: string | null;
   /** Set when the receipt was voided. The row and the number both survive. */
   voidedAt: string | null;
@@ -536,6 +541,11 @@ export interface Transaction {
   /** Null when this money has never been printed on a receipt. */
   receiptId: string | null;
   receiptCode: string | null;
+  /**
+   * The internal note on this row's receipt: a message for whoever reads it
+   * next, never printed. Shared by every line of the same receipt.
+   */
+  receiptNote: string | null;
   receiptVoidedAt: string | null;
   recordedByName: string;
   /**

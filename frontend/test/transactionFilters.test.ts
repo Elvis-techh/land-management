@@ -81,3 +81,26 @@ describe("searching the transactions", () => {
     assert.deepEqual(searchTransactions(printed, "IM-482739156034 ").map((row) => row.id), ["1"]);
   });
 });
+
+describe("searching by the note on a receipt", () => {
+  /*
+   * The note is a message for the office, and "which one was it that said
+   * Friday?" is a question people ask of a list. The toolbar's own tooltip
+   * promises the search looks in notes; this is the half of that which lives on
+   * the receipt rather than on the one payment.
+   */
+  const noted = [
+    { id: "1", customerName: "Ana Valle", receiptNote: "Pagará el resto el viernes." },
+    { id: "2", customerName: "Luis Mejía", receiptNote: null },
+    { id: "3", customerName: "Rosa Paz", receiptNote: "Falta el comprobante." },
+  ] as Transaction[];
+
+  it("finds the payments whose receipt carries the words", () => {
+    assert.deepEqual(searchTransactions(noted, "viernes").map((row) => row.id), ["1"]);
+    assert.deepEqual(searchTransactions(noted, "COMPROBANTE").map((row) => row.id), ["3"]);
+  });
+
+  it("does not trip over a receipt that has no note", () => {
+    assert.deepEqual(searchTransactions(noted, "luis").map((row) => row.id), ["2"]);
+  });
+});

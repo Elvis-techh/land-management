@@ -12,6 +12,7 @@ import { recordAudit } from "../lib/audit.js";
 import { assessContract } from "../lib/contracts.js";
 import type { ContractTerms, SaleType } from "../lib/contracts.js";
 import { syncContractLifecycle } from "../lib/contractLifecycle.js";
+import { roleCan } from "../lib/capabilities.js";
 import { openContract } from "../lib/holding.js";
 import { replayContract } from "../lib/ledger.js";
 
@@ -64,6 +65,9 @@ const transactionsQuery = (db: Db) => {
       customerIdentification: customers.identification,
       receiptId: receipts.id,
       receiptCode: receipts.code,
+      // The receipt's internal note, so a row can say "there is a message here"
+      // without the list having to open every receipt to find out.
+      receiptNote: receipts.note,
       receiptVoidedAt: receipts.voidedAt,
       recordedByName: users.name,
     })
@@ -92,7 +96,24 @@ const editBody = z.object({
   method: z.enum(PAYMENT_METHODS),
   type: z.enum(PAYMENT_TYPES),
   reference: z.string().trim().max(120).nullish(),
+  /**
+   * The payment's OWN note — only meaningful for money recorded before there
+   * were receipts, which has no receipt to hold a note. Absent leaves it as it
+   * is; see `receiptNote` for where a note goes everywhere else.
+   */
   notes: z.string().trim().max(300).nullish(),
+  /**
+   * The note on the receipt this payment is a line of: the team's note, shared
+   * by every line of it and shown in the Nota del equipo box.
+   *
+   * Three states, and the difference is the point. ABSENT leaves it alone, so a
+   * correction that never touched the note cannot erase one. Blank or `null`
+   * clears it. Text sets it. It is written here, in the same transaction as the
+   * correction, only so the two cannot half-happen — changing it needs
+   * `payment:record` as well, because this route must not be a way round the
+   * permission `PATCH /receipts/:id/note` is gated on.
+   */
+  receiptNote: z.string().trim().max(500).nullish(),
   /**
    * Required, and at least a sentence.
    *
@@ -458,6 +479,47 @@ export const transactionRoutes: FastifyPluginAsync = async (app) => {
         }
       }
 
+      /*
+       * The team note this correction also writes, if it changes it.
+       *
+       * The note belongs to the RECEIPT, not to this line: a receipt covering
+       * three lots is one piece of paper and one message, and the other two
+       * lines have to read the same words this one does. Writing it to the
+       * receipt row is what makes that true without copying it anywhere.
+       */
+      let noteChange: { receiptId: string; after: string | null } | null = null;
+
+      if (body.receiptNote !== undefined) {
+        if (existing.receiptId === null) {
+          return reply.code(400).send({
+            error: "no_receipt",
+            message: "Esa transacción no está en un recibo, así que no tiene nota del equipo.",
+          });
+        }
+
+        const receipt = app.db
+          .select({ id: receipts.id, note: receipts.note })
+          .from(receipts)
+          .where(eq(receipts.id, existing.receiptId))
+          .get();
+
+        const nextNote = body.receiptNote === null || body.receiptNote === "" ? null : body.receiptNote;
+
+        // Only a note that actually differs needs the permission, so a
+        // correction that sends the note back unchanged — which a form that
+        // always includes the field will — is not refused for it.
+        if (receipt && nextNote !== (receipt.note ?? null)) {
+          if (!roleCan(app.db, request.user!.role, "payment:record")) {
+            return reply.code(403).send({
+              error: "forbidden",
+              message: "Tu usuario puede corregir transacciones, pero no cambiar la nota del recibo.",
+            });
+          }
+
+          noteChange = { receiptId: receipt.id, after: nextNote };
+        }
+      }
+
       const before = {
         amountCents: existing.amountCents,
         paidOn: existing.paidOn,
@@ -473,7 +535,10 @@ export const transactionRoutes: FastifyPluginAsync = async (app) => {
         method: body.method,
         type: body.type,
         reference: body.reference ?? null,
-        notes: body.notes ?? null,
+        // Absent is "leave it", not "clear it": the form no longer sends the
+        // payment's own note for a line that has a receipt, and a correction
+        // that never mentioned it must not wipe one typed before that changed.
+        notes: body.notes === undefined ? existing.notes : (body.notes ?? null),
       };
 
       app.db.transaction((tx) => {
@@ -502,6 +567,15 @@ export const transactionRoutes: FastifyPluginAsync = async (app) => {
           before,
           after,
         });
+
+        // Not in the Historial, the same as `PATCH /receipts/:id/note`: the note
+        // is a message, whichever door it came through.
+        if (noteChange) {
+          tx.update(receipts)
+            .set({ note: noteChange.after })
+            .where(eq(receipts.id, noteChange.receiptId))
+            .run();
+        }
 
         /*
          * The same act of paying, restated on the other lines of the receipt.

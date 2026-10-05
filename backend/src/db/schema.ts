@@ -643,7 +643,18 @@ export const receipts = sqliteTable(
      * tapping "Guardar" again because nothing appeared to happen.
      */
     idempotencyKey: text("idempotency_key"),
-    /** What this receipt is for, in the issuer's words. Printed on the document. */
+    /**
+     * A message from whoever recorded the payment to everyone else who will read
+     * it — "pagará el resto el viernes", "falta el comprobante". Internal.
+     *
+     * It was printed at the foot of the document until 2026-10, which was wrong
+     * twice over: the receipt is rasterised and sent to the customer over
+     * WhatsApp, so a note meant for the office went to the person it was about,
+     * and nobody who was not looking at the paper ever saw it. It now lives
+     * beside the receipt in the Recibos screen, like the comprobantes do, and
+     * never on the document. The column kept its name and its old contents —
+     * every note somebody already typed appears in the new place.
+     */
     note: text("note"),
     /**
      * Set when the receipt is voided. The row is never deleted and the number is

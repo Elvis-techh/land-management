@@ -107,11 +107,7 @@ function clientDetail(customer: Receipt["customer"]): string | null {
 const USABLE_PX = 1000;
 
 function printBaseFor(receipt: Receipt): string {
-  const estimatedPx =
-    940 +
-    68 * receipt.lines.length +
-    (receipt.note ? 36 : 0) +
-    (receipt.voidedAt ? 62 : 0);
+  const estimatedPx = 940 + 68 * receipt.lines.length + (receipt.voidedAt ? 62 : 0);
 
   const points = (10 * USABLE_PX) / estimatedPx;
 
@@ -276,7 +272,15 @@ export function ReceiptPaper({ receipt, money }: ReceiptPaperProps) {
         </div>
       </div>
 
-      {receipt.note && <p className="receipt-note">{receipt.note}</p>}
+      {/*
+        The internal note is deliberately NOT on the document either.
+
+        It used to be printed here, as an italic line above the signature. But
+        this component is rasterised and sent to the customer over WhatsApp, so
+        a message one clerk left for another ("va atrasado, avisar al jefe")
+        went to the person it was about. It is shown beside the receipt in
+        `ReceiptsPage`, where the office reads it and the customer never does.
+      */}
 
       {/*
         The customer's comprobantes are deliberately NOT on the document.

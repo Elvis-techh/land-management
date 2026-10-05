@@ -141,7 +141,17 @@ export interface TransactionEdit {
   method: "cash" | "transfer" | "card";
   type: PaymentType;
   reference: string | null;
-  notes: string | null;
+  /**
+   * The payment's OWN note, for money recorded before there were receipts — the
+   * only kind that has no receipt to hold one. Left out, it is left as it is.
+   */
+  notes?: string | null;
+  /**
+   * The note on the receipt this payment belongs to: the team's note, the one
+   * shown in the Nota del equipo box and shared by every line of the receipt.
+   * Left out, the note is untouched; blank clears it.
+   */
+  receiptNote?: string | null;
   reason: string;
   allowOverpayment?: boolean;
   /**
@@ -311,6 +321,21 @@ export async function voidReceipt(receiptId: string, reason: string): Promise<Re
   const response = await api.post<{ receipt: ReceiptResponse }>(
     `/api/receipts/${receiptId}/void`,
     { reason },
+  );
+
+  return toReceipt(response.receipt);
+}
+
+/**
+ * Write, change or clear the internal note on a receipt.
+ *
+ * Blank clears it. The note is never printed, so changing it moves no figure and
+ * asks for no reason — see `PATCH /receipts/:id/note`.
+ */
+export async function updateReceiptNote(receiptId: string, note: string | null): Promise<Receipt> {
+  const response = await api.patch<{ receipt: ReceiptResponse }>(
+    `/api/receipts/${receiptId}/note`,
+    { note },
   );
 
   return toReceipt(response.receipt);
