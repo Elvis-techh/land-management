@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useRememberedState } from "../../lib/viewMemory";
 
 import { businessTimeZone } from "../../lib/businessTime";
 import type { MoneyView } from "../../lib/money";
@@ -162,7 +163,9 @@ interface AuditPageProps {
 }
 
 export function AuditPage({ money }: AuditPageProps) {
-  const [offset, setOffset] = useState(0);
+  // The page being read survives a tab change, so checking something elsewhere
+  // does not send the reader back to page one of the history.
+  const [offset, setOffset] = useRememberedState("audit.offset", 0);
   const [state, setState] = useState<State>({ status: "loading" });
 
   const load = useCallback(async (nextOffset: number) => {

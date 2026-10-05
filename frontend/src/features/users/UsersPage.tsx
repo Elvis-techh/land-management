@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useRememberedState } from "../../lib/viewMemory";
 
 import { IconEdit, IconPermissions, IconRestore, IconArchive } from "../../components/Icons";
 import { businessTimeZone, calendarDaysBetween } from "../../lib/businessTime";
@@ -86,7 +87,10 @@ export function UsersPage({
 }: UsersPageProps) {
   // Deactivated accounts are kept off the working list by default, exactly like
   // archived projects — but one click away, since a rehire is a real thing.
-  const [showDeactivated, setShowDeactivated] = useState(false);
+  const [showDeactivated, setShowDeactivated] = useRememberedState(
+    "users.showDeactivated",
+    false,
+  );
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 

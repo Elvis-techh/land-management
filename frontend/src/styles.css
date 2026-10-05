@@ -287,6 +287,12 @@ nav.nav {
   font-weight: 600;
   margin-right: auto;
   white-space: nowrap;
+  /* The one item in the top bar that can give way. Without `min-width: 0` a
+     long title kept its full width and pushed the buttons past the edge of
+     the screen, so the whole page scrolled sideways. */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .currency-toggle {
@@ -715,6 +721,14 @@ nav.nav {
 /* ---------- tables ---------- */
 .table-wrap {
   overflow-x: auto;
+  /*
+   * A scroll box only clips what it is the containing block of. Without this,
+   * anything absolutely positioned inside a table (the `.sr-only` column
+   * labels, for one) is placed relative to some ancestor further out, lands
+   * beyond the right edge of a wide table, and stretches the whole PAGE
+   * sideways even though the table itself scrolls correctly in here.
+   */
+  position: relative;
 }
 
 table {
@@ -906,7 +920,7 @@ tbody tr:hover {
 /* ---------- receipts ---------- */
 .receipts-layout {
   display: grid;
-  grid-template-columns: 1fr 320px;
+  grid-template-columns: minmax(0, 1fr) 320px;
   gap: 18px;
   align-items: start;
 }
@@ -2249,6 +2263,7 @@ body.is-dragging-file .proof-dropzone:not(.is-disabled) {
 /* The filename is a second target for the same act, for anyone who reads the
    name before the picture. Styled as text, not as a link-shaped button. */
 .proof-name.link-btn {
+  max-width: 100%;
   padding: 0;
   text-align: left;
   color: inherit;
@@ -3610,6 +3625,10 @@ body.modal-open {
   display: flex;
   flex-direction: column;
   gap: 7px;
+  /* A grid item's default minimum is its content's width, so one long
+     unbreakable value inside (a filename, a pasted reference) could widen the
+     whole form. Zero lets the field shrink and the content truncate instead. */
+  min-width: 0;
 }
 
 /* Any direct child of the grid, not only a .form-field: the archive and cancel
@@ -4665,7 +4684,9 @@ body.modal-open {
 
 .project-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  /* `min(320px, 100%)`: a card never asks for more than the screen has, so a
+     320px phone gets one full-width card instead of one that runs off the edge. */
+  grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
   gap: 16px;
 }
 
@@ -4924,8 +4945,12 @@ body.modal-open {
     grid-template-columns: repeat(2, 1fr);
   }
 
+  /* `minmax(0, 1fr)`, not a bare `1fr`, which may not shrink below its
+     widest row. On a phone that held Recibos ~370px wide whatever the screen,
+     so the whole page scrolled sideways on anything narrower than ~390px. The
+     rows already truncate their own names; they only needed room to. */
   .receipts-layout {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -5148,12 +5173,46 @@ body.modal-open {
     padding-right: 18px;
   }
 
+  /*
+   * `minmax(0, 1fr)`, never a bare `1fr`.
+   *
+   * A bare `1fr` is `minmax(auto, 1fr)`: the column may not be narrower than
+   * its widest unbreakable content. An attached comprobante's filename is
+   * exactly that — `white-space: nowrap`, and straight off WhatsApp it reads
+   * "WhatsApp Image 2026-09-25 at 14.13.22_8f3a2c1d.jpeg". On a phone that name
+   * pushed the whole column to ~500px inside a ~360px sheet, so the dialog
+   * scrolled sideways and every field sat off-centre. A short filename never
+   * did it, which is why the same customer looked fine one time and broken the
+   * next. The desktop rule above already uses `minmax(0, …)`; this matches it,
+   * and the filename's own ellipsis takes over.
+   */
   .modal-form-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .modal-form-grid > .full-width {
     grid-column: auto;
+  }
+
+  /* The comprobante zone is most of a phone screen at desktop spacing. The
+     same content, tighter, so the note and the submit button stay in reach. */
+  .proof-dropzone {
+    gap: 6px;
+    padding: 12px;
+  }
+
+  .proof-dropzone-hint {
+    font-size: 0.6875rem;
+  }
+
+  .proof-item {
+    gap: 8px;
+    padding: 6px 8px;
+  }
+
+  .proof-item .doc-thumb {
+    width: 34px;
+    height: 34px;
   }
 
   .modal-actions {
@@ -5328,6 +5387,22 @@ body.modal-open {
 
   .page-title {
     font-size: 1.0625rem;
+  }
+}
+
+/*
+ * Just past the phone breakpoint the sidebar is open again and leaves the top
+ * bar ~540px: not enough for the title, the currency control, "+ Nuevo
+ * contrato" in full and the bell (~620px). The action keeps its "+" and drops
+ * its words, as it does on a phone, until there is room for them.
+ */
+@media (min-width: 761px) and (max-width: 880px) {
+  .topbar .btn-primary {
+    padding: 9px 12px;
+  }
+
+  .topbar .btn-primary span {
+    display: none;
   }
 }
 
@@ -7672,7 +7747,7 @@ input:disabled {
 
 .dash-splits {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
   gap: 24px;
 }
 
@@ -7767,7 +7842,7 @@ input:disabled {
 
 .dash-changes {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
   gap: 18px;
   margin-top: 20px;
   padding-top: 18px;
@@ -7828,7 +7903,7 @@ input:disabled {
 
 .dash-attention {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
   gap: 16px;
   margin-bottom: 16px;
 }
@@ -7895,7 +7970,7 @@ input:disabled {
 
 .dash-flags {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr));
   gap: 18px;
   margin-top: 18px;
   padding-top: 18px;

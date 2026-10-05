@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
+import { useRememberedState } from "../../lib/viewMemory";
 
 import { IconArchive, IconEdit, IconRestore } from "../../components/Icons";
 import { formatAreaParts } from "../../lib/area";
@@ -40,7 +41,7 @@ export function ProjectsPage({
   // Archived projects are kept off the working screen by default, exactly like
   // archived lots — but they are one click away, since restoring one is a
   // normal thing to want.
-  const [showArchived, setShowArchived] = useState(false);
+  const [showArchived, setShowArchived] = useRememberedState("projects.showArchived", false);
 
   const active = projects.filter((project) => project.archivedAt === null);
   const archived = projects.filter((project) => project.archivedAt !== null);
