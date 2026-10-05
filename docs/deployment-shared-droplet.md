@@ -462,10 +462,15 @@ sudo mkdir -p /etc/systemd/system/lindero-backup.service.d
 ExecStart=
 ExecStart=/opt/node22/bin/node scripts/backup.mjs
 
-# The unit ships this line commented out. Setting it here keeps the shipped
+# One CPU is shared with the scale API; the nightly job queues behind it.
+Nice=10
+
+# The unit ships these lines commented out. Setting them here keeps the shipped
 # file generic and puts the destination with the rest of this droplet's
-# specifics.
-ExecStartPost=/usr/bin/rclone --config /opt/lindero/backend/rclone.conf copy /opt/lindero/backend/backups spaces:lindero-backups
+# specifics. Two pieces, not one copy of the folder — see "What goes to the
+# bucket" below for why.
+ExecStartPost=/usr/bin/rclone --config /opt/lindero/backend/rclone.conf copy /opt/lindero/backend/backups spaces:lindero-backups/db --include "lindero-*.db" --size-only -v
+ExecStartPost=/usr/bin/rclone --config /opt/lindero/backend/rclone.conf copy /opt/lindero/backend/data/uploads spaces:lindero-backups/uploads --size-only -v
 ```
 
 ```bash
@@ -483,13 +488,91 @@ only one that decides whether you have backups:
 sudo -u lindero -H rclone --config /opt/lindero/backend/rclone.conf ls spaces:lindero-backups
 ```
 
-A `.db` listed there is a backup. An empty result means a nightly job writing
-files onto the same disk as the database it is meant to protect, which survives
-nothing that actually happens to disks.
+A `db/lindero-<stamp>.db` listed there is a backup. An empty result means a
+nightly job writing files onto the same disk as the database it is meant to
+protect, which survives nothing that actually happens to disks.
+
+Listing proves a file exists, not that it is the right one. Compare checksums —
+this reads both sides and changes nothing:
+
+```bash
+RC="sudo -u lindero -H rclone --config /opt/lindero/backend/rclone.conf"
+$RC check /opt/lindero/backend/data/uploads spaces:lindero-backups/uploads --one-way
+$RC check /opt/lindero/backend/backups spaces:lindero-backups/db --include "lindero-*.db" --one-way
+```
+
+Both should end in `0 differences found`.
 
 `readonly: true` in `scripts/backup.mjs` is what lets this run under
 `ProtectSystem=strict` with only `backups/` writable — `VACUUM INTO` reads the
 live database and writes a defragmented copy elsewhere, with no downtime.
+
+#### What goes to the bucket, and keeping it small
+
+```
+spaces:lindero-backups/
+  db/lindero-<stamp>.db     one per night, ~0.5 MB
+  uploads/<random name>     ONE copy of every photo and scanned document
+```
+
+The first design was a single `rclone copy` of the whole `backups/` folder, and
+it grew without limit. Each night's tarball is the entire uploads folder (57 MB
+by the end of September), `copy` never deletes, and a new tarball has a new
+name — so the bucket held one full copy of every photo for every night since
+go-live: 1.07 GiB after 26 days, and growing by (size of the uploads folder) ×
+(nights). Uploaded files are written once and never changed, so the bucket now
+keeps one copy of each and `copy` sends only the ones it does not have. The
+nightly tarball is still made in `backups/`, as a quick local undo, but it is
+not uploaded.
+
+`copy`, never `sync`. `copy` cannot delete from the bucket, so an empty or
+missing uploads folder cannot wipe the off-site copy. The price is that a file
+removed in the app stays in `uploads/`. That is deliberate: a removed signed
+contract has no other copy anywhere, and the database snapshot from before the
+removal still says which random name it was.
+
+**Lifecycle rules** keep the rest bounded, but the DigitalOcean control panel
+does not offer them (its Space settings have versioning, access logs, file
+listing, CDN and CORS only). They are set through the S3 API — `s3cmd
+setlifecycle`, or `aws s3api put-bucket-lifecycle-configuration` — with a key
+that may change bucket settings, which Lindero's own key deliberately cannot (it
+gets `AccessDenied`). They are optional now: the mirror already stops the
+growth, leaving about 13 MB a month of new photos plus one small database copy
+a night. Expiry is permanent unless versioning has been turned on, which it is
+not by default — so the prefixes matter:
+
+| Prefix | Expire after | Why |
+|---|---|---|
+| `db/` | 90 days | Small, and the only history of the database off the machine. |
+| `lindero-` | 90 days | Database copies from the first design, at the top level. |
+| `uploads-` | 30 days | Tarballs from the first design; superseded by `uploads/`. |
+| `uploads/` | **never** | The only off-site copy of the photos. |
+
+`uploads-` (with the hyphen) does not match `uploads/`, and an empty prefix
+matches everything — do not leave one. bascula-central's Space is a different
+bucket that also holds live attachments (`corapsa-*`, `gastos`); a rule there
+must be limited to its `backups/` folder, never the whole Space.
+
+#### Restoring from the bucket
+
+```bash
+sudo systemctl stop lindero-api
+RC="sudo -u lindero -H rclone --config /opt/lindero/backend/rclone.conf"
+
+# The database: pick a snapshot from `$RC ls spaces:lindero-backups/db`.
+$RC copyto spaces:lindero-backups/db/lindero-<stamp>.db /opt/lindero/backend/data/lindero.db
+sudo -u lindero rm -f /opt/lindero/backend/data/lindero.db-wal \
+                      /opt/lindero/backend/data/lindero.db-shm
+
+# The uploads: everything the bucket has.
+$RC copy spaces:lindero-backups/uploads /opt/lindero/backend/data/uploads
+
+sudo systemctl start lindero-api
+```
+
+A snapshot only ever points at files that were already in `uploads/` when it
+was taken, and nothing is removed from that prefix, so the mirror always holds
+at least what any snapshot needs. Extra files are harmless.
 
 ### 12. Verify both applications
 

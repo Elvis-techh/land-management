@@ -150,9 +150,16 @@ ls -la /opt/lindero/backend/backups
 ```
 
 **Off the machine.** A snapshot on the same disk as the database is not a
-backup. Add an off-site copy step — the `ExecStartPost` line in
-`lindero-backup.service` has an rclone example; a provider volume snapshot on a
+backup. Add an off-site copy step — the `ExecStartPost` lines in
+`lindero-backup.service` have an rclone example; a provider volume snapshot on a
 schedule also works. Do this before go-live.
+
+Copy each night's database snapshot, but **mirror** the uploads directory
+instead of uploading the nightly tarball. Uploaded files never change, so a
+mirror sends only the new ones; the tarball re-sends every photo ever taken each
+night, and a bucket that never deletes keeps every one of those copies. See
+[deployment-shared-droplet.md](deployment-shared-droplet.md), step 11, for the
+bucket layout, its lifecycle rules, and restoring from it.
 
 ### Restoring — test this before go-live
 
@@ -175,3 +182,7 @@ sudo systemctl start lindero-api
 
 Then sign in and open a receipt with an attachment: the row and the file are
 restored from two different archives, and this is the check that both landed.
+
+To restore from the off-site copy instead of a local snapshot, use the
+commands under "Restoring from the bucket" in step 11 of
+[deployment-shared-droplet.md](deployment-shared-droplet.md).

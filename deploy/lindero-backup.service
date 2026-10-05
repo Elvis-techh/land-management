@@ -31,8 +31,20 @@ EnvironmentFile=-/opt/lindero/backend/.env
 ExecStart=/usr/bin/node scripts/backup.mjs
 
 # Uncomment once an off-machine destination is set up — a backup that only ever
-# lands on the same disk as the database is not a backup. Example with rclone:
-# ExecStartPost=/usr/bin/rclone copy /opt/lindero/backend/backups remote:lindero-backups
+# lands on the same disk as the database is not a backup. Example with rclone,
+# in two pieces:
+#
+#   - each night's database copy: small, and different every night;
+#   - the uploads folder as a MIRROR, not the nightly tarball. Every file in it
+#     is written once under a random name and never changed, so `copy` sends only
+#     the ones the bucket does not have yet. Uploading the tarball instead
+#     re-sends every photo ever taken, every night, and the bucket keeps all of
+#     those copies for good.
+#
+# `copy`, never `sync`: it cannot delete from the bucket, so an empty or missing
+# uploads folder cannot wipe the off-site copy.
+# ExecStartPost=/usr/bin/rclone copy /opt/lindero/backend/backups remote:lindero-backups/db --include "lindero-*.db" --size-only -v
+# ExecStartPost=/usr/bin/rclone copy /opt/lindero/backend/data/uploads remote:lindero-backups/uploads --size-only -v
 
 # Must exist before the unit starts, for the same reason as in
 # lindero-api.service: the namespace is built before the script runs, so
