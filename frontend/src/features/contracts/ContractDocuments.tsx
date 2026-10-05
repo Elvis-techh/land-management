@@ -223,7 +223,7 @@ export function ContractDocuments({ contractId, user, onCountChanged }: Contract
           <span className="cp-docs-actions">
             <button
               type="button"
-              className="link-btn"
+              className="btn-secondary is-small"
               disabled={busy !== null || driveBusy !== null || documents === null}
               onClick={() => inputRef.current?.click()}
             >
@@ -235,7 +235,7 @@ export function ContractDocuments({ contractId, user, onCountChanged }: Contract
             {googleDriveConfigured() && (
               <button
                 type="button"
-                className="link-btn"
+                className="btn-secondary is-small"
                 disabled={busy !== null || driveBusy !== null || documents === null}
                 onClick={() => void pickFromDrive()}
               >
