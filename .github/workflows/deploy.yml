@@ -94,7 +94,7 @@ jobs:
           REQUEST: ${{ inputs.without_drive && 'allow-drop-drive' || 'deploy' }}
         run: |
           if [ -z "$HOST" ]; then
-            echo "::notice::No DROPLET_HOST secret, so this run only published the build. On the droplet: cd /opt/lindero && sudo -u lindero -H git pull --ff-only && sudo bash deploy/update-from-build.sh"
+            echo "::notice::Build published to deploy-build. The droplet picks it up within two minutes (lindero-autodeploy.timer), or deploy by hand: cd /opt/lindero && sudo -u lindero -H git pull --ff-only && sudo bash deploy/update-from-build.sh"
             exit 0
           fi
           install -d -m 700 ~/.ssh

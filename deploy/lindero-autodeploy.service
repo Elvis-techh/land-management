@@ -1,0 +1,11 @@
+# Runs deploy/autodeploy.sh once; started by lindero-autodeploy.timer.
+# Install: see docs/github-actions-deploy.md, "Automatic deploys".
+
+[Unit]
+Description=Lindero: deploy a new build from deploy-build, if there is one
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /opt/lindero/deploy/autodeploy.sh

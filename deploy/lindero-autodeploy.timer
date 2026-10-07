@@ -1,0 +1,12 @@
+# Checks GitHub for a new build every two minutes. A check with nothing new is
+# one small `git fetch`.
+
+[Unit]
+Description=Lindero: check for a new build every two minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+
+[Install]
+WantedBy=timers.target

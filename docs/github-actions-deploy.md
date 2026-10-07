@@ -5,6 +5,33 @@ the result to the `deploy-build` branch, then connects to the droplet and runs
 `deploy/update-from-build.sh` there. Once it is set up, a deploy is one button
 (**Actions → Deploy → Run workflow**), or one request to Claude, from a phone.
 
+## Automatic deploys (recommended)
+
+The simplest setup needs no key at all: the droplet checks `deploy-build`
+every two minutes and deploys any new build it finds. Nothing has to be copied
+out of the droplet, which is what makes it workable from a phone. Paste into
+the droplet console once:
+
+```bash
+cd /opt/lindero && sudo -u lindero -H git pull --ff-only
+sudo cp deploy/lindero-autodeploy.service deploy/lindero-autodeploy.timer /etc/systemd/system/
+sudo bash deploy/autodeploy.sh --mark-current
+sudo systemctl daemon-reload && sudo systemctl enable --now lindero-autodeploy.timer
+systemctl list-timers lindero-autodeploy
+```
+
+The last line should show the timer with a time in its NEXT column. From then
+on a deploy is: run the Deploy workflow (or ask Claude to), wait about three
+minutes. What the droplet did: `journalctl -u lindero-autodeploy -n 50`.
+
+To stop automatic deploys: `sudo systemctl disable --now lindero-autodeploy.timer`.
+
+The rest of this page is the other way round: GitHub connecting in to the
+droplet with an SSH key. It deploys a minute sooner and shows the droplet's
+output in the workflow log, but needs a private key copied into GitHub.
+
+## Deploying over SSH instead
+
 Setup is once, in three parts: the droplet, GitHub, and a first run. Every
 droplet step can be done in DigitalOcean's browser console (**Droplet → Access
 → Launch Droplet Console**), which logs you in as root.
