@@ -39,14 +39,18 @@ echo "    source checkout: $(as_lindero git log -1 --format='%h %s')"
 echo "    build:           $(grep -m1 '^Source commit:' "$BUILD/README.md" || echo 'unknown')"
 
 # The Google Drive settings are baked into the frontend at build time, so a
-# build made without them hides "Desde Google Drive" with no error anywhere.
-# Refuse to swap a frontend that has them for one that does not.
+# build made without them, or with a mistyped one, breaks "Desde Google Drive"
+# with no error anywhere. Refuse to swap a frontend that has them for one whose
+# settings differ in any way.
 drive_settings() { grep -ohE "VITE_GOOGLE_[A-Z_]+:[\`\"'][^\`\"']+" "$1"/assets/*.js 2>/dev/null | sort -u; }
-if [[ -n "$(drive_settings "$FRONTEND_DEST")" && -z "$(drive_settings "$BUILD/frontend/dist")" ]]; then
+LIVE_DRIVE=$(drive_settings "$FRONTEND_DEST")
+NEW_DRIVE=$(drive_settings "$BUILD/frontend/dist")
+if [[ -n "$LIVE_DRIVE" && "$LIVE_DRIVE" != "$NEW_DRIVE" ]]; then
   if [[ "${ALLOW_DROP_DRIVE:-}" != "1" ]]; then
-    echo "!! The live site has Google Drive settings and this build does not." >&2
-    echo "   Rebuild with VITE_GOOGLE_* set (see docs/github-actions-deploy.md)," >&2
-    echo "   or rerun with ALLOW_DROP_DRIVE=1 to deploy without Drive anyway." >&2
+    echo "!! This build's Google Drive settings do not match the live site's." >&2
+    diff <(echo "$LIVE_DRIVE") <(echo "$NEW_DRIVE") | sed 's/^</   live:/; s/^>/   new: /' | grep -E 'live:|new:' >&2 || true
+    echo "   Fix the VITE_GOOGLE_* variables on GitHub and rebuild, or rerun with" >&2
+    echo "   ALLOW_DROP_DRIVE=1 if the change is intended." >&2
     exit 1
   fi
 fi
