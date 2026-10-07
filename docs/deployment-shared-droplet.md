@@ -22,7 +22,7 @@ machine, so the steps below can be skipped or adapted rather than re-run:
 | 2 — Swap | **Done, 2 GB** (not the 1 GB below). Survives reboot via `/etc/fstab`. |
 | 9 — Nginx + certbot | Both already installed (nginx 1.24.0, Ubuntu 24.04). |
 | 9 — TLS | **Certificate already issued** for `lindero.basculacentral.com`, via `certbot certonly --webroot -w /var/www/certbot`, expiring 2026-12-04. `certbot renew --dry-run` passes for it and for `api.basculacentral.com`. Do **not** re-run `certbot --nginx`; point the site at the existing files under `/etc/letsencrypt/live/lindero.basculacentral.com/`. |
-| 10 — Firewall | Done. `ufw` active with 22, 3000 and 80/443 allowed. Port 3000 stays open for the scale stations. |
+| 10 — Firewall | Done, **with one rule too many.** `ufw` active with 22, 3000 and 80/443 allowed. No scale station uses 3000; delete that rule (collision 2). |
 | "If the droplet gets too small" | **Done.** Resized 512 MB → 1 GB and 10 GB → 25 GB on 2026-09-04. The disk half is not reversible. |
 
 Remaining before Lindero runs: steps 1, 3, 4, 5, 6, 7, 8, 11 and 12.
@@ -45,14 +45,23 @@ the running machine in step 0 before trusting it.
 | Process | Express 4 + `sqlite3` | Fastify + `better-sqlite3` |
 | Supervised by | PM2, **as root** | systemd, as user `lindero` |
 | Lives in | `/root/weight_software/backend` | `/opt/lindero` |
-| Listens on | `0.0.0.0:3000` — **public** | `127.0.0.1:3001` — loopback only |
-| Reached by | Electron desktop clients, direct over HTTP, shared `API_KEY` | Browsers, over HTTPS, through Nginx |
+| Listens on | `0.0.0.0:3000` — **public**, though nothing needs it to be | `127.0.0.1:3001` — loopback only |
+| Reached by | Electron desktop clients, over HTTPS at `api.basculacentral.com`, through Nginx; one `API_KEY` shared by every install | Browsers, over HTTPS, through Nginx |
 | Backups | hourly, to DO Spaces `weight-station-storage` | nightly, `lindero-backup.timer` |
 
-The important asymmetry: **the scale stations dial the droplet's IP on port
-3000 directly.** There is no proxy in front of it and no hostname. Anything
-that closes port 3000, changes the droplet's IP, or restarts the box takes the
-weight stations down with it.
+The important thing to know: **the scale stations reach bascula-central through
+the same Nginx that will serve Lindero.** Every release of the desktop app,
+from the first (`v.1.0.1`, 2026-07-27) on, has `https://api.basculacentral.com`
+built in as its server (today's source for it is `frontend/environment.js` in
+that repository); Nginx terminates TLS there and passes the requests to port
+3000. Anything that stops Nginx, or restarts it on a broken config, takes the
+weight stations down along with Lindero: reload rather than restart, and
+`nginx -t` first, every time. If the droplet's IP ever changes, the `api.`
+record has to follow it.
+
+An earlier version of this section said the stations dial the droplet's IP on
+port 3000 directly. No release of the app ever has, and the advice built on
+that (keep 3000 open to the internet) is reversed in collision 2.
 
 ## The four collisions
 
@@ -66,29 +75,54 @@ API.
 This one is loud rather than dangerous: whichever process starts second gets
 `EADDRINUSE` and refuses to boot. Nothing is silently misrouted.
 
-### 2. The firewall in deployment.md cuts off every scale station
+### 2. The firewall: close 3000, do not open it
 
 [deployment.md](deployment.md) says to enable `ufw` allowing only SSH and
-Nginx, and states that "3000 must NOT appear". That is correct for a droplet
-running Lindero alone. Run it here and every weight station loses the server
-the moment `ufw enable` returns.
+Nginx, and states that "3000 must NOT appear". That is right on this droplet
+too. The stations arrive on 443, through Nginx (above), so a firewall without
+3000 does not touch them.
 
-Port 3000 must stay open:
+And leaving 3000 open is not harmless. The only credential the scale API
+checks, its `API_KEY`, is the same on every station and ships inside every
+installer — that repository and its release downloads are public — so it
+cannot be treated as a secret: anyone can act as a station. Through Nginx that
+at least leaves an access log, and can be limited by address. Port 3000 skips
+Nginx entirely: no TLS, no log, no `allow`/`deny`.
+
+Close it, then stop bascula-central listening on the public interface at all:
 
 ```bash
-sudo ufw allow OpenSSH
-sudo ufw allow 'Nginx Full'      # 80, 443 — Lindero
-sudo ufw allow 3000/tcp          # bascula-central — the scale stations
-sudo ufw enable
+# 1. Confirm the stations come in through Nginx: the station's address should
+#    appear about every 15 s (the app polls /api/health; Lindero never does).
+#    If it does not, stop here and find out why before closing anything.
+sudo tail -f /var/log/nginx/access.log | grep --line-buffered '/api/health'
+
+# 2. Close the door. This removes both the IPv4 and the IPv6 rule that
+#    `ufw allow 3000/tcp` made. "Could not delete non-existent rule" means it
+#    was added another way: `ufw status numbered`, then `ufw delete <n>` for
+#    each 3000 line, highest number first.
+sudo ufw delete allow 3000/tcp
+sudo ufw status verbose          # 3000 must NOT appear
+
+# 3. Before the second guard, check that the api. site proxies to the
+#    loopback (127.0.0.1:3000 or localhost:3000), not to the public IP.
+grep -rn proxy_pass /etc/nginx/sites-enabled/
 ```
 
-If the stations have fixed public addresses, `ufw allow from <IP> to any port
-3000 proto tcp` is much better than opening it to the internet. They usually do
-not, on consumer connections.
+Then add `HOST=127.0.0.1` to `/root/weight_software/backend/.env` and, at a
+quiet moment, `pm2 restart bascula-backend` (or whatever `pm2 list` calls it).
+`server.js` already reads `HOST`; nothing in the app changes. `ss -tlnp` should
+show it on `127.0.0.1:3000` afterwards, not `0.0.0.0:3000`.
 
-Lindero's own port must *not* be opened. `HOST=127.0.0.1` means it never binds
-a public interface in the first place; the firewall is the second, independent
-guard.
+If the station's public address is fixed, Nginx can also admit only that
+address to `api.basculacentral.com`'s `/api/` (`allow <IP>; deny all;` in that
+location). The per-address limit belongs there now, where the stations
+actually arrive. Most consumer connections do not have a fixed address, and a
+changed one locks the station out.
+
+Lindero's own port must *not* be opened either. `HOST=127.0.0.1` means it
+never binds a public interface in the first place; the firewall is the second,
+independent guard.
 
 ### 3. Building on the droplet can kill the neighbour
 
@@ -138,7 +172,7 @@ free -h; swapon --show                 # expect ~460Mi total, no swap
 df -h /                                # expect ~5.6G available
 node --version; command -v node        # bascula's Node — note it down
 pm2 list                               # expect bascula running
-ss -tlnp                               # expect node on 0.0.0.0:3000
+ss -tlnp                               # expect node on 0.0.0.0:3000 (collision 2)
 ufw status verbose                     # active already, or inactive?
 systemctl is-active nginx; nginx -v    # installed already, or not?
 ls /etc/nginx/sites-enabled/ 2>/dev/null
@@ -415,8 +449,9 @@ second heartbeat stays inside Nginx's 60-second `proxy_read_timeout`.
 
 ### 10. Firewall
 
-As in collision 2 above. If `ufw` was already active in step 0, add only the
-missing rules.
+The rules in [deployment.md](deployment.md) as they stand, SSH and Nginx only,
+for the reasons in collision 2. If `ufw` was already active in step 0, add only
+the missing rules, and delete the 3000 one.
 
 ### 11. Backups, off the machine
 
@@ -578,10 +613,15 @@ at least what any snapshot needs. Extra files are harmless.
 
 ```bash
 # From somewhere that is NOT the droplet:
-curl -sS --max-time 5 http://<DROPLET_IP>:3000/           # bascula: answers
-curl -sS --max-time 5 http://<DROPLET_IP>:3001/api/health # Lindero: refused
-curl -sS --max-time 5 https://<your-domain>/api/health    # Lindero: answers
+curl -sS --max-time 5 https://api.basculacentral.com/api/health # bascula: answers
+curl -sS --max-time 5 http://<DROPLET_IP>:3000/api/health       # bascula: refused / timeout
+curl -sS --max-time 5 http://<DROPLET_IP>:3001/api/health       # Lindero: refused / timeout
+curl -sS --max-time 5 https://<your-domain>/api/health          # Lindero: answers
 ```
+
+If Nginx admits only the station's address to bascula's `/api/`, the first
+check answers 403 from anywhere else, which proves Nginx is up and nothing
+more; the weighing below is then the check that counts.
 
 Then, in this order: open a scale station and weigh something; sign in to
 Lindero and open a contract; run `free -h` and `pm2 list` while both are in

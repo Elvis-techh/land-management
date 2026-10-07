@@ -305,13 +305,14 @@ In the Cloudflare dashboard → your domain → **DNS** → **Add record**:
 | TTL | Auto |
 
 **Grey cloud, not orange, and this is deliberate.** The usual reason to proxy is
-to hide the origin IP. That reason does not apply here: the scale stations dial
-this droplet's IP directly on port 3000, so the address is already public and
-has to stay that way. Proxying would hide nothing, and would cost you three
-things — `certbot`'s HTTP-01 challenge needs extra care, the real client IP
-arrives in `CF-Connecting-IP` instead of where `TRUST_PROXY=127.0.0.1` expects
-it (so `request.ip` in the audit log becomes a Cloudflare edge address), and
-Cloudflare will happily cache the service worker file unless told not to.
+to hide the origin IP. That reason does not apply here: the scale stations' own
+hostname (`api.`) is already a DNS-only record for this droplet, so the address
+is public whatever this record does. Proxying would hide nothing, and would
+cost you three things — `certbot`'s HTTP-01 challenge needs extra care, the
+real client IP arrives in `CF-Connecting-IP` instead of where
+`TRUST_PROXY=127.0.0.1` expects it (so `request.ip` in the audit log becomes a
+Cloudflare edge address), and Cloudflare will happily cache the service worker
+file unless told not to.
 
 Orange cloud is a fine thing to revisit later, deliberately. Not on day one.
 
@@ -348,13 +349,15 @@ sudo nginx -t && sudo systemctl reload nginx
 `nginx -t` before every reload, always. It is the difference between a typo you
 fix in ten seconds and a web server that will not start.
 
-**This does not touch `bascula-central`.** The weight software is supervised by
-PM2 and listens on `0.0.0.0:3000` directly, with no proxy in front of it —
-nothing about installing or reloading Nginx reaches it. The one thing that
-*would* cut it off is the `ufw` rule set in [deployment.md](deployment.md); do
-not run that here. Follow the firewall section of
-[deployment-shared-droplet.md](deployment-shared-droplet.md), which keeps 3000
-open.
+**This reaches `bascula-central` too.** The scale stations come in through this
+same Nginx, at `https://api.<TU_DOMINIO>`, so anything that stops Nginx, or
+restarts it on a broken config, takes them down along with Lindero. Nginx is
+already serving that site here: add Lindero's file beside it, leave the `api.`
+one alone, and reload rather than restart. The `ufw` rules in
+[deployment.md](deployment.md) do not cut the stations off: no release of the
+app uses port 3000. Collision 2 of
+[deployment-shared-droplet.md](deployment-shared-droplet.md) explains why, and
+closes the port.
 
 Then the certificate:
 
@@ -393,11 +396,11 @@ sudo systemctl restart lindero-api
 ```bash
 # From the laptop.
 curl -sS -o /dev/null -w '%{http_code}\n' https://lindero.<TU_DOMINIO>/api/health
-curl -sS --max-time 5 -o /dev/null -w '%{http_code}\n' http://<DROPLET_IP>:3000/
-#   ^ bascula-central: must still ANSWER (any HTTP status is fine — 200, 401,
-#     404, all prove the port is open and the process is alive). A refusal or a
-#     timeout means the scale stations are down.  Better still: have someone
-#     weigh something.
+curl -sS --max-time 5 -o /dev/null -w '%{http_code}\n' https://api.<TU_DOMINIO>/api/health
+#   ^ bascula-central, through the same Nginx: must still ANSWER — 200, or 403
+#     if Nginx admits only the station's address to /api/ (then only a weighing
+#     proves bascula-central itself is up). A refusal or a timeout means the
+#     scale stations are down.  Better still: have someone weigh something.
 ```
 
 Then open `https://lindero.<TU_DOMINIO>` on the Android phone, log in, open a
