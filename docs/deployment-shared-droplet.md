@@ -663,6 +663,11 @@ changed, restarts, and waits for `/api/health`. `deploy-build` has to be
 rebuilt after every change to `main` that touches code; a build from an older
 commit deploys that older code.
 
+Better still, let GitHub do the build and the droplet half together:
+[github-actions-deploy.md](github-actions-deploy.md). That is also the only
+build that carries the Google Drive settings; the script refuses a build that
+would drop them from a live site that has them.
+
 ## If the droplet gets too small
 
 Everything above is mitigation for one number: 512 MB shared between two

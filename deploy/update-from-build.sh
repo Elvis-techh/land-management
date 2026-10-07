@@ -38,6 +38,19 @@ as_lindero git archive FETCH_HEAD | tar -x -C "$BUILD"
 echo "    source checkout: $(as_lindero git log -1 --format='%h %s')"
 echo "    build:           $(grep -m1 '^Source commit:' "$BUILD/README.md" || echo 'unknown')"
 
+# The Google Drive settings are baked into the frontend at build time, so a
+# build made without them hides "Desde Google Drive" with no error anywhere.
+# Refuse to swap a frontend that has them for one that does not.
+drive_settings() { grep -ohE "VITE_GOOGLE_[A-Z_]+:[\`\"'][^\`\"']+" "$1"/assets/*.js 2>/dev/null | sort -u; }
+if [[ -n "$(drive_settings "$FRONTEND_DEST")" && -z "$(drive_settings "$BUILD/frontend/dist")" ]]; then
+  if [[ "${ALLOW_DROP_DRIVE:-}" != "1" ]]; then
+    echo "!! The live site has Google Drive settings and this build does not." >&2
+    echo "   Rebuild with VITE_GOOGLE_* set (see docs/github-actions-deploy.md)," >&2
+    echo "   or rerun with ALLOW_DROP_DRIVE=1 to deploy without Drive anyway." >&2
+    exit 1
+  fi
+fi
+
 echo "==> Runtime dependencies (Node 22)"
 as_lindero "$NODE_BIN/npm" ci --omit=dev --no-audit --no-fund
 as_lindero "$NODE_BIN/node" -e "require('$REPO/node_modules/better-sqlite3')"

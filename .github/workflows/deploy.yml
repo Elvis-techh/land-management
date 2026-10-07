@@ -1,0 +1,98 @@
+# Build main and deploy it to the droplet. Run by hand (Actions → Deploy →
+# Run workflow), or by Claude through the GitHub API.
+#
+# Setup — secrets, variables and the droplet key — is in
+# docs/github-actions-deploy.md. Nothing here works until that is done.
+
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      without_drive:
+        description: "Deploy even though the Google Drive variables are not set (hides the Drive button)"
+        type: boolean
+        default: false
+
+# One deploy at a time; a second waits rather than racing the first.
+concurrency: deploy
+
+permissions:
+  contents: write # to publish the build to the deploy-build branch
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Google Drive settings present
+        if: ${{ !inputs.without_drive }}
+        env:
+          CLIENT_ID: ${{ vars.VITE_GOOGLE_CLIENT_ID }}
+          API_KEY: ${{ vars.VITE_GOOGLE_API_KEY }}
+        run: |
+          if [ -z "$CLIENT_ID" ] || [ -z "$API_KEY" ]; then
+            echo "::error::VITE_GOOGLE_CLIENT_ID / VITE_GOOGLE_API_KEY are not set under Settings → Secrets and variables → Actions → Variables. Set them, or rerun with 'without_drive'."
+            exit 1
+          fi
+
+      - run: npm ci
+
+      - run: npm test
+
+      - name: Build
+        env:
+          VITE_GOOGLE_CLIENT_ID: ${{ vars.VITE_GOOGLE_CLIENT_ID }}
+          VITE_GOOGLE_API_KEY: ${{ vars.VITE_GOOGLE_API_KEY }}
+          VITE_GOOGLE_APP_ID: ${{ vars.VITE_GOOGLE_APP_ID }}
+        run: npm run build
+
+      # The droplet must not build (it can OOM-kill bascula-central), so it
+      # pulls this branch instead. Replaced wholesale on every deploy.
+      - name: Publish to deploy-build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          SHA=$(git rev-parse --short HEAD)
+          OUT=$(mktemp -d)
+          mkdir -p "$OUT/frontend" "$OUT/backend"
+          cp -r frontend/dist "$OUT/frontend/dist"
+          cp -r backend/dist "$OUT/backend/dist"
+          cat > "$OUT/README.md" <<EOF
+          # deploy-build
+
+          Built output only, from \`main\` at \`$SHA\` by the Deploy workflow.
+          Do not edit by hand; it is replaced on each deploy.
+
+          Source commit: $SHA
+          EOF
+          cd "$OUT"
+          git init -q -b deploy-build
+          git add -A -f
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -q -m "Build of main at $SHA"
+          git push -q --force "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" deploy-build
+
+      # The key is locked on the droplet to one forced command,
+      # deploy/ssh-deploy.sh, so nothing sent from here can run anything else.
+      # The one word it listens for is "allow-drop-drive".
+      - name: Deploy on the droplet
+        env:
+          HOST: ${{ secrets.DROPLET_HOST }}
+          HOST_KEY: ${{ secrets.DROPLET_HOST_KEY }}
+          SSH_KEY_B64: ${{ secrets.DROPLET_SSH_KEY }}
+          REQUEST: ${{ inputs.without_drive && 'allow-drop-drive' || 'deploy' }}
+        run: |
+          install -d -m 700 ~/.ssh
+          echo "$SSH_KEY_B64" | base64 -d > ~/.ssh/deploy
+          chmod 600 ~/.ssh/deploy
+          echo "$HOST $HOST_KEY" > ~/.ssh/known_hosts
+          ssh -i ~/.ssh/deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "root@$HOST" "$REQUEST"
