@@ -54,6 +54,16 @@ if (config.exchangeRateRefreshHours > 0) {
 
 const shutdown = async (signal: string) => {
   app.log.info({ signal }, "Shutting down");
+
+  // Whatever else might hold the server open, exit well inside systemd's
+  // TimeoutStopSec rather than waiting to be killed. `unref` so the timer
+  // itself never keeps the process alive.
+  const deadline = setTimeout(() => {
+    app.log.error("Shutdown took longer than 10 s; exiting anyway");
+    process.exit(1);
+  }, 10_000);
+  deadline.unref();
+
   await app.close();
   // Closing SQLite cleanly checkpoints the write-ahead log.
   sqlite.close();

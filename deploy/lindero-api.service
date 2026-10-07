@@ -47,6 +47,11 @@ ExecStart=/usr/bin/node dist/server.js
 Restart=on-failure
 RestartSec=5
 
+# The server exits on its own within 10 s of SIGTERM (backend/src/server.ts).
+# If something ever holds it past that, a stop costs 15 s rather than the
+# default 90 s of 502s before SIGKILL.
+TimeoutStopSec=15
+
 # Hardening. The one path the process must write is its data directory (the
 # SQLite file, the WAL, and the uploads); everything else is read-only.
 NoNewPrivileges=true

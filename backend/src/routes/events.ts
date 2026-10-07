@@ -1,3 +1,5 @@
+import type { ServerResponse } from "node:http";
+
 import type { FastifyPluginAsync } from "fastify";
 
 import { subscribeToChanges } from "../lib/changes.js";
@@ -56,6 +58,25 @@ const RETRY_MS = 3_000;
  *    this open, and production should be on TLS regardless.
  */
 export const eventRoutes: FastifyPluginAsync = async (app) => {
+  /** Every open stream, so shutdown can end them instead of waiting on them. */
+  const open = new Set<ServerResponse>();
+
+  /*
+   * End the streams before Fastify waits for them.
+   *
+   * `preClose` runs before `app.close()` starts waiting on open connections. A
+   * hijacked stream never finishes by itself, so without this a single open
+   * tab holds shutdown up until systemd's TimeoutStopSec runs out and it sends
+   * SIGKILL. Browsers reconnect on their own, after `RETRY_MS`, once the new
+   * process is up.
+   */
+  app.addHook("preClose", async () => {
+    for (const stream of open) {
+      stream.end();
+    }
+    open.clear();
+  });
+
   app.get<{ Querystring: { clientId?: string } }>(
     "/events",
     { onRequest: app.requireUser },
@@ -76,6 +97,7 @@ export const eventRoutes: FastifyPluginAsync = async (app) => {
       reply.hijack();
 
       const stream = reply.raw;
+      open.add(stream);
 
       // Node will otherwise apply the server's idle timeout to a connection
       // that is idle by design between heartbeats.
@@ -116,6 +138,7 @@ export const eventRoutes: FastifyPluginAsync = async (app) => {
       const close = () => {
         clearInterval(heartbeat);
         unsubscribe();
+        open.delete(stream);
       };
 
       // Both ends: the browser closing the tab, and the socket failing under us.
