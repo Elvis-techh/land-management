@@ -319,6 +319,55 @@ describe("splitting one payment across a purchase", () => {
     assert.deepEqual(result.allocations, [{ contractId: "a", amountCents: lempiras(8_333.33) }]);
   });
 
+  it("gives every lot the same when the amount divides into whole lempiras", () => {
+    // The case from the receipts screen: L 14,500 over two lots used to come
+    // out 7,300 + 7,200 because shares were always whole hundreds. 7,250 each
+    // covers both next cuotas (49.02 and 7,200), so that is the split.
+    const result = splitEvenly(lempiras(14_500), [
+      {
+        contractId: "b08",
+        code: "B-08",
+        balanceCents: lempiras(427_799.02),
+        minimumDueCents: lempiras(49.02),
+      },
+      {
+        contractId: "b01",
+        code: "B-01",
+        balanceCents: lempiras(427_700),
+        minimumDueCents: lempiras(7_200),
+      },
+    ]);
+
+    assert.deepEqual(
+      result.allocations.map((line) => line.amountCents),
+      [lempiras(7_250), lempiras(7_250)],
+    );
+    assert.equal(result.unallocatedCents, 0);
+    assert.deepEqual(result.shortOfMinimumContractIds, []);
+  });
+
+  it("falls back to whole hundreds when an equal share would leave a lot below its cuota", () => {
+    // 7,250 each would cover "a" but leave "b" short of its 7,300 cuota, so
+    // the equal split is not used and "b" still gets its full minimum.
+    const result = splitEvenly(lempiras(14_500), [
+      { contractId: "a", code: "CT-2026-001", balanceCents: lempiras(100_000), minimumDueCents: 0 },
+      {
+        contractId: "b",
+        code: "CT-2026-002",
+        balanceCents: lempiras(100_000),
+        minimumDueCents: lempiras(7_300),
+      },
+    ]);
+
+    const forB = result.allocations.find((line) => line.contractId === "b");
+
+    assert.ok(forB && forB.amountCents >= lempiras(7_300));
+    assert.equal(
+      result.allocations.reduce((sum, line) => sum + line.amountCents, 0),
+      lempiras(14_500),
+    );
+  });
+
   it("uses whole hundreds by default", () => {
     assert.equal(DEFAULT_ROUNDING_STEP_CENTS, lempiras(100));
   });

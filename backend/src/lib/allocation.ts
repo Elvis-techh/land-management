@@ -6,11 +6,13 @@
  * lot is released, titled or repossessed on its own — see the note on
  * `saleGroupId` in src/db/schema.ts.
  *
- * L 25,000 across three lots is L 8,333.333… each, which is not an amount
- * anybody writes on a receipt. What is actually done by hand is to round to
- * something payable and give one lot the difference: 8,300 + 8,300 + 8,400.
- * This file does exactly that, and picks WHICH lot gets the extra in a way that
- * evens out on its own.
+ * When the amount divides into equal whole-lempira shares, that is the split:
+ * L 14,500 across two lots is 7,250 + 7,250, and nobody at the window would
+ * write anything else. L 25,000 across three lots is L 8,333.333… each, which
+ * is not an amount anybody writes on a receipt; what is done by hand there is
+ * to round to something payable and give one lot the difference: 8,300 +
+ * 8,300 + 8,400. This file does exactly that, and picks WHICH lot gets the
+ * extra in a way that evens out on its own.
  *
  * Rounding to whole hundreds only works while every lot ends up with at least
  * what it currently owes — a plain even split can round one lot DOWN below its
@@ -26,6 +28,9 @@
 
 /** Round each share down to a whole L 100, the way it is done on paper. */
 export const DEFAULT_ROUNDING_STEP_CENTS = 10_000;
+
+/** An exact equal share is used as-is when it comes out in whole lempiras. */
+const WHOLE_LEMPIRA_CENTS = 100;
 
 export interface AllocationTarget {
   contractId: string;
@@ -133,7 +138,12 @@ function spreadRemainder(
  * Divide `amountCents` as evenly as round numbers allow, without ever handing
  * a lot less than its own next installment.
  *
- * The plain rule is tried first: equal shares rounded down to a whole step,
+ * Exact equal shares come first, whenever the amount divides into whole
+ * lempiras and every share stays within what its lot owes and at or above its
+ * own next installment. Every lot gets the same, so there is no extra to hand
+ * out and nothing to even out later.
+ *
+ * Otherwise the plain rule: equal shares rounded down to a whole step,
  * the extra going to the contract with the LARGEST remaining balance. Three
  * identical lots start level, so the first payment's extra L 100 goes to the
  * lowest lot number; that lot is then L 100 further ahead, so next month a
@@ -176,6 +186,18 @@ export function splitEvenly(
   const minimums = eligible.map((target) =>
     Math.min(Math.max(0, target.minimumDueCents ?? 0), target.balanceCents),
   );
+
+  if (amountCents % (eligible.length * WHOLE_LEMPIRA_CENTS) === 0) {
+    const share = amountCents / eligible.length;
+
+    if (eligible.every((target, index) => share <= target.balanceCents && share >= minimums[index]!)) {
+      return {
+        allocations: eligible.map((target) => ({ contractId: target.contractId, amountCents: share })),
+        unallocatedCents: 0,
+        shortOfMinimumContractIds: [],
+      };
+    }
+  }
 
   const plain = eligible.map(() => 0);
   const plainLeftover = spreadRemainder(amountCents, eligible, plain, step);

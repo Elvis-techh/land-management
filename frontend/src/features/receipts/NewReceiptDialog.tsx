@@ -435,7 +435,8 @@ export function NewReceiptDialog({
    * Divide the typed total across everything this customer is paying on.
    *
    * Asked of the SERVER rather than computed here, so this screen and the
-   * payment that gets recorded cannot disagree: equal shares rounded down to
+   * payment that gets recorded cannot disagree: exact equal shares when the
+   * amount divides into whole lempiras, otherwise equal shares rounded down to
    * whole hundreds, capped at what each lot still owes, with the remainder
    * going to the lot that owes the most — which is what makes the lots even out
    * over a term instead of one always taking the odd money. A lot never gets
@@ -969,10 +970,10 @@ export function NewReceiptDialog({
               </div>
 
               <p className="field-hint">
-                Partes iguales redondeadas a cien lempiras, sin pasarse de lo que debe cada lote ni
-                dejar a ninguno por debajo de su próxima cuota. El sobrante va al que más debe, así
-                el mes siguiente le toca a otro y con el tiempo se emparejan solos. Puedes ajustar
-                cualquier línea después.
+                Partes iguales, sin pasarse de lo que debe cada lote ni dejar a ninguno por debajo
+                de su próxima cuota. Si el monto no se divide exacto en lempiras, se redondea a cien
+                y el sobrante va al que más debe, así el mes siguiente le toca a otro y con el
+                tiempo se emparejan solos. Puedes ajustar cualquier línea después.
               </p>
             </>
           )}
