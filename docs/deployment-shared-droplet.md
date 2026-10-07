@@ -606,6 +606,23 @@ sudo systemctl restart lindero-api        # migrations run on restart
 `git pull` is still needed: it brings `deploy/`, `docs/` and the `drizzle/`
 migration sources, and keeps `package-lock.json` in step with `npm ci`.
 
+### Without a laptop
+
+The `deploy-build` branch carries `frontend/dist` and `backend/dist` built from
+`main` (its `README.md` names the commit). With it current, the whole deploy
+is two commands on the droplet — workable from a phone's SSH app:
+
+```bash
+cd /opt/lindero && sudo -u lindero -H git pull --ff-only
+sudo bash deploy/update-from-build.sh
+```
+
+The script fetches the build, runs `npm ci --omit=dev` under Node 22, copies
+both `dist` folders into place, refreshes the systemd unit if the repo's copy
+changed, restarts, and waits for `/api/health`. `deploy-build` has to be
+rebuilt after every change to `main` that touches code; a build from an older
+commit deploys that older code.
+
 ## If the droplet gets too small
 
 Everything above is mitigation for one number: 512 MB shared between two
