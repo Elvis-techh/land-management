@@ -2,7 +2,9 @@
 # Run workflow), or by Claude through the GitHub API.
 #
 # Setup — secrets, variables and the droplet key — is in
-# docs/github-actions-deploy.md. Nothing here works until that is done.
+# docs/github-actions-deploy.md. With only the VITE_GOOGLE_* variables set (no
+# droplet secrets) it builds and publishes deploy-build, and the droplet half
+# is run by hand.
 
 name: Deploy
 
@@ -91,6 +93,10 @@ jobs:
           SSH_KEY_B64: ${{ secrets.DROPLET_SSH_KEY }}
           REQUEST: ${{ inputs.without_drive && 'allow-drop-drive' || 'deploy' }}
         run: |
+          if [ -z "$HOST" ]; then
+            echo "::notice::No DROPLET_HOST secret, so this run only published the build. On the droplet: cd /opt/lindero && sudo -u lindero -H git pull --ff-only && sudo bash deploy/update-from-build.sh"
+            exit 0
+          fi
           install -d -m 700 ~/.ssh
           echo "$SSH_KEY_B64" | base64 -d > ~/.ssh/deploy
           chmod 600 ~/.ssh/deploy
