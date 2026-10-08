@@ -275,6 +275,9 @@ function presentReceipts(db: Db, rows: readonly ReceiptRow[], includeLines: bool
   }
 
   const receiptIds = rows.map((row) => row.id);
+  // A Set, not `receiptIds.includes`: the loop below runs once per credit of
+  // every customer on the page, which made the full list receipts × payments.
+  const onThisPage = new Set(receiptIds);
   const customerIds = [...new Set(rows.map((row) => row.customerId))];
 
   const allCredits = creditsForCustomers(db, customerIds);
@@ -290,7 +293,7 @@ function presentReceipts(db: Db, rows: readonly ReceiptRow[], includeLines: bool
       creditsByCustomer.set(credit.customerId, [credit]);
     }
 
-    if (credit.receiptId && receiptIds.includes(credit.receiptId)) {
+    if (credit.receiptId && onThisPage.has(credit.receiptId)) {
       const forReceipt = paymentsByReceipt.get(credit.receiptId);
       if (forReceipt) {
         forReceipt.push(credit);
