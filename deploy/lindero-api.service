@@ -44,6 +44,17 @@ EnvironmentFile=-/opt/lindero/backend/.env
 # docs/deployment-shared-droplet.md, which installs Node 22 at /opt/node22 and
 # deliberately leaves /usr/bin/node as the neighbour found it.
 ExecStart=/usr/bin/node dist/server.js
+
+# Make Node clean up its memory well before the droplet's 256 MB cap.
+# Node 22 SEES that cap but does not size its heap by it: inside a 256 MB
+# cgroup it still believes it may grow to several GB, so it lets the garbage
+# from rebuilt lists pile up until the kernel throttles and then kills the
+# process. Measured with four tabs re-reading after eight changes, at ten
+# years of data: about 300 MB of growth without this line, under 100 MB with
+# a 128 MB heap. 160 leaves room for the largest list at fifteen years while
+# keeping the heap well inside MemoryMax (see the drop-in in
+# docs/deployment-shared-droplet.md, step 7).
+Environment=NODE_OPTIONS=--max-old-space-size=160
 Restart=on-failure
 RestartSec=5
 

@@ -61,17 +61,18 @@ jobs:
           {
             echo "## $YEARS years of made-up data"
             echo
-            echo "Same fingerprint = the page shows exactly the same figures. Times are the typical of several requests."
+            echo "Same fingerprint = the page shows exactly the same figures. Times are the typical of several requests. The again: row is a tab coming back to the front when nothing was written since its last read."
             echo
-            echo "| Page | Before ($BEFORE) | After ($AFTER) | Same answer? |"
-            echo "|---|---:|---:|:---:|"
-            paste -d'|' <(grep '^/api' before.txt) <(grep '^/api' after.txt) | awk -F'|' '
+            echo "| Page | Before ($BEFORE) | After ($AFTER) | Sent (after) | Same answer? |"
+            echo "|---|---:|---:|---:|:---:|"
+            paste -d'|' <(grep -E '^(/api|again:)' before.txt) <(grep -E '^(/api|again:)' after.txt) | awk -F'|' '
               {
                 split($1, b, / +/); split($2, a, / +/)
                 bt = ($1 ~ /FAILED/) ? "failed" : b[6] " ms"
                 at = ($2 ~ /FAILED/) ? "failed" : a[6] " ms"
                 same = ($1 ~ /FAILED/ || $2 ~ /FAILED/) ? "–" : (b[9] == a[9] ? "✅ yes" : "❌ NO")
-                printf "| `%s` | %s | %s | %s |\n", b[1], bt, at, same
+                sent = ($2 ~ /FAILED/) ? "–" : a[11] " KB"
+                printf "| `%s` | %s | %s | %s | %s |\n", b[1], bt, at, sent, same
               }'
             echo
             grep '^[0-9]* years' after.txt

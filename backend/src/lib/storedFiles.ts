@@ -305,10 +305,25 @@ export function attachmentsForReceipts(
 ): Map<string, AttachmentSummary[]> {
   const byReceipt = new Map<string, AttachmentSummary[]>();
 
-  if (receiptIds.length === 0) {
-    return byReceipt;
+  // In batches, because SQLite refuses a statement with more than 32,766
+  // parameters and the transactions list asks about every receipt ever
+  // issued. One receipt's files are always in one batch, so each receipt's
+  // list keeps its oldest-first order.
+  for (let start = 0; start < receiptIds.length; start += RECEIPTS_PER_QUERY) {
+    addAttachments(db, receiptIds.slice(start, start + RECEIPTS_PER_QUERY), byReceipt);
   }
 
+  return byReceipt;
+}
+
+/** Well under SQLite's limit of 32,766 parameters in one statement. */
+const RECEIPTS_PER_QUERY = 10_000;
+
+function addAttachments(
+  db: Db,
+  receiptIds: readonly string[],
+  byReceipt: Map<string, AttachmentSummary[]>,
+): void {
   const rows = db
     .select({
       id: attachments.id,
@@ -335,8 +350,6 @@ export function attachmentsForReceipts(
       byReceipt.set(receiptId, [file]);
     }
   }
-
-  return byReceipt;
 }
 
 /**

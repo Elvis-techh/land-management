@@ -7,7 +7,7 @@ import type { FastifyError, FastifyReply, FastifyRequest } from "fastify";
 import authPlugin from "./auth/plugin.js";
 import type { AppConfig } from "./config/env.js";
 import type { Db } from "./db/client.js";
-import { publishChange } from "./lib/changes.js";
+import { noteWrite, publishChange } from "./lib/changes.js";
 import { auditRoutes } from "./routes/audit.js";
 import { authRoutes } from "./routes/auth.js";
 import { contractRoutes } from "./routes/contracts.js";
@@ -70,7 +70,19 @@ export async function buildApp(config: AppConfig, db: Db) {
    */
   const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
+  // The version lists are cached against moves at the start and at the end of
+  // every write, whatever its outcome. See `noteWrite` in lib/changes.ts.
+  app.addHook("onRequest", async (request) => {
+    if (WRITE_METHODS.has(request.method)) {
+      noteWrite();
+    }
+  });
+
   app.addHook("onResponse", async (request, reply) => {
+    if (WRITE_METHODS.has(request.method)) {
+      noteWrite();
+    }
+
     if (!WRITE_METHODS.has(request.method) || reply.statusCode >= 400) {
       return;
     }

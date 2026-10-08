@@ -94,3 +94,55 @@ export function publishChange(event: ChangeEvent): void {
 export function changeListenerCount(): number {
   return listeners.size;
 }
+
+/* -------------------------------------------------------------------------- */
+/* "Has anything been written since you last asked?"                           */
+/* -------------------------------------------------------------------------- */
+
+/*
+ * Every open tab re-reads its lists when it comes back to the front, and most
+ * of the time nothing has been written in between. The transactions list is
+ * by far the biggest of them (about 6 MB at five years of data, 18 MB at ten),
+ * and rebuilding it only to send the browser what it already has costs the
+ * single Node thread hundreds of milliseconds and tens of MB of memory.
+ *
+ * So a list can carry a version, sent as an ETag. The browser keeps the last
+ * copy and asks "still this version?" on the next read; the answer "yes" is a
+ * 304 with no body, decided before any query runs.
+ *
+ * The version changes on ANY write, not on writes "to the transactions", for
+ * the same reason the change announcements go to everybody (see ChangeEvent):
+ * every figure here is derived, so a narrower rule would be a second
+ * description of the domain that could be wrong. A write anywhere costs one
+ * full read, exactly as before; the saving is the reads with no write between.
+ */
+
+/** Differs on every start, so a version from before a restart never matches. */
+const BOOT_ID = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+
+let writeGeneration = 0;
+
+/**
+ * Called when a write STARTS and again when it has finished (see app.ts).
+ *
+ * Both, so a read that overlaps a write can never be confirmed later as
+ * current: it was given the number from the start of the write, and by the
+ * time the write is done the number has moved on again.
+ */
+export function noteWrite(): void {
+  writeGeneration += 1;
+}
+
+/**
+ * The version of everything a list can show, for this user.
+ *
+ * - The write counter covers every write made through this process.
+ * - SQLite's `data_version` covers a write by any OTHER connection to the file,
+ *   such as somebody fixing a row by hand with the sqlite3 tool.
+ * - The date covers anything that changes with the calendar alone.
+ * - The user covers a shared office computer: one person's copy must never be
+ *   confirmed as current to the next person who signs in on it.
+ */
+export function dataVersion(dataVersionOfDb: number, today: string, userId: string): string {
+  return `W/"${BOOT_ID}-${writeGeneration}-${dataVersionOfDb}-${today}-${userId}"`;
+}
