@@ -48,10 +48,17 @@ export function defaultMessage(contract: Contract, money: MoneyView): string {
   }
 
   if (contract.health.nextDueOn && contract.health.nextDueAmount > 0) {
+    // The regular cuota, with any advance named beside it, the same way the
+    // screens show it: "L 7,249.51" would read as a different cuota.
+    const advance =
+      contract.health.nextDueCredit > 0
+        ? ` Ya tiene abonado ${formatMoney(contract.health.nextDueCredit, money)} de esa cuota.`
+        : "";
+
     return `${greeting} ${reference} Su próxima cuota es de ${formatMoney(
-      contract.health.nextDueAmount,
+      contract.health.nextInstallment,
       money,
-    )} y vence el ${formatDueDate(contract.health.nextDueOn)}.`;
+    )} y vence el ${formatDueDate(contract.health.nextDueOn)}.${advance}`;
   }
 
   return `${greeting} ${reference}`;

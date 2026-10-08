@@ -303,7 +303,12 @@ export interface ContractHealth {
   /** Customers here routinely pay two months at once. */
   monthsAhead: number;
   nextDueOn: string | null;
+  /** What the next cuota still needs: `nextInstallment` less `nextDueCredit`. */
   nextDueAmount: Cents;
+  /** The next cuota's regular amount, as the contract states it. */
+  nextInstallment: Cents;
+  /** Already paid toward the next cuota by earlier payments: an advance. */
+  nextDueCredit: Cents;
   /** Nothing further is owed. Kept apart from the lifecycle above. */
   settled: boolean;
 }

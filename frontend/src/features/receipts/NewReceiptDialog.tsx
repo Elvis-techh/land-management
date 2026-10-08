@@ -1008,7 +1008,9 @@ export function NewReceiptDialog({
                     </span>
                     {contract.health.nextDueOn && (
                       <span className="cell-sub">
-                        próxima {formatMoney(contract.health.nextDueAmount, money)}
+                        próxima {formatMoney(contract.health.nextInstallment, money)}
+                        {contract.health.nextDueCredit > 0 &&
+                          ` · adelanto ${formatMoney(contract.health.nextDueCredit, money)}`}
                       </span>
                     )}
                   </td>

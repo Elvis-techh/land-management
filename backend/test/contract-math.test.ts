@@ -152,6 +152,25 @@ describe("payment health", () => {
 
     assert.equal(report.nextDueOn, "2026-04-05");
     assert.equal(report.nextDueAmountCents, lempiras(4_000));
+    // The cuota itself is still 6,700; 2,700 of it is already paid.
+    assert.equal(report.nextInstallmentCents, lempiras(6_700));
+    assert.equal(report.nextDueCreditCents, lempiras(2_700));
+  });
+
+  it("names a few centavos paid over the cuota as an advance on the next one", () => {
+    // The case from the receipts screen: a payment L 0.49 over the cuota.
+    const report = assessContract(financed, paidThrough(2) + lempiras(0.49), "2026-04-01");
+
+    assert.equal(report.nextInstallmentCents, lempiras(6_700));
+    assert.equal(report.nextDueCreditCents, lempiras(0.49));
+    assert.equal(report.nextDueAmountCents, lempiras(6_699.51));
+  });
+
+  it("reports no advance when nothing has been paid toward the next cuota", () => {
+    const report = assessContract(financed, paidThrough(2), "2026-04-01");
+
+    assert.equal(report.nextInstallmentCents, lempiras(6_700));
+    assert.equal(report.nextDueCreditCents, 0);
   });
 
   it("does not announce that paying exactly on the due date is paying ahead", () => {

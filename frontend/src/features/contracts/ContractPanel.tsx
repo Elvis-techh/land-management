@@ -346,9 +346,13 @@ export function ContractPanel({
                 {contract.health.nextDueOn === null
                   ? "No queda nada por pagar"
                   : `${formatDate(contract.health.nextDueOn)} · ${formatMoney(
-                      contract.health.nextDueAmount,
+                      contract.health.nextInstallment,
                       money,
-                    )}`}
+                    )}${
+                      contract.health.nextDueCredit > 0
+                        ? ` (adelanto ${formatMoney(contract.health.nextDueCredit, money)})`
+                        : ""
+                    }`}
               </span>
             </div>
           )}

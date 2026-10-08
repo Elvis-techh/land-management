@@ -61,6 +61,8 @@ function buildContract(overrides: Partial<Contract> = {}): Contract {
       monthsAhead: 0,
       nextDueOn: "2026-09-10",
       nextDueAmount: cents(5_000),
+      nextInstallment: cents(5_000),
+      nextDueCredit: cents(0),
       settled: false,
     },
     installmentCount: 20,
@@ -98,6 +100,8 @@ describe("the message written to a customer", () => {
           monthsAhead: 0,
           nextDueOn: null,
           nextDueAmount: cents(0),
+          nextInstallment: cents(0),
+          nextDueCredit: cents(0),
           settled: true,
         },
       }),
@@ -119,6 +123,8 @@ describe("the message written to a customer", () => {
           monthsAhead: 0,
           nextDueOn: "2026-09-10",
           nextDueAmount: cents(5_000),
+          nextInstallment: cents(5_000),
+          nextDueCredit: cents(0),
           settled: false,
         },
       }),
@@ -127,6 +133,30 @@ describe("the message written to a customer", () => {
 
     assert.ok(behind.includes("vencido"), behind);
     assert.ok(behind.includes("10,000"), behind);
+  });
+
+  it("states the regular cuota, with an advance named beside it", () => {
+    const message = defaultMessage(
+      buildContract({
+        health: {
+          status: "current",
+          arrears: cents(0),
+          monthsBehind: 0,
+          monthsAhead: 0,
+          nextDueOn: "2026-09-30",
+          nextDueAmount: cents(7_249.51),
+          nextInstallment: cents(7_250),
+          nextDueCredit: cents(0.49),
+          settled: false,
+        },
+      }),
+      money,
+    );
+
+    // "7,249.51" would read as a different cuota; the customer's cuota is 7,250.
+    assert.ok(message.includes("7,250.00") || message.includes("7,250 "), message);
+    assert.ok(!message.includes("7,249.51"), message);
+    assert.ok(message.includes("abonado") && message.includes("0.49"), message);
   });
 });
 

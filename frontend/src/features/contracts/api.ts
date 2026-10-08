@@ -37,6 +37,8 @@ interface ContractsResponse {
         monthsAhead: number;
         nextDueOn: string | null;
         nextDueAmount: number;
+        nextInstallment: number;
+        nextDueCredit: number;
         settled: boolean;
       };
     }
@@ -63,6 +65,8 @@ export async function fetchContracts(): Promise<Contract[]> {
       ...contract.health,
       arrears: cents(contract.health.arrears),
       nextDueAmount: cents(contract.health.nextDueAmount),
+      nextInstallment: cents(contract.health.nextInstallment),
+      nextDueCredit: cents(contract.health.nextDueCredit),
     },
   }));
 }

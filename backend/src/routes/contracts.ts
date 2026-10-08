@@ -377,6 +377,8 @@ function present(
       monthsAhead: health.monthsAhead,
       nextDueOn: health.nextDueOn,
       nextDueAmount: health.nextDueAmountCents,
+      nextInstallment: health.nextInstallmentCents,
+      nextDueCredit: health.nextDueCreditCents,
       settled: health.settled,
     },
     installmentCount: buildSchedule(terms).length,

@@ -311,7 +311,18 @@ export interface HealthReport {
   monthsAhead: number;
   /** The next installment falling due, or null once the term is over. */
   nextDueOn: string | null;
+  /** What that installment still needs: its scheduled amount less any advance. */
   nextDueAmountCents: number;
+  /** That installment's scheduled amount, the cuota as the contract states it. */
+  nextInstallmentCents: number;
+  /**
+   * Already paid toward that installment by earlier payments: an advance, often
+   * just the centavos of a payment a little over the cuota. Shown beside the
+   * regular cuota rather than subtracted from it on screen, because "próxima
+   * L 7,249.51" reads as a different cuota rather than the same one with
+   * L 0.49 already paid.
+   */
+  nextDueCreditCents: number;
   /** Nothing further is owed. Kept apart from the contract's own lifecycle. */
   settled: boolean;
 }
@@ -351,6 +362,11 @@ export function assessContract(
   const monthsAhead = monthly > 0 ? Math.floor(aheadCents / monthly) : 0;
 
   const upcoming = outstandingInstallments(terms, paidToDateCents)[0];
+  const upcomingInFull =
+    upcoming === undefined
+      ? 0
+      : (buildSchedule(terms).find((installment) => installment.number === upcoming.number)
+          ?.amountCents ?? upcoming.amountCents);
 
   let status: PaymentHealth = "current";
 
@@ -374,6 +390,8 @@ export function assessContract(
     monthsAhead,
     nextDueOn: settled ? null : (upcoming?.dueOn ?? null),
     nextDueAmountCents: settled ? 0 : (upcoming?.amountCents ?? 0),
+    nextInstallmentCents: settled ? 0 : upcomingInFull,
+    nextDueCreditCents: settled || upcoming === undefined ? 0 : upcomingInFull - upcoming.amountCents,
     settled,
   };
 }
