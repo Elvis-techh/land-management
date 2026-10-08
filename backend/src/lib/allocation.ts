@@ -6,31 +6,21 @@
  * lot is released, titled or repossessed on its own — see the note on
  * `saleGroupId` in src/db/schema.ts.
  *
- * When the amount divides into equal whole-lempira shares, that is the split:
- * L 14,500 across two lots is 7,250 + 7,250, and nobody at the window would
- * write anything else. L 25,000 across three lots is L 8,333.333… each, which
- * is not an amount anybody writes on a receipt; what is done by hand there is
- * to round to something payable and give one lot the difference: 8,300 +
- * 8,300 + 8,400. This file does exactly that, and picks WHICH lot gets the
- * extra in a way that evens out on its own.
+ * The split is equal, to the centavo. L 14,500 over two lots is 7,250 + 7,250;
+ * L 25,000 over three is 8,333.34 + 8,333.33 + 8,333.33, the one leftover
+ * centavo going to the lot that owes the most. Shares used to be rounded to
+ * whole hundreds (8,400 + 8,300 + 8,300), a habit from splitting by hand that
+ * only made the lots look uneven here.
  *
- * Rounding to whole hundreds only works while every lot ends up with at least
- * what it currently owes — a plain even split can round one lot DOWN below its
- * own next installment while stacking the difference onto another, which posts
- * as a late or incomplete payment even though the total handed over was enough
- * for everybody. `splitEvenly` checks for that before returning, and only
- * changes its answer when the plain split would actually starve a lot.
+ * Equal yields in exactly two places, both to keep a payment from posting
+ * wrong: a lot never gets more than it still owes, and never less than its own
+ * next installment while the total can cover that. Whatever those two rules
+ * move is shared equally among the other lots.
  *
- * Nothing here writes anything. The transactions feature will call it to
- * propose a split, which a person can then override line by line before the
- * payments are posted — the proposal is a convenience, never a decision.
+ * Nothing here writes anything. The routes call it to propose a split, which a
+ * person can then override line by line before the payments are posted — the
+ * proposal is a convenience, never a decision.
  */
-
-/** Round each share down to a whole L 100, the way it is done on paper. */
-export const DEFAULT_ROUNDING_STEP_CENTS = 10_000;
-
-/** An exact equal share is used as-is when it comes out in whole lempiras. */
-const WHOLE_LEMPIRA_CENTS = 100;
 
 export interface AllocationTarget {
   contractId: string;
@@ -77,167 +67,104 @@ export interface AllocationResult {
 }
 
 /**
- * Spread `remaining` across whoever in `eligible` still has room left, given
- * what `assigned` already holds for each of them, rounding down to a whole
- * `step` and handing the odd remainder to the contract with the largest
- * balance — first in `eligible`'s own order, which is sorted that way by the
- * caller. Mutates `assigned` in place and returns whatever could not be
- * placed because nobody had room for it.
+ * Divide `amountCents` equally, to the centavo, across the lots that still owe
+ * something.
+ *
+ * Each lot's share is one common level, held between two bounds of its own:
+ * at least its next installment (`minimumDueCents`) and at most its balance.
+ * The level is the highest one the money reaches, so with no bounds in play
+ * every lot gets the same, and when one applies the rest stay equal among
+ * themselves. Two lots owing 49.02 and 7,200 now, with 14,500 handed over,
+ * get 7,250 each; had the second owed 7,300 now, it would get 7,300 and the
+ * other 7,200.
+ *
+ * Centavos that do not divide (L 0.01 of L 25,000 over three lots) go one each
+ * to the lots that owe the most, so the same lot does not take them every
+ * month. A lot that is paid off drops out. Money beyond what the whole
+ * purchase owes is returned as `unallocatedCents`, not absorbed.
+ *
+ * When the total cannot cover every lot's next installment, the smallest
+ * installments are covered first, so as many lots as possible come out
+ * current, and the rest are listed in `shortOfMinimumContractIds`.
  */
-function spreadRemainder(
-  remaining: number,
-  eligible: readonly AllocationTarget[],
-  assigned: number[],
-  step: number,
-): number {
-  if (remaining <= 0) {
-    return remaining;
-  }
-
-  const room = eligible.map((target, index) => target.balanceCents - assigned[index]!);
-  const withRoom = room.filter((value) => value > 0).length;
-
-  if (withRoom === 0) {
-    return remaining;
-  }
-
-  const base = Math.floor(remaining / withRoom / step) * step;
-
-  for (let index = 0; index < eligible.length; index += 1) {
-    const give = Math.min(base, room[index]!);
-    assigned[index] = assigned[index]! + give;
-    remaining -= give;
-  }
-
-  // Hand the remainder out a step at a time. The final sub-step remainder —
-  // the odd centavos of an amount that is not a round hundred — lands on the
-  // first contract with room, so the split is deterministic rather than
-  // dependent on floating-point luck.
-  while (remaining > 0) {
-    const before = remaining;
-
-    for (let index = 0; index < eligible.length && remaining > 0; index += 1) {
-      const give = Math.min(step, eligible[index]!.balanceCents - assigned[index]!, remaining);
-
-      if (give > 0) {
-        assigned[index] = assigned[index]! + give;
-        remaining -= give;
-      }
-    }
-
-    // Nobody had room left; the rest genuinely cannot be placed.
-    if (remaining === before) {
-      break;
-    }
-  }
-
-  return remaining;
-}
-
-/**
- * Divide `amountCents` as evenly as round numbers allow, without ever handing
- * a lot less than its own next installment.
- *
- * Exact equal shares come first, whenever the amount divides into whole
- * lempiras and every share stays within what its lot owes and at or above its
- * own next installment. Every lot gets the same, so there is no extra to hand
- * out and nothing to even out later.
- *
- * Otherwise the plain rule: equal shares rounded down to a whole step,
- * the extra going to the contract with the LARGEST remaining balance. Three
- * identical lots start level, so the first payment's extra L 100 goes to the
- * lowest lot number; that lot is then L 100 further ahead, so next month a
- * different lot holds the largest balance and takes the extra. Over a
- * two-year term the lots stay within one rounding step of each other without
- * anybody tracking whose turn it is — and this is returned as-is whenever it
- * already leaves every lot with at least its own `minimumDueCents`, which is
- * true most of the time.
- *
- * When it would not — a lot with a small balance but a full installment due
- * NOW can lose out to a lot that merely owes more overall — every lot is
- * guaranteed its own minimum first, smallest minimum first so that a total
- * too small to cover everyone still clears as many lots as possible rather
- * than leaving an arbitrary one behind, and only what is left over is spread
- * the same way as the plain rule above.
- *
- * A lot that is already paid off drops out instead of being overpaid, and its
- * share is spread over the rest — which is why the split is not simply "divide
- * by the number of lots".
- */
-export function splitEvenly(
-  amountCents: number,
-  targets: readonly AllocationTarget[],
-  stepCents: number = DEFAULT_ROUNDING_STEP_CENTS,
-): AllocationResult {
-  const step = Math.max(1, Math.floor(stepCents));
-
+export function splitEvenly(amountCents: number, targets: readonly AllocationTarget[]): AllocationResult {
+  // Largest balance first: the order the odd centavos are handed out in.
   const eligible = [...targets]
     .filter((target) => target.balanceCents > 0)
     .sort((a, b) => b.balanceCents - a.balanceCents || a.code.localeCompare(b.code));
 
-  if (amountCents <= 0 || eligible.length === 0) {
-    return {
-      allocations: [],
-      unallocatedCents: Math.max(0, amountCents),
-      shortOfMinimumContractIds: [],
-    };
-  }
-
   const minimums = eligible.map((target) =>
     Math.min(Math.max(0, target.minimumDueCents ?? 0), target.balanceCents),
   );
+  const balances = eligible.map((target) => target.balanceCents);
+  const sum = (values: number[]) => values.reduce((total, value) => total + value, 0);
 
-  if (amountCents % (eligible.length * WHOLE_LEMPIRA_CENTS) === 0) {
-    const share = amountCents / eligible.length;
-
-    if (eligible.every((target, index) => share <= target.balanceCents && share >= minimums[index]!)) {
-      return {
-        allocations: eligible.map((target) => ({ contractId: target.contractId, amountCents: share })),
-        unallocatedCents: 0,
-        shortOfMinimumContractIds: [],
-      };
-    }
-  }
-
-  const plain = eligible.map(() => 0);
-  const plainLeftover = spreadRemainder(amountCents, eligible, plain, step);
-
-  if (eligible.every((_, index) => plain[index]! >= minimums[index]!)) {
-    return {
-      allocations: eligible
-        .map((target, index) => ({ contractId: target.contractId, amountCents: plain[index]! }))
-        .filter((allocation) => allocation.amountCents > 0),
-      unallocatedCents: plainLeftover,
-      shortOfMinimumContractIds: [],
-    };
-  }
-
-  const floored = eligible.map(() => 0);
-  let remaining = amountCents;
-
-  const byMinimum = eligible
-    .map((_, index) => index)
-    .sort((a, b) => minimums[a]! - minimums[b]! || eligible[a]!.code.localeCompare(eligible[b]!.code));
-
-  for (const index of byMinimum) {
-    if (remaining <= 0) {
-      break;
-    }
-
-    const give = Math.min(minimums[index]!, remaining);
-    floored[index] = give;
-    remaining -= give;
-  }
-
-  const leftover = spreadRemainder(remaining, eligible, floored, step);
-
-  return {
+  const result = (shares: number[], unallocatedCents: number): AllocationResult => ({
     allocations: eligible
-      .map((target, index) => ({ contractId: target.contractId, amountCents: floored[index]! }))
+      .map((target, index) => ({ contractId: target.contractId, amountCents: shares[index]! }))
       .filter((allocation) => allocation.amountCents > 0),
-    unallocatedCents: leftover,
+    unallocatedCents,
     shortOfMinimumContractIds: eligible
-      .map((target, index) => (floored[index]! < minimums[index]! ? target.contractId : null))
-      .filter((id): id is string => id !== null),
-  };
+      .filter((_, index) => shares[index]! < minimums[index]!)
+      .map((target) => target.contractId),
+  });
+
+  if (amountCents <= 0 || eligible.length === 0) {
+    return { allocations: [], unallocatedCents: Math.max(0, amountCents), shortOfMinimumContractIds: [] };
+  }
+
+  // Enough to clear every lot: each gets its balance, and the rest goes back.
+  if (amountCents >= sum(balances)) {
+    return result(balances, amountCents - sum(balances));
+  }
+
+  // Not enough for every lot's next installment: smallest installments first.
+  if (amountCents < sum(minimums)) {
+    const shares = eligible.map(() => 0);
+    let remaining = amountCents;
+
+    const bySmallestMinimum = eligible
+      .map((_, index) => index)
+      .sort((a, b) => minimums[a]! - minimums[b]! || eligible[a]!.code.localeCompare(eligible[b]!.code));
+
+    for (const index of bySmallestMinimum) {
+      shares[index] = Math.min(minimums[index]!, remaining);
+      remaining -= shares[index]!;
+    }
+
+    return result(shares, 0);
+  }
+
+  // The common level: the highest one at which every lot's share, held
+  // between its minimum and its balance, still adds up to no more than the
+  // amount. Found by bisection over whole centavos.
+  const shareAt = (level: number) =>
+    eligible.map((_, index) => Math.min(Math.max(level, minimums[index]!), balances[index]!));
+
+  let low = 0;
+  let high = Math.max(...balances);
+
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+
+    if (sum(shareAt(middle)) <= amountCents) {
+      low = middle;
+    } else {
+      high = middle - 1;
+    }
+  }
+
+  const shares = shareAt(low);
+  let leftover = amountCents - sum(shares);
+
+  // Fewer centavos are left than there are lots still sitting at the level,
+  // so one each, largest balance first.
+  for (let index = 0; index < eligible.length && leftover > 0; index += 1) {
+    if (shares[index]! === low && low >= minimums[index]! && low < balances[index]!) {
+      shares[index] = shares[index]! + 1;
+      leftover -= 1;
+    }
+  }
+
+  return result(shares, leftover);
 }

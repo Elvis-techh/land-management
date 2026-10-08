@@ -23,10 +23,9 @@ interface SplitPreviewDialogProps {
  * The customer hands over a single amount for three lots and expects a single
  * receipt, but the money has to land on three contracts. The division is worked
  * out by the SERVER, so this screen and the payment that eventually gets
- * recorded cannot disagree about the arithmetic: equal shares rounded down to
- * whole hundreds, with the odd remainder going to the lot that owes the most —
- * except when that would leave a lot below its own next installment, which the
- * server corrects for before answering (see src/lib/allocation.ts).
+ * recorded cannot disagree about the arithmetic: equal shares to the centavo,
+ * except that a lot never gets more than it owes nor less than its own next
+ * installment (see src/lib/allocation.ts).
  *
  * Nothing here writes anything. Recording the payment arrives with the
  * transactions screen; this is the preview that makes the rule visible first.
@@ -113,9 +112,8 @@ export function SplitPreviewDialog({ contracts, money, onClose }: SplitPreviewDi
             placeholder="Ej. 25,000"
           />
           <span className="field-hint">
-            Se divide en partes iguales redondeadas a cien lempiras, sin dejar a ningún lote por
-            debajo de su próxima cuota. El sobrante va al lote que más debe, así que el mes
-            siguiente le toca a otro y con el tiempo se emparejan solos.
+            Partes iguales, al centavo. Solo cambia un lote si eso le dejaría pagando menos de
+            su próxima cuota o más de lo que debe; el resto se reparte igual entre los demás.
           </span>
         </div>
 

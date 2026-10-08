@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { DEFAULT_ROUNDING_STEP_CENTS, splitEvenly } from "../src/lib/allocation.js";
+import { splitEvenly } from "../src/lib/allocation.js";
 import type { ContractTerms } from "../src/lib/contracts.js";
 import { addMonthsOnDay, assessContract, buildSchedule, firstDueDate } from "../src/lib/contracts.js";
 
@@ -224,29 +224,29 @@ describe("splitting one payment across a purchase", () => {
     { contractId: "c", code: "CT-2026-003", balanceCents: lempiras(balance) },
   ];
 
-  it("rounds to whole hundreds and gives one lot the difference", () => {
-    // L 25,000 over three lots is L 8,333.33 each, which nobody writes on a
-    // receipt. This is the split done by hand: 8,400 / 8,300 / 8,300.
+  it("splits equally to the centavo, the odd centavo going to the lot that owes most", () => {
+    // L 25,000 over three lots is 8,333.33 each with one centavo left over.
+    // No rounding to hundreds: every lot gets the same but for that centavo.
     const result = splitEvenly(lempiras(25_000), threeLots(100_000));
 
     assert.equal(result.unallocatedCents, 0);
     assert.deepEqual(
       result.allocations.map((line) => line.amountCents).sort((a, b) => a - b),
-      [lempiras(8_300), lempiras(8_300), lempiras(8_400)],
+      [lempiras(8_333.33), lempiras(8_333.33), lempiras(8_333.34)],
     );
   });
 
-  it("evens itself out over the months without tracking whose turn it is", () => {
-    // First payment: all three lots are level, so the extra goes to the lowest
-    // contract number.
+  it("moves the odd centavo on by itself from one payment to the next", () => {
+    // First payment: all three lots are level, so the centavo goes to the
+    // lowest contract number.
     const first = splitEvenly(lempiras(25_000), threeLots(100_000));
-    const firstExtra = first.allocations.find((line) => line.amountCents === lempiras(8_400));
+    const firstExtra = first.allocations.find((line) => line.amountCents === lempiras(8_333.34));
 
     assert.equal(firstExtra?.contractId, "a");
 
     // Second payment, with the balances the first one left behind. Lot "a" is
-    // now L 100 further ahead, so it no longer holds the largest balance and
-    // the extra moves on by itself.
+    // now a centavo further ahead, so it no longer owes the most and the
+    // centavo moves on.
     const afterFirst = first.allocations.map((line) => ({
       contractId: line.contractId,
       code: threeLots(0).find((lot) => lot.contractId === line.contractId)!.code,
@@ -254,7 +254,7 @@ describe("splitting one payment across a purchase", () => {
     }));
 
     const second = splitEvenly(lempiras(25_000), afterFirst);
-    const secondExtra = second.allocations.find((line) => line.amountCents === lempiras(8_400));
+    const secondExtra = second.allocations.find((line) => line.amountCents === lempiras(8_333.34));
 
     assert.notEqual(secondExtra?.contractId, "a");
   });
@@ -319,10 +319,10 @@ describe("splitting one payment across a purchase", () => {
     assert.deepEqual(result.allocations, [{ contractId: "a", amountCents: lempiras(8_333.33) }]);
   });
 
-  it("gives every lot the same when the amount divides into whole lempiras", () => {
+  it("gives every lot the same when that covers each one's next cuota", () => {
     // The case from the receipts screen: L 14,500 over two lots used to come
-    // out 7,300 + 7,200 because shares were always whole hundreds. 7,250 each
-    // covers both next cuotas (49.02 and 7,200), so that is the split.
+    // out 7,300 + 7,200 because shares were rounded to whole hundreds. 7,250
+    // each covers both next cuotas (49.02 and 7,200), so that is the split.
     const result = splitEvenly(lempiras(14_500), [
       {
         contractId: "b08",
@@ -346,30 +346,58 @@ describe("splitting one payment across a purchase", () => {
     assert.deepEqual(result.shortOfMinimumContractIds, []);
   });
 
-  it("falls back to whole hundreds when an equal share would leave a lot below its cuota", () => {
-    // 7,250 each would cover "a" but leave "b" short of its 7,300 cuota, so
-    // the equal split is not used and "b" still gets its full minimum.
-    const result = splitEvenly(lempiras(14_500), [
-      { contractId: "a", code: "CT-2026-001", balanceCents: lempiras(100_000), minimumDueCents: 0 },
-      {
-        contractId: "b",
-        code: "CT-2026-002",
-        balanceCents: lempiras(100_000),
-        minimumDueCents: lempiras(7_300),
-      },
+  it("splits amounts that are not round numbers equally too", () => {
+    const result = splitEvenly(lempiras(14_501), [
+      { contractId: "a", code: "CT-2026-001", balanceCents: lempiras(100_000) },
+      { contractId: "b", code: "CT-2026-002", balanceCents: lempiras(100_000) },
     ]);
 
-    const forB = result.allocations.find((line) => line.contractId === "b");
-
-    assert.ok(forB && forB.amountCents >= lempiras(7_300));
-    assert.equal(
-      result.allocations.reduce((sum, line) => sum + line.amountCents, 0),
-      lempiras(14_500),
+    assert.deepEqual(
+      result.allocations.map((line) => line.amountCents),
+      [lempiras(7_250.5), lempiras(7_250.5)],
     );
   });
+});
 
-  it("uses whole hundreds by default", () => {
-    assert.equal(DEFAULT_ROUNDING_STEP_CENTS, lempiras(100));
+describe("splitting holds up for any amount", () => {
+  it("places every centavo, overpays no lot, and keeps unbounded lots within a centavo", () => {
+    // A fixed seed, so a failure reproduces.
+    let seed = 7;
+    const random = (max: number) => {
+      seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648;
+      return seed % max;
+    };
+
+    for (let run = 0; run < 2_000; run += 1) {
+      const lots = Array.from({ length: 1 + random(5) }, (_, index) => ({
+        contractId: `lot-${index}`,
+        code: `CT-${index}`,
+        balanceCents: random(4) === 0 ? 0 : 1 + random(lempiras(50_000)),
+        minimumDueCents: random(2) === 0 ? 0 : random(lempiras(9_000)),
+      }));
+      const amount = 1 + random(lempiras(60_000));
+      const result = splitEvenly(amount, lots);
+      const placed = result.allocations.reduce((sum, line) => sum + line.amountCents, 0);
+
+      assert.equal(placed + result.unallocatedCents, amount, `run ${run}: centavos lost`);
+
+      for (const line of result.allocations) {
+        const lot = lots.find((candidate) => candidate.contractId === line.contractId)!;
+        assert.ok(line.amountCents <= lot.balanceCents, `run ${run}: overpaid ${lot.code}`);
+      }
+
+      // Lots no bound applies to: neither paid off by this, nor held at their
+      // own cuota above the common share.
+      const free = result.allocations.filter((line) => {
+        const lot = lots.find((candidate) => candidate.contractId === line.contractId)!;
+        return line.amountCents < lot.balanceCents && line.amountCents > Math.min(lot.minimumDueCents, lot.balanceCents);
+      });
+      const shares = free.map((line) => line.amountCents);
+
+      if (shares.length > 1 && result.shortOfMinimumContractIds.length === 0) {
+        assert.ok(Math.max(...shares) - Math.min(...shares) <= 1, `run ${run}: uneven ${shares}`);
+      }
+    }
   });
 });
 
@@ -394,11 +422,10 @@ describe("keeping every lot at its own minimum", () => {
     );
   });
 
-  it("gives a lot its full next cuota even when a plain split would round it below that", () => {
+  it("gives a lot its full next cuota, and splits the rest equally", () => {
     // Lot "a" owes far more overall but nothing is due on it right now. Lot
-    // "b" owes little overall but its cuota of 7,200 is due today. A plain
-    // even split of 8,000 hands each lot 4,000 — which reads as an incomplete
-    // payment on "b" a moment later even though the customer paid enough.
+    // "b" has a cuota of 7,200 due today. Half of 8,000 each would leave "b"
+    // short, so "b" gets its 7,200 and "a" the 800 that is left.
     const result = splitEvenly(lempiras(8_000), [
       { contractId: "a", code: "CT-2026-001", balanceCents: lempiras(500_000), minimumDueCents: 0 },
       {
@@ -409,14 +436,32 @@ describe("keeping every lot at its own minimum", () => {
       },
     ]);
 
+    const forA = result.allocations.find((line) => line.contractId === "a");
     const forB = result.allocations.find((line) => line.contractId === "b");
 
-    assert.ok(forB && forB.amountCents >= lempiras(7_200));
+    assert.equal(forA?.amountCents, lempiras(800));
+    assert.equal(forB?.amountCents, lempiras(7_200));
     assert.equal(result.shortOfMinimumContractIds.length, 0);
-    assert.equal(
-      result.allocations.reduce((sum, line) => sum + line.amountCents, 0),
-      lempiras(8_000),
-    );
+  });
+
+  it("keeps the other lots equal when one lot's cuota is above the equal share", () => {
+    // 7,250 each would leave "b" short of its 7,300 cuota. "b" gets exactly
+    // its cuota and "a" the rest, rather than "b" taking a big surplus.
+    const result = splitEvenly(lempiras(14_500), [
+      { contractId: "a", code: "CT-2026-001", balanceCents: lempiras(100_000), minimumDueCents: 0 },
+      {
+        contractId: "b",
+        code: "CT-2026-002",
+        balanceCents: lempiras(100_000),
+        minimumDueCents: lempiras(7_300),
+      },
+    ]);
+
+    const forA = result.allocations.find((line) => line.contractId === "a");
+    const forB = result.allocations.find((line) => line.contractId === "b");
+
+    assert.equal(forA?.amountCents, lempiras(7_200));
+    assert.equal(forB?.amountCents, lempiras(7_300));
   });
 
   it("clears as many lots as it can when the total cannot cover everyone's minimum", () => {

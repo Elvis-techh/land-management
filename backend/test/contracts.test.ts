@@ -298,7 +298,7 @@ describe("a purchase of several lots", async () => {
     }
   });
 
-  it("splits one payment the way it is done by hand", async () => {
+  it("splits one payment into equal parts, to the centavo", async () => {
     const groupId = second.json().contract.saleGroupId;
 
     const response = await app.inject({
@@ -313,7 +313,7 @@ describe("a purchase of several lots", async () => {
     assert.equal(body.unallocatedCents, 0);
     assert.deepEqual(
       body.lines.map((line: { amountCents: number }) => line.amountCents).sort((a: number, b: number) => a - b),
-      [lempiras(8_300), lempiras(8_300), lempiras(8_400)],
+      [lempiras(8_333.33), lempiras(8_333.33), lempiras(8_333.34)],
     );
     // Every line says what the lot will owe afterwards, so the split can be
     // checked before any money is recorded.

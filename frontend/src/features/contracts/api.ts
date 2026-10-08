@@ -85,10 +85,10 @@ export interface SplitLine {
 /**
  * How one payment would be divided across a purchase, WITHOUT posting anything.
  *
- * The rule lives on the server (src/lib/allocation.ts): equal shares rounded to
- * whole hundreds, with the odd remainder going to the lot that owes the most so
- * it evens out over the months. This is a preview, so the amounts can be seen
- * and argued with before any money is recorded.
+ * The rule lives on the server (src/lib/allocation.ts): equal shares to the
+ * centavo, never more than a lot owes nor less than its next installment. This
+ * is a preview, so the amounts can be seen and argued with before any money is
+ * recorded.
  */
 export function fetchSplit(saleGroupId: string, amountCents: number) {
   return api.get<{ amountCents: number; unallocatedCents: number; lines: SplitLine[] }>(

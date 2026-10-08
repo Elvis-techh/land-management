@@ -11,9 +11,10 @@ export type AppliedLabelLine = Pick<ReceiptLine, "appliedTo" | "installmentCount
  *
  * ONE cuota even when the money technically touched two. A payment covers a
  * RANGE of the schedule, and that range routinely clips the next cuota by a few
- * centavos: `splitEvenly` rounds each lot's share down to a whole L 100 and
- * hands the odd centavos to one contract, so a customer paying on a sale group
- * ends up a few centavos past every cuota boundary for the rest of the term.
+ * centavos: `splitEvenly` hands the odd centavo of an uneven division to one
+ * contract (and older payments were rounded to whole hundreds), so a customer
+ * paying on a sale group ends up a few centavos past every cuota boundary for
+ * the rest of the term.
  * This line once read "cuotas 4 y 5 de 12" on the strength of THREE CENTAVOS
  * landing in cuota 5 — naming a cuota the customer had not started paying,
  * because of a rounding crumb left by a payment months earlier.

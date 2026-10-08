@@ -435,13 +435,9 @@ export function NewReceiptDialog({
    * Divide the typed total across everything this customer is paying on.
    *
    * Asked of the SERVER rather than computed here, so this screen and the
-   * payment that gets recorded cannot disagree: exact equal shares when the
-   * amount divides into whole lempiras, otherwise equal shares rounded down to
-   * whole hundreds, capped at what each lot still owes, with the remainder
-   * going to the lot that owes the most — which is what makes the lots even out
-   * over a term instead of one always taking the odd money. A lot never gets
-   * less than its own next installment out of this, even if that means giving
-   * up on the round numbers for that one line — see src/lib/allocation.ts.
+   * payment that gets recorded cannot disagree: equal shares to the centavo,
+   * except that a lot never gets more than it still owes nor less than its own
+   * next installment — see src/lib/allocation.ts.
    *
    * The result lands in the per-lot fields as ordinary typed values, so every
    * line stays editable afterwards. It is a proposal, never a decision.
@@ -970,10 +966,9 @@ export function NewReceiptDialog({
               </div>
 
               <p className="field-hint">
-                Partes iguales, sin pasarse de lo que debe cada lote ni dejar a ninguno por debajo
-                de su próxima cuota. Si el monto no se divide exacto en lempiras, se redondea a cien
-                y el sobrante va al que más debe, así el mes siguiente le toca a otro y con el
-                tiempo se emparejan solos. Puedes ajustar cualquier línea después.
+                Partes iguales, al centavo. Solo cambia un lote si eso le dejaría pagando menos de
+                su próxima cuota o más de lo que debe; el resto se reparte igual entre los demás.
+                Puedes ajustar cualquier línea después.
               </p>
             </>
           )}

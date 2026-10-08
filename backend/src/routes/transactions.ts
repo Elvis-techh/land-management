@@ -185,10 +185,9 @@ export const transactionRoutes: FastifyPluginAsync = async (app) => {
    * How one amount would divide across everything a customer is paying on.
    *
    * The customer hands over a single figure for three lots; this proposes where
-   * it lands. The rule itself is in src/lib/allocation.ts: equal shares rounded
-   * down to whole hundreds, with the remainder going to the lot that owes the
-   * most — which is what makes the lots even out over a term instead of one
-   * always taking the odd money.
+   * it lands. The rule itself is in src/lib/allocation.ts: equal shares to the
+   * centavo, never more than a lot owes nor less than its next installment,
+   * with any odd centavo going to the lot that owes the most.
    *
    * A PROPOSAL. Nothing is written, and the screen lets every line be
    * overridden before the receipt is issued.

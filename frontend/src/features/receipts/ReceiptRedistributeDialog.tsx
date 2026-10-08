@@ -150,20 +150,18 @@ export function ReceiptRedistributeDialog({
       return;
     }
 
-    // Rounded down to whole lempiras, with the remainder on the first lot, so
-    // the parts sum to the total exactly rather than a centavo short.
-    const share = Math.floor(receiptCents / chosen.length / 100) * 100;
+    // Equal to the centavo, the same rule as a new receipt. Centavos that do
+    // not divide go one each to the first lots, so the parts sum to the total.
+    const share = Math.floor(receiptCents / chosen.length);
+    const oddCentavos = receiptCents - share * chosen.length;
     const next: Record<string, string> = {};
 
     for (const target of targets) {
       next[target.contractId] = "";
     }
 
-    let placed = 0;
-
     chosen.forEach((line, index) => {
-      const amount = index === chosen.length - 1 ? receiptCents - placed : share;
-      placed += amount;
+      const amount = share + (index < oddCentavos ? 1 : 0);
       next[line.target.contractId] = toMoneyInput(cents(amount));
     });
 

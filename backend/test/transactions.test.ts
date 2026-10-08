@@ -117,7 +117,7 @@ describe("the transactions list", () => {
 });
 
 describe("dividing one amount across a customer's lots", () => {
-  it("splits into round numbers that sum to exactly what was handed over", async () => {
+  it("splits into equal parts that sum to exactly what was handed over", async () => {
     const { app, db, ids } = await buildTestApp();
     const cookie = await login(app, "owner@test.hn", OWNER_PASSWORD);
     addContracts(db, ids);
@@ -141,10 +141,9 @@ describe("dividing one amount across a customer's lots", () => {
     assert.equal(unallocatedCents, 0);
     assert.equal(lines.length, 3);
 
-    // Whole hundreds, the way it is written by hand at a window.
-    for (const line of lines) {
-      assert.equal(line.amountCents % 10_000, 0);
-    }
+    // Equal parts: L 25,000 over three lots differs by the one odd centavo.
+    const amounts = lines.map((line) => line.amountCents);
+    assert.ok(Math.max(...amounts) - Math.min(...amounts) <= 1, `uneven: ${amounts}`);
 
     await app.close();
   });
