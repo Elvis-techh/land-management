@@ -5,6 +5,11 @@
 Description=Lindero: check for a new build every two minutes
 
 [Timer]
+# OnActiveSec: a first check one minute after the timer is turned on. Without
+# it, a timer enabled long after boot could wait for an OnBootSec moment that
+# has already passed, and OnUnitActiveSec has nothing to count from until the
+# first check has happened.
+OnActiveSec=1min
 OnBootSec=2min
 OnUnitActiveSec=2min
 
