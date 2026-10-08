@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { splitEvenly } from "../src/lib/allocation.js";
-import type { ContractTerms } from "../src/lib/contracts.js";
+import type { ContractTerms, ScheduledInstallment } from "../src/lib/contracts.js";
 import { addMonthsOnDay, assessContract, buildSchedule, firstDueDate } from "../src/lib/contracts.js";
 
 /** L 1 = 100 centavos, as everywhere else in the app. */
@@ -72,6 +72,36 @@ describe("the schedule", () => {
 
     assert.deepEqual(buildSchedule(cash), []);
     assert.deepEqual(buildSchedule({ ...cash, saleType: "donation", salePriceCents: 0 }), []);
+  });
+
+  it("builds each schedule once, and a new one as soon as any term changes", () => {
+    // Equal terms in a different object share the cached schedule.
+    assert.equal(buildSchedule({ ...financed }), buildSchedule(financed));
+
+    // «Editar términos» must never be answered from the old schedule.
+    const edited = [
+      { ...financed, termMonths: 12 },
+      { ...financed, monthlyPaymentCents: lempiras(7_000) },
+      { ...financed, dueDay: 20 },
+      { ...financed, signedOn: "2026-02-15" },
+      { ...financed, firstDueOn: "2026-04-05" },
+      { ...financed, downPaymentCents: lempiras(30_000) },
+      { ...financed, salePriceCents: lempiras(190_000) },
+    ];
+
+    for (const terms of edited) {
+      assert.notDeepEqual(buildSchedule(terms), buildSchedule(financed));
+    }
+  });
+
+  it("hands out schedules nobody can change behind the other callers' backs", () => {
+    const schedule = buildSchedule(financed) as ScheduledInstallment[];
+
+    assert.throws(() => schedule.push({ number: 25, dueOn: "2028-02-05", amountCents: 1 }));
+    assert.throws(() => {
+      schedule[0]!.amountCents = 0;
+    });
+    assert.equal(buildSchedule(financed)[0]!.amountCents, lempiras(6_700));
   });
 });
 

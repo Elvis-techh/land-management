@@ -1,0 +1,78 @@
+# Compare how fast the heavy pages answer, before and after a change, and
+# prove the answers themselves did not change. Run by hand (Actions →
+# Benchmark → Run workflow); the table appears on the run's Summary page.
+#
+# Both versions are measured on identical made-up data in memory, using the
+# benchmark script from `after` (so an older `before` that predates the script
+# can still be measured). Nothing touches the droplet or the real database.
+# See backend/scripts/benchmark.ts.
+
+name: Benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      before:
+        description: "Version to compare against (a branch name or commit)"
+        default: known-good-2026-10-08
+      after:
+        description: "Version with the change (a branch name or commit)"
+        default: main
+      years:
+        description: "Years of made-up data to test with"
+        default: "10"
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.after }}
+          path: after
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.before }}
+          path: before
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install both versions
+        run: |
+          (cd after && npm ci)
+          (cd before && npm ci)
+          cp after/backend/scripts/benchmark.ts before/backend/scripts/benchmark.ts
+
+      - name: Measure
+        env:
+          YEARS: ${{ inputs.years }}
+          BEFORE: ${{ inputs.before }}
+          AFTER: ${{ inputs.after }}
+        run: |
+          (cd before/backend && npx tsx scripts/benchmark.ts --years "$YEARS") | tee before.txt
+          (cd after/backend && npx tsx scripts/benchmark.ts --years "$YEARS") | tee after.txt
+
+          {
+            echo "## $YEARS years of made-up data"
+            echo
+            echo "Same fingerprint = the page shows exactly the same figures. Times are the typical of several requests."
+            echo
+            echo "| Page | Before ($BEFORE) | After ($AFTER) | Same answer? |"
+            echo "|---|---:|---:|:---:|"
+            paste -d'|' <(grep '^/api' before.txt) <(grep '^/api' after.txt) | awk -F'|' '
+              {
+                split($1, b, / +/); split($2, a, / +/)
+                bt = ($1 ~ /FAILED/) ? "failed" : b[6] " ms"
+                at = ($2 ~ /FAILED/) ? "failed" : a[6] " ms"
+                same = ($1 ~ /FAILED/ || $2 ~ /FAILED/) ? "–" : (b[9] == a[9] ? "✅ yes" : "❌ NO")
+                printf "| `%s` | %s | %s | %s |\n", b[1], bt, at, same
+              }'
+            echo
+            grep '^[0-9]* years' after.txt
+          } >> "$GITHUB_STEP_SUMMARY"

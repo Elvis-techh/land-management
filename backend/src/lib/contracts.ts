@@ -183,7 +183,49 @@ export function isReservationExpired(
  * final payment that is short or long — never a fractional monthly nobody could
  * hand over at a window.
  */
-export function buildSchedule(terms: ContractTerms): ScheduledInstallment[] {
+export function buildSchedule(terms: ContractTerms): readonly ScheduledInstallment[] {
+  const key = [
+    terms.saleType,
+    terms.salePriceCents,
+    terms.downPaymentCents,
+    terms.termMonths,
+    terms.monthlyPaymentCents,
+    terms.dueDay,
+    terms.signedOn,
+    terms.firstDueOn ?? "",
+  ].join("|");
+
+  let schedule = scheduleCache.get(key);
+
+  if (schedule === undefined) {
+    if (scheduleCache.size >= MAX_CACHED_SCHEDULES) {
+      // Crude but bounded. Terms change rarely, so the cache refills with the
+      // contracts that still exist on the next request that touches them.
+      scheduleCache.clear();
+    }
+
+    schedule = Object.freeze(computeSchedule(terms).map((installment) => Object.freeze(installment)));
+    scheduleCache.set(key, schedule);
+  }
+
+  return schedule;
+}
+
+/*
+ * The same contract's schedule is asked for three to five times per request
+ * (health, outstanding installments, the installment count, the dashboard's
+ * expected-by-month), and the dashboard and contract list ask for every
+ * contract. Building a 60-row schedule each time was most of those requests'
+ * time on the single Node thread, so each one is built once and shared.
+ *
+ * Keyed by exactly the terms `computeSchedule` reads. Frozen because every
+ * caller now shares the same arrays; a caller that wants to change an entry
+ * must copy it, as `outstandingInstallments` already does.
+ */
+const scheduleCache = new Map<string, readonly ScheduledInstallment[]>();
+const MAX_CACHED_SCHEDULES = 2_000;
+
+function computeSchedule(terms: ContractTerms): ScheduledInstallment[] {
   if (terms.saleType !== "financed") {
     return [];
   }
@@ -230,7 +272,11 @@ export function buildSchedule(terms: ContractTerms): ScheduledInstallment[] {
  * dates. A cash sale expects the whole price at signing, and a donation expects
  * nothing, ever.
  */
-function expectedByCents(terms: ContractTerms, schedule: ScheduledInstallment[], asOf: string) {
+function expectedByCents(
+  terms: ContractTerms,
+  schedule: readonly ScheduledInstallment[],
+  asOf: string,
+) {
   if (terms.saleType === "donation") {
     return 0;
   }
@@ -365,7 +411,7 @@ export function assessContract(
   const upcomingInFull =
     upcoming === undefined
       ? 0
-      : (buildSchedule(terms).find((installment) => installment.number === upcoming.number)
+      : (schedule.find((installment) => installment.number === upcoming.number)
           ?.amountCents ?? upcoming.amountCents);
 
   let status: PaymentHealth = "current";
