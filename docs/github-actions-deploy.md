@@ -26,6 +26,22 @@ minutes. What the droplet did: `journalctl -u lindero-autodeploy -n 50`.
 
 To stop automatic deploys: `sudo systemctl disable --now lindero-autodeploy.timer`.
 
+What keeps an automatic deploy from hurting either application:
+
+- **Nothing deploys unless asked.** The droplet only installs what the Deploy
+  workflow published, and that workflow runs only when started by hand (or by
+  Claude when asked), after the tests pass.
+- **It yields to bascula-central.** The deploy job runs at low CPU, disk and
+  memory priority (`lindero-autodeploy.service`), and skips reinstalling
+  `node_modules`, the one heavy step, unless `package-lock.json` or Node
+  changed.
+- **A build that fails to start is rolled back.** `update-from-build.sh` keeps
+  the previous version and puts it back if the new one does not answer
+  `/api/health` within 20 seconds. Database migrations are not undone; they
+  are written to be additive, so the previous version keeps working on them.
+- **bascula-central is never touched**: not its process, not Nginx, not its
+  files. Lindero restarts in about a second; open tabs reconnect on their own.
+
 The rest of this page is the other way round: GitHub connecting in to the
 droplet with an SSH key. It deploys a minute sooner and shows the droplet's
 output in the workflow log, but needs a private key copied into GitHub.

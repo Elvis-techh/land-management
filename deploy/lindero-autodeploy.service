@@ -9,3 +9,12 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 ExecStart=/bin/bash /opt/lindero/deploy/autodeploy.sh
+
+# A deploy yields to everything else on the machine, bascula-central first.
+# MemoryHigh slows it down under pressure rather than killing it halfway
+# through an install; the CPU and disk weights put it behind the scale API.
+Nice=10
+CPUWeight=20
+IOWeight=20
+MemoryHigh=200M
+TimeoutStartSec=15min

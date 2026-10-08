@@ -42,7 +42,8 @@ echo "    build:           $(grep -m1 '^Source commit:' "$BUILD/README.md" || ec
 # build made without them, or with a mistyped one, breaks "Desde Google Drive"
 # with no error anywhere. Refuse to swap a frontend that has them for one whose
 # settings differ in any way.
-drive_settings() { grep -ohE "VITE_GOOGLE_[A-Z_]+:[\`\"'][^\`\"']+" "$1"/assets/*.js 2>/dev/null | sort -u; }
+# `|| true`: finding none is an answer, not an error that should stop the script.
+drive_settings() { { grep -ohE "VITE_GOOGLE_[A-Z_]+:[\`\"'][^\`\"']+" "$1"/assets/*.js 2>/dev/null || true; } | sort -u; }
 LIVE_DRIVE=$(drive_settings "$FRONTEND_DEST")
 NEW_DRIVE=$(drive_settings "$BUILD/frontend/dist")
 if [[ -n "$LIVE_DRIVE" && "$LIVE_DRIVE" != "$NEW_DRIVE" ]]; then
@@ -55,12 +56,27 @@ if [[ -n "$LIVE_DRIVE" && "$LIVE_DRIVE" != "$NEW_DRIVE" ]]; then
   fi
 fi
 
+# Reinstalling is the one heavy step of a deploy on a 512 MB machine shared
+# with bascula-central, so it is skipped unless the lockfile or Node changed.
 echo "==> Runtime dependencies (Node 22)"
-as_lindero "$NODE_BIN/npm" ci --omit=dev --no-audit --no-fund
-as_lindero "$NODE_BIN/node" -e "require('$REPO/node_modules/better-sqlite3')"
+DEPS_ID="$(sha256sum package-lock.json | cut -d' ' -f1) $("$NODE_BIN/node" -v)"
+DEPS_STAMP="$REPO/node_modules/.lindero-deps"
+if [[ -f "$DEPS_STAMP" && "$(cat "$DEPS_STAMP")" == "$DEPS_ID" ]] &&
+  as_lindero "$NODE_BIN/node" -e "require('$REPO/node_modules/better-sqlite3')" 2>/dev/null; then
+  echo "    unchanged, not reinstalled"
+else
+  as_lindero "$NODE_BIN/npm" ci --omit=dev --no-audit --no-fund
+  as_lindero "$NODE_BIN/node" -e "require('$REPO/node_modules/better-sqlite3')"
+  echo "$DEPS_ID" | as_lindero tee "$DEPS_STAMP" >/dev/null
+fi
+
+# Kept so a build that fails to start can be put back (see the end).
+echo "==> Keeping the current version for rollback"
+mkdir -p "$FRONTEND_DEST" "$REPO/backend/dist"
+rsync -a --delete "$FRONTEND_DEST/" "$FRONTEND_DEST.prev/"
+rsync -a --delete "$REPO/backend/dist/" "$REPO/backend/dist.prev/"
 
 echo "==> Copying the build into place"
-mkdir -p "$FRONTEND_DEST" "$REPO/backend/dist"
 rsync -a --delete "$BUILD/frontend/dist/" "$FRONTEND_DEST/"
 rsync -a --delete "$BUILD/backend/dist/" "$REPO/backend/dist/"
 chown -R lindero:lindero "$REPO/backend/dist"
@@ -69,7 +85,9 @@ chown -R lindero:lindero "$REPO/backend/dist"
 # unit's settings (TimeoutStopSec). The droplet's own settings live in the
 # drop-in under lindero-api.service.d/, which this does not touch.
 echo "==> Systemd unit"
+UNIT_CHANGED=0
 if ! cmp -s deploy/lindero-api.service "$UNIT"; then
+  UNIT_CHANGED=1
   cp "$UNIT" "$UNIT.bak"
   install -m 644 deploy/lindero-api.service "$UNIT"
   systemctl daemon-reload
@@ -78,20 +96,46 @@ else
   echo "    unchanged"
 fi
 
-echo "==> Restarting (migrations run on start)"
-time systemctl restart lindero-api
-
 # The .env line can carry a trailing comment ("PORT=3001  # NOT 3000 ...").
 PORT=$(grep -E '^PORT=' backend/.env | cut -d= -f2 | sed 's/#.*//' | tr -d '[:space:]' || true)
 PORT=${PORT:-3001}
-for _ in $(seq 1 20); do
-  if curl -fsS "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1; then
-    echo "==> Up: $(curl -fsS "http://127.0.0.1:$PORT/api/health")"
-    exit 0
-  fi
-  sleep 1
-done
 
+healthy() {
+  for _ in $(seq 1 20); do
+    if curl -fsS "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+echo "==> Restarting (migrations run on start)"
+time systemctl restart lindero-api
+
+if healthy; then
+  echo "==> Up: $(curl -fsS "http://127.0.0.1:$PORT/api/health")"
+  exit 0
+fi
+
+# The new version did not come up. Put the previous one back rather than
+# leave Lindero down until somebody notices.
 echo "!! Not answering on port $PORT after 20 s. Recent log:" >&2
 journalctl -u lindero-api -n 30 --no-pager >&2
+
+echo "==> Rolling back to the previous version" >&2
+rsync -a --delete "$FRONTEND_DEST.prev/" "$FRONTEND_DEST/"
+rsync -a --delete "$REPO/backend/dist.prev/" "$REPO/backend/dist/"
+chown -R lindero:lindero "$REPO/backend/dist"
+if [[ $UNIT_CHANGED == 1 ]]; then
+  cp "$UNIT.bak" "$UNIT"
+  systemctl daemon-reload
+fi
+systemctl restart lindero-api
+
+if healthy; then
+  echo "!! Rolled back: the previous version is running again. The new build was NOT deployed." >&2
+else
+  echo "!! Rollback did not come up either. Lindero is down: send the log above to Claude." >&2
+fi
 exit 1
