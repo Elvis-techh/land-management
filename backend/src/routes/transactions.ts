@@ -9,6 +9,7 @@ import { splitEvenly } from "../lib/allocation.js";
 import type { AllocationTarget } from "../lib/allocation.js";
 import { attachmentsForPayment, attachmentsForReceipts } from "../lib/storedFiles.js";
 import { recordAudit } from "../lib/audit.js";
+import { dataVersion } from "../lib/changes.js";
 import { assessContract } from "../lib/contracts.js";
 import type { ContractTerms, SaleType } from "../lib/contracts.js";
 import { syncContractLifecycle } from "../lib/contractLifecycle.js";
@@ -148,7 +149,24 @@ const editBody = z.object({
 });
 
 export const transactionRoutes: FastifyPluginAsync = async (app) => {
-  app.get("/transactions", { onRequest: app.requireUser }, async () => {
+  app.get("/transactions", { onRequest: app.requireUser }, async (request, reply) => {
+    // The biggest list in the app, re-read by every tab that comes back to
+    // the front. When nothing has been written since this browser's copy, say
+    // so before running a single query. See `dataVersion` in lib/changes.ts.
+    const { data_version: dbVersion } = app.db.get<{ data_version: number }>(
+      sql`PRAGMA data_version`,
+    );
+    const version = dataVersion(dbVersion, today(), request.user!.id);
+
+    // `no-cache` is "keep a copy, but ask before every use", not "do not
+    // cache". `private` keeps it out of any shared cache between here and the
+    // browser.
+    reply.header("ETag", version).header("Cache-Control", "private, no-cache");
+
+    if (request.headers["if-none-match"] === version) {
+      return reply.code(304).send();
+    }
+
     const rows = transactionsQuery(app.db)
       .orderBy(desc(payments.paidOn), desc(payments.createdAt))
       .all();

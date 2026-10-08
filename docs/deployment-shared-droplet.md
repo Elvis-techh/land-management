@@ -447,6 +447,26 @@ The live-updates feed is server-sent events. It needs no extra Nginx
 configuration: the endpoint sends `X-Accel-Buffering: no` itself, and its 25-
 second heartbeat stays inside Nginx's 60-second `proxy_read_timeout`.
 
+### 9b. Compress the API
+
+The API sends JSON uncompressed, and the transactions list grows with every
+payment (about 6 MB at five years). `deploy/nginx-api-gzip.conf` turns on
+compression for JSON inside the Lindero site's `location /api/` block only,
+so bascula-central's site is untouched. Once, after a deploy that has the file:
+
+```bash
+sudo cp /opt/lindero/deploy/nginx-api-gzip.conf /etc/nginx/snippets/lindero-api-gzip.conf
+# Adds one include line just inside `location /api/ {`, keeping a .bak copy.
+sudo sed -i.bak 's|^\(\s*\)location /api/ {$|&\n\1    include snippets/lindero-api-gzip.conf;|' /etc/nginx/sites-available/lindero
+grep -n "lindero-api-gzip" /etc/nginx/sites-available/lindero   # expect one line per `location /api/`
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+If `grep` prints nothing, the block is written differently from the example
+and the line has to be added by hand. If `nginx -t` fails, nothing has been
+reloaded; put the old file back with
+`sudo cp /etc/nginx/sites-available/lindero.bak /etc/nginx/sites-available/lindero`.
+
 ### 10. Firewall
 
 The rules in [deployment.md](deployment.md) as they stand, SSH and Nginx only,
