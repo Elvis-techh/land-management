@@ -1,8 +1,14 @@
 import assert from "node:assert/strict";
 import { after, describe, it, mock } from "node:test";
 
+import type { FastifyBaseLogger } from "fastify";
+
 import { OWNER_PASSWORD, STAFF_PASSWORD, buildTestApp, login } from "./helpers.js";
-import { readCurrentRate, refreshAutomaticRate } from "../src/lib/exchangeRate.js";
+import {
+  readCurrentRate,
+  refreshAutomaticRate,
+  refreshRateInBackground,
+} from "../src/lib/exchangeRate.js";
 
 /** Answer the provider call with a fixed payload — no test touches the network. */
 function stubProvider(rate: number) {
@@ -306,5 +312,37 @@ describe("nudging the displayed rate off the provider's figure", async () => {
     );
 
     assert.ok(change, "an adjustment should be answerable for later");
+  });
+});
+
+/*
+ * The server runs the refresh from a timer with nobody awaiting it. A database
+ * error escapes `refreshAutomaticRate` (it reads the current rate before its
+ * own try), and an unhandled rejection there used to end the whole process.
+ */
+describe("the scheduled refresh", () => {
+  it("logs a database error instead of letting it escape", async () => {
+    const { app, sqlite, db } = await buildTestApp();
+    await app.close();
+    sqlite.close();
+
+    // The bug, as it stands: the refresh itself rejects.
+    await assert.rejects(refreshAutomaticRate(db));
+
+    const logged: Array<{ level: string; message: string }> = [];
+    const record = (level: string) => (_details: unknown, message: string) => {
+      logged.push({ level, message });
+    };
+    const log = {
+      info: record("info"),
+      warn: record("warn"),
+      error: record("error"),
+    } as unknown as FastifyBaseLogger;
+
+    await refreshRateInBackground(db, log);
+
+    assert.deepEqual(logged, [
+      { level: "error", message: "Exchange rate refresh crashed; keeping last reading" },
+    ]);
   });
 });
