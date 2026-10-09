@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, readdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 
 import {
+  MAX_ATTACHMENT_BYTES,
   MAX_ATTACHMENTS_PER_RECEIPT,
   asciiFileName,
   isAllowedContentType,
@@ -244,6 +248,65 @@ describe("attaching proof of payment", () => {
 
     assert.equal(upload.statusCode, 400);
     assert.equal(upload.json().error, "empty_file");
+
+    await app.close();
+  });
+
+  /*
+   * The refusal past the ceiling has to be the app's own. Buffering the upload
+   * made the multipart library throw its English "request file too large"
+   * before the route's check ran, and that is what reached the screen.
+   */
+  it("refuses a file past 12 MB in Spanish, and keeps none of it", async () => {
+    const uploadsPath = mkdtempSync(join(tmpdir(), "lindero-test-uploads-"));
+    const { app, ids } = await buildTestApp({ uploadsPath });
+    const cookie = await login(app, "owner@test.hn", OWNER_PASSWORD);
+    const receiptId = await issueReceipt(app, cookie, ids);
+
+    const tooBig = Buffer.concat([PNG_PIXEL, Buffer.alloc(MAX_ATTACHMENT_BYTES)]);
+    const { payload, headers } = multipartBody("enorme.png", "image/png", tooBig);
+
+    const upload = await app.inject({
+      method: "POST",
+      url: `/api/receipts/${receiptId}/attachments`,
+      headers: { cookie, ...headers },
+      payload,
+    });
+
+    assert.equal(upload.statusCode, 413);
+    assert.equal(upload.json().error, "file_too_large");
+    assert.equal(upload.json().message, "El archivo supera el máximo de 12 MB.");
+    // Not even the part that arrived before the limit.
+    assert.deepEqual(readdirSync(uploadsPath), []);
+
+    await app.close();
+  });
+
+  it("takes a file of exactly 12 MB, whole", async () => {
+    const uploadsPath = mkdtempSync(join(tmpdir(), "lindero-test-uploads-"));
+    const { app, ids } = await buildTestApp({ uploadsPath });
+    const cookie = await login(app, "owner@test.hn", OWNER_PASSWORD);
+    const receiptId = await issueReceipt(app, cookie, ids);
+
+    const atLimit = Buffer.concat([
+      PNG_PIXEL,
+      Buffer.alloc(MAX_ATTACHMENT_BYTES - PNG_PIXEL.byteLength),
+    ]);
+    const { payload, headers } = multipartBody("justo.png", "image/png", atLimit);
+
+    const upload = await app.inject({
+      method: "POST",
+      url: `/api/receipts/${receiptId}/attachments`,
+      headers: { cookie, ...headers },
+      payload,
+    });
+
+    assert.equal(upload.statusCode, 201);
+    assert.equal(upload.json().attachment.byteSize, MAX_ATTACHMENT_BYTES);
+
+    const onDisk = readdirSync(uploadsPath);
+    assert.equal(onDisk.length, 1);
+    assert.ok(isValidStorageKey(onDisk[0]!), "stored under its final name, not a temporary one");
 
     await app.close();
   });

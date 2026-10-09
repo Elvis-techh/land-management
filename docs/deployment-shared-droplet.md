@@ -467,6 +467,36 @@ and the line has to be added by hand. If `nginx -t` fails, nothing has been
 reloaded; put the old file back with
 `sudo cp /etc/nginx/sites-available/lindero.bak /etc/nginx/sites-available/lindero`.
 
+### 9c. Let contract scans through
+
+The API accepts scanned contracts up to 30 MB, but `location /api/` stops
+every request at 13 MB, so a 13–30 MB scan is refused by Nginx before Lindero
+sees it. `deploy/nginx-api-documents.conf` raises the ceiling to 31 MB for the
+contract-documents route only. Once, after a deploy that has the file:
+
+```bash
+sudo cp /opt/lindero/deploy/nginx-api-documents.conf /etc/nginx/snippets/lindero-api-documents.conf
+# Adds one include line just inside `location /api/ {`, keeping a .bak copy.
+sudo sed -i.bak 's|^\(\s*\)location /api/ {$|&\n\1    include snippets/lindero-api-documents.conf;|' /etc/nginx/sites-available/lindero
+grep -n "lindero-api-documents" /etc/nginx/sites-available/lindero   # expect exactly one line
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+To check it, send 20 MB to that route and to another one. Neither is signed
+in, so a request that gets through is refused by Lindero with 401; one Nginx
+stops is refused with 413:
+
+```bash
+for path in contracts/check/documents lots; do
+  head -c 20000000 /dev/zero | curl -s -o /dev/null -w "$path: %{http_code}\n" -X POST \
+    -H 'Content-Type: application/octet-stream' --data-binary @- "https://lindero.basculacentral.com/api/$path"
+done
+# expect: contracts/check/documents: 401, then lots: 413
+```
+
+The same `grep`, `nginx -t` and `.bak` advice as in 9b applies. The snippet
+names port 3001; if Lindero ever moves, change it there too.
+
 ### 10. Firewall
 
 The rules in [deployment.md](deployment.md) as they stand, SSH and Nginx only,

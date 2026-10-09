@@ -301,7 +301,15 @@ export async function uploadContractDocument(
 
   if (!response.ok) {
     const error = payload as { message?: string } | null;
-    throw new ApiError(response.status, error?.message ?? "No se pudo subir el documento.");
+    // A 413 without a message of ours is Nginx refusing the body before
+    // Lindero ever saw it — its limit, whatever ours says. Name the problem
+    // rather than the generic failure, but no number: its limit may differ.
+    const fallback =
+      response.status === 413
+        ? "El archivo es demasiado grande para el servidor."
+        : "No se pudo subir el documento.";
+
+    throw new ApiError(response.status, error?.message ?? fallback);
   }
 
   return (payload as { document: ContractDocument }).document;

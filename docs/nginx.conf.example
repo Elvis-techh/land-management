@@ -173,12 +173,21 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
 
         # Large receipt photos/PDFs: the backend's own ceiling is exactly 12MB
-        # (MAX_ATTACHMENT_BYTES in lib/attachments.ts). Set a little above
+        # (MAX_ATTACHMENT_BYTES in lib/storedFiles.ts). Set a little above
         # that, not equal to it — multipart boundaries and the other form
         # fields in the same request add a few KB on top of the file itself,
         # and a request right at the backend's limit would otherwise be cut
         # off here first, with Nginx's own generic error instead of the
         # backend's "El archivo supera el máximo de 12 MB."
         client_max_body_size 13m;
+
+        # Scanned contracts may be 30 MB (MAX_DOCUMENT_BYTES), so their one
+        # route gets a higher ceiling and every other route keeps the one
+        # above. Nested, so it inherits this block's headers and compression;
+        # only proxy_pass has to be repeated, as nginx does not inherit it.
+        location ~ ^/api/contracts/[^/]+/documents$ {
+            proxy_pass http://127.0.0.1:3000;
+            client_max_body_size 31m;
+        }
     }
 }

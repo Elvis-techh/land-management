@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, readdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 
-import { MAX_DOCUMENTS_PER_CONTRACT } from "../src/lib/storedFiles.js";
+import {
+  MAX_DOCUMENT_BYTES,
+  MAX_DOCUMENTS_PER_CONTRACT,
+  isValidStorageKey,
+} from "../src/lib/storedFiles.js";
 import { OWNER_PASSWORD, STAFF_PASSWORD, buildTestApp, login } from "./helpers.js";
 
 /** A real, minimal PDF — enough bytes for a parser to accept as a document. */
@@ -189,6 +196,46 @@ describe("the signed contract on file", () => {
 
     assert.equal(overflowed.statusCode, 409);
     assert.equal(overflowed.json().error, "too_many_documents");
+
+    await app.close();
+  });
+
+  /*
+   * A forty-page scan at 300dpi colour is past the ceiling, and the person
+   * filing it has to be told so in words they read. Buffering the upload made
+   * the multipart library throw its English "request file too large" first.
+   */
+  it("refuses a scan past 30 MB in Spanish, and keeps none of it", async () => {
+    const uploadsPath = mkdtempSync(join(tmpdir(), "lindero-test-uploads-"));
+    const { app, ids } = await buildTestApp({ uploadsPath });
+    const cookie = await login(app, "owner@test.hn", OWNER_PASSWORD);
+
+    const tooBig = Buffer.concat([PDF, Buffer.alloc(MAX_DOCUMENT_BYTES)]);
+    const refused = await upload(app, cookie, ids.contractId, "escaneo.pdf", "application/pdf", tooBig);
+
+    assert.equal(refused.statusCode, 413);
+    assert.equal(refused.json().error, "file_too_large");
+    assert.equal(refused.json().message, "El archivo supera el máximo de 30 MB.");
+    // Not even the pages that arrived before the limit.
+    assert.deepEqual(readdirSync(uploadsPath), []);
+
+    await app.close();
+  });
+
+  it("takes a scan of exactly 30 MB, whole", async () => {
+    const uploadsPath = mkdtempSync(join(tmpdir(), "lindero-test-uploads-"));
+    const { app, ids } = await buildTestApp({ uploadsPath });
+    const cookie = await login(app, "owner@test.hn", OWNER_PASSWORD);
+
+    const atLimit = Buffer.concat([PDF, Buffer.alloc(MAX_DOCUMENT_BYTES - PDF.byteLength)]);
+    const created = await upload(app, cookie, ids.contractId, "justo.pdf", "application/pdf", atLimit);
+
+    assert.equal(created.statusCode, 201);
+    assert.equal(created.json().document.byteSize, MAX_DOCUMENT_BYTES);
+
+    const onDisk = readdirSync(uploadsPath);
+    assert.equal(onDisk.length, 1);
+    assert.ok(isValidStorageKey(onDisk[0]!), "stored under its final name, not a temporary one");
 
     await app.close();
   });

@@ -1,7 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdir, unlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import multipart from "@fastify/multipart";
@@ -24,10 +22,10 @@ import {
   MAX_ATTACHMENT_BYTES,
   attachmentsForReceipts,
   isAllowedContentType,
+  receiveToDisk,
   removeStoredFile,
   safeDisplayName,
   sendStoredFile,
-  storageKeyFor,
 } from "../lib/storedFiles.js";
 import { recordAudit } from "../lib/audit.js";
 import { syncContractLifecycle } from "../lib/contractLifecycle.js";
@@ -1758,25 +1756,6 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
         });
       }
 
-      const buffer = await part.toBuffer();
-
-      // `toBuffer` resolves even when the stream was truncated at the limit, so
-      // the flag has to be asked about explicitly. Without this a 20 MB photo
-      // would be stored silently as its first 12 MB — a corrupt file that looks
-      // like a successful upload.
-      if (part.file.truncated) {
-        return reply.code(413).send({
-          error: "file_too_large",
-          message: `El archivo supera el máximo de ${Math.round(MAX_ATTACHMENT_BYTES / 1024 / 1024)} MB.`,
-        });
-      }
-
-      if (buffer.byteLength === 0) {
-        return reply
-          .code(400)
-          .send({ error: "empty_file", message: "El archivo está vacío." });
-      }
-
       /*
        * Which lot this slip is evidence for, when the uploader said.
        *
@@ -1815,11 +1794,18 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
         }
       }
 
-      const storageKey = storageKeyFor(part.mimetype);
-      const attachmentId = randomUUID();
+      // Only now, with everything else checked, is the file read: straight to
+      // disk, with the size and emptiness checks on the way.
+      const received = await receiveToDisk(part, options.uploadsPath, MAX_ATTACHMENT_BYTES);
 
-      await mkdir(options.uploadsPath, { recursive: true });
-      await writeFile(join(options.uploadsPath, storageKey), buffer);
+      if (!received.ok) {
+        return reply
+          .code(received.status)
+          .send({ error: received.error, message: received.message });
+      }
+
+      const { storageKey, byteSize } = received;
+      const attachmentId = randomUUID();
 
       // Read back rather than guessed at: the column defaults to SQLite's own
       // CURRENT_TIMESTAMP, and a value this handler invented would be in a
@@ -1839,7 +1825,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
               storageKey,
               fileName: safeDisplayName(part.filename ?? "comprobante"),
               contentType: part.mimetype,
-              byteSize: buffer.byteLength,
+              byteSize,
               uploadedBy: request.user!.id,
             })
             .returning({ createdAt: attachments.createdAt })
@@ -1848,7 +1834,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
         // The row is what makes the file findable. If it could not be written,
         // the bytes on disk are unreachable rubbish, so they go too rather than
         // accumulating as orphans nobody will ever notice.
-        await unlink(join(options.uploadsPath, storageKey)).catch(() => undefined);
+        await removeStoredFile(options.uploadsPath, storageKey);
         throw error;
       }
 
@@ -1858,7 +1844,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
           paymentId,
           fileName: safeDisplayName(part.filename ?? "comprobante"),
           contentType: part.mimetype,
-          byteSize: buffer.byteLength,
+          byteSize,
           createdAt,
         },
       });

@@ -1,6 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
@@ -24,10 +22,10 @@ import {
   MAX_DOCUMENTS_PER_CONTRACT,
   MAX_DOCUMENT_BYTES,
   isAllowedContentType,
+  receiveToDisk,
   removeStoredFile,
   safeDisplayName,
   sendStoredFile,
-  storageKeyFor,
 } from "../lib/storedFiles.js";
 import { splitEvenly } from "../lib/allocation.js";
 import { recordAudit } from "../lib/audit.js";
@@ -1775,29 +1773,18 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
         });
       }
 
-      const buffer = await part.toBuffer();
+      // Straight to disk, with the size and emptiness checks on the way.
+      const received = await receiveToDisk(part, options.uploadsPath, MAX_DOCUMENT_BYTES);
 
-      // `toBuffer` resolves even when the stream was truncated at the limit, so
-      // the flag has to be asked about explicitly. Without this a 40 MB scan
-      // would be stored silently as its first 30 MB — a contract missing its
-      // last pages, that looks like a successful upload.
-      if (part.file.truncated) {
-        return reply.code(413).send({
-          error: "file_too_large",
-          message: `El archivo supera el máximo de ${Math.round(MAX_DOCUMENT_BYTES / 1024 / 1024)} MB.`,
-        });
+      if (!received.ok) {
+        return reply
+          .code(received.status)
+          .send({ error: received.error, message: received.message });
       }
 
-      if (buffer.byteLength === 0) {
-        return reply.code(400).send({ error: "empty_file", message: "El archivo está vacío." });
-      }
-
-      const storageKey = storageKeyFor(part.mimetype);
+      const { storageKey, byteSize } = received;
       const documentId = randomUUID();
       const fileName = safeDisplayName(part.filename ?? "contrato");
-
-      await mkdir(options.uploadsPath, { recursive: true });
-      await writeFile(join(options.uploadsPath, storageKey), buffer);
 
       let createdAt = "";
 
@@ -1813,7 +1800,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
               storageKey,
               fileName,
               contentType: part.mimetype,
-              byteSize: buffer.byteLength,
+              byteSize,
               uploadedBy: request.user!.id,
             })
             .returning({ createdAt: contractDocuments.createdAt })
@@ -1831,7 +1818,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
           id: documentId,
           fileName,
           contentType: part.mimetype,
-          byteSize: buffer.byteLength,
+          byteSize,
           createdAt,
           uploadedBy: request.user!.name,
         },
