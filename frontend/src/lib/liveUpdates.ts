@@ -65,6 +65,104 @@ function createClientId(): string {
 const COALESCE_MS = 200;
 
 /**
+ * How long to wait before reopening a stream the browser has given up on, in
+ * milliseconds: the first wait, and the longest any wait grows to.
+ *
+ * The first matches the server's `retry: 3000`. Each failure in a row doubles
+ * it, so a server that is down for ten minutes is asked about once a minute per
+ * tab rather than every three seconds.
+ */
+const REOPEN_FIRST_MS = 3_000;
+const REOPEN_MAX_MS = 60_000;
+
+/**
+ * `EventSource.CLOSED`, spelled out so this file also runs where `EventSource`
+ * does not exist — the tests, under Node.
+ */
+const CLOSED = 2;
+
+/** The parts of an `EventSource` the stream below uses. */
+export interface StreamSource {
+  readonly readyState: number;
+  addEventListener(type: "open" | "change" | "error", listener: () => void): void;
+  close(): void;
+}
+
+/** The parts of `window` the stream below uses for its waits. */
+export interface StreamTimers {
+  setTimeout(callback: () => void, ms: number): number;
+  clearTimeout(id: number | undefined): void;
+}
+
+/**
+ * Keep one live stream open for as long as the caller wants it.
+ *
+ * `EventSource` reconnects by itself after a dropped connection — a laptop lid,
+ * a phone changing cell, the server ending the stream at a deploy. What it does
+ * NOT survive is an answer that is not the stream: a 502 from Nginx while the
+ * new process is still starting, a 503 during an outage. The browser then gives
+ * up for good (`readyState` CLOSED) and the tab stops hearing about anybody
+ * else's writes until it is reloaded, without telling anyone. This reopens it.
+ *
+ * `reconnected` is called when a stream opens after an earlier one was lost,
+ * whichever of the two reopened it: anything written while it was down was
+ * never announced. The very first open is not one of those — the screens have
+ * just loaded.
+ *
+ * Plain rather than a hook so the rule can be tested without a browser.
+ */
+export function openLiveStream(
+  connect: () => StreamSource,
+  on: { change: () => void; reconnected: () => void },
+  timers: StreamTimers,
+): { close: () => void } {
+  let stopped = false;
+  let hasConnected = false;
+  let wait = REOPEN_FIRST_MS;
+  let reopenTimer: number | undefined;
+
+  const start = (): StreamSource => {
+    const source = connect();
+
+    source.addEventListener("change", on.change);
+
+    source.addEventListener("open", () => {
+      if (hasConnected) {
+        on.reconnected();
+      }
+
+      hasConnected = true;
+      wait = REOPEN_FIRST_MS;
+    });
+
+    source.addEventListener("error", () => {
+      // CONNECTING means the browser is already retrying on its own.
+      if (stopped || source.readyState !== CLOSED) {
+        return;
+      }
+
+      reopenTimer = timers.setTimeout(() => {
+        reopenTimer = undefined;
+        current = start();
+      }, wait);
+      wait = Math.min(wait * 2, REOPEN_MAX_MS);
+    });
+
+    return source;
+  };
+
+  let current = start();
+
+  return {
+    close: () => {
+      stopped = true;
+      timers.clearTimeout(reopenTimer);
+      current.close();
+    },
+  };
+}
+
+/**
  * Re-read when somebody else writes, and when this tab comes back to the front.
  *
  * `onChange` is called with no arguments and is expected to reload whatever the
@@ -88,35 +186,11 @@ export function useLiveUpdates(enabled: boolean, onChange: () => void): void {
       timer = window.setTimeout(() => latest.current(), COALESCE_MS);
     };
 
-    const source = new EventSource(`/api/events?clientId=${encodeURIComponent(CLIENT_ID)}`);
-
-    source.addEventListener("change", schedule);
-
-    /*
-     * A RE-opened stream means one was lost, and anything written while it was
-     * down was never announced. The first open is not one of those: the hooks
-     * have just loaded, and refreshing on top of that is the same data twice.
-     */
-    let hasConnected = false;
-
-    source.addEventListener("open", () => {
-      if (hasConnected) {
-        schedule();
-      }
-
-      hasConnected = true;
-    });
-
-    /*
-     * No `onerror` handler on purpose.
-     *
-     * `EventSource` reconnects by itself, on the interval the server sends, and
-     * a dropped connection is completely ordinary — a laptop lid, a phone
-     * changing cell, a backend restart during a deploy. There is nothing to
-     * report and nothing to do; the `open` above is what puts things right, and
-     * the tab-focus path below covers the case where the stream never comes
-     * back at all.
-     */
+    const stream = openLiveStream(
+      () => new EventSource(`/api/events?clientId=${encodeURIComponent(CLIENT_ID)}`),
+      { change: schedule, reconnected: schedule },
+      window,
+    );
 
     const refreshIfVisible = () => {
       if (document.visibilityState === "visible") {
@@ -129,7 +203,7 @@ export function useLiveUpdates(enabled: boolean, onChange: () => void): void {
 
     return () => {
       window.clearTimeout(timer);
-      source.close();
+      stream.close();
       document.removeEventListener("visibilitychange", refreshIfVisible);
       window.removeEventListener("focus", refreshIfVisible);
     };
