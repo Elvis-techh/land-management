@@ -3,7 +3,7 @@ import { loadConfig } from "./config/env.js";
 import { createDb } from "./db/client.js";
 import { runMigrations } from "./db/migrations.js";
 import { deleteExpiredSessions } from "./auth/session.js";
-import { refreshAutomaticRate } from "./lib/exchangeRate.js";
+import { refreshRateInBackground } from "./lib/exchangeRate.js";
 
 const config = loadConfig();
 const { db, sqlite } = createDb(config.databasePath);
@@ -35,13 +35,7 @@ if (removed > 0) {
  * updates again; `refreshAutomaticRate` is where that rule lives.
  */
 const refreshRate = () => {
-  void refreshAutomaticRate(db).then((result) => {
-    if (result.status === "failed") {
-      app.log.warn({ error: result.error }, "Exchange rate refresh failed; keeping last reading");
-    } else if (result.status === "updated") {
-      app.log.info({ rate: result.rate }, "Exchange rate updated");
-    }
-  });
+  void refreshRateInBackground(db, app.log);
 };
 
 if (config.exchangeRateRefreshHours > 0) {
@@ -52,7 +46,21 @@ if (config.exchangeRateRefreshHours > 0) {
   timer.unref();
 }
 
-const shutdown = async (signal: string) => {
+let stopping = false;
+
+/**
+ * Close in-flight work and exit.
+ *
+ * `exitCode` is not cosmetic: the unit says `Restart=on-failure`, so systemd
+ * restarts Lindero after a non-zero exit and leaves it stopped after a zero
+ * one. A stop that was asked for exits 0; a crash must exit 1.
+ */
+const shutdown = async (signal: string, exitCode = 0) => {
+  if (stopping) {
+    return;
+  }
+  stopping = true;
+
   app.log.info({ signal }, "Shutting down");
 
   // Whatever else might hold the server open, exit well inside systemd's
@@ -67,11 +75,30 @@ const shutdown = async (signal: string) => {
   await app.close();
   // Closing SQLite cleanly checkpoints the write-ahead log.
   sqlite.close();
-  process.exit(0);
+  process.exit(exitCode);
 };
 
 process.on("SIGINT", () => void shutdown("SIGINT"));
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
+
+/*
+ * Last resort, for whatever nothing else caught.
+ *
+ * Node ends the process on either of these anyway; this makes the last line in
+ * journald a structured one that says what happened, instead of a bare stack
+ * trace. Exiting is deliberate, with code 1 so systemd restarts it: a clean
+ * process beats one running on in an unknown state. A rejection still lets
+ * in-flight requests finish; after an uncaught exception nothing is trusted.
+ */
+process.on("unhandledRejection", (reason) => {
+  app.log.fatal({ err: reason }, "Unhandled promise rejection");
+  void shutdown("unhandledRejection", 1);
+});
+
+process.on("uncaughtException", (error) => {
+  app.log.fatal({ err: error }, "Uncaught exception");
+  process.exit(1);
+});
 
 try {
   await app.listen({ host: config.host, port: config.port });

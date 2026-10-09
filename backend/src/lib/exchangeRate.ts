@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { desc } from "drizzle-orm";
+import type { FastifyBaseLogger } from "fastify";
 
 import type { Db } from "../db/client.js";
 import { exchangeRates } from "../db/schema.js";
@@ -259,5 +260,30 @@ export async function refreshAutomaticRate(
     // A failed fetch keeps the last known reading. Showing an old rate labelled
     // with its age is honest; showing nothing, or a guess, is not.
     return { status: "failed", error: caught instanceof Error ? caught.message : "desconocido" };
+  }
+}
+
+/**
+ * The scheduled refresh, as the server's timer runs it: logged, and never a
+ * rejected promise.
+ *
+ * `refreshAutomaticRate` turns a failed FETCH into a "failed" result, but a
+ * database error reading the current rate escapes it. Fired from a timer with
+ * nobody awaiting it, that rejection would be unhandled, and Node ends the
+ * process on one: the whole app restarting over a background chore, with a
+ * bare stack trace and no context. Caught here instead, and logged as what it
+ * is; the next tick tries again.
+ */
+export async function refreshRateInBackground(db: Db, log: FastifyBaseLogger): Promise<void> {
+  try {
+    const result = await refreshAutomaticRate(db);
+
+    if (result.status === "failed") {
+      log.warn({ error: result.error }, "Exchange rate refresh failed; keeping last reading");
+    } else if (result.status === "updated") {
+      log.info({ rate: result.rate }, "Exchange rate updated");
+    }
+  } catch (error) {
+    log.error({ err: error }, "Exchange rate refresh crashed; keeping last reading");
   }
 }
