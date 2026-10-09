@@ -19,10 +19,12 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { unlink } from "node:fs/promises";
+import { createReadStream, createWriteStream } from "node:fs";
+import { mkdir, rename, stat, unlink } from "node:fs/promises";
 import { extname, join } from "node:path";
+import { pipeline } from "node:stream/promises";
 
+import type { MultipartFile } from "@fastify/multipart";
 import { asc, inArray } from "drizzle-orm";
 import type { FastifyReply } from "fastify";
 
@@ -158,6 +160,72 @@ export function asciiFileName(name: string): string {
  */
 export function isValidStorageKey(key: string): boolean {
   return /^[0-9a-f-]{36}\.[a-z0-9]{2,5}$/.test(key);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Taking one in                                                               */
+/* -------------------------------------------------------------------------- */
+
+/** Where an upload was kept, or the refusal to send back instead. */
+export type Received =
+  | { ok: true; storageKey: string; byteSize: number }
+  | { ok: false; status: 400 | 413; error: string; message: string };
+
+/**
+ * Write an uploaded file to disk as it arrives, never holding it whole.
+ *
+ * Lindero runs in a 256 MB cgroup and a contract scan may be 30 MB. Buffered,
+ * every upload sat in memory in full (twice, briefly) before reaching disk;
+ * streamed, it costs one chunk whatever its size.
+ *
+ * Past `maxBytes` the parser does not fail: it stops the stream early and marks
+ * it truncated. That flag is all that stands between a 40 MB scan and a stored
+ * contract missing its last pages, so it is checked here, once, for both kinds
+ * of file.
+ *
+ * The bytes go under a temporary name and get their real one only when whole,
+ * so a file named like a storage key is always complete — the nightly mirror
+ * copies whatever is in the folder. Anything refused or cut off is deleted.
+ */
+export async function receiveToDisk(
+  part: MultipartFile,
+  uploadsPath: string,
+  maxBytes: number,
+): Promise<Received> {
+  await mkdir(uploadsPath, { recursive: true });
+
+  const storageKey = storageKeyFor(part.mimetype);
+  const finalPath = join(uploadsPath, storageKey);
+  const partialPath = `${finalPath}.part`;
+  let kept = false;
+
+  try {
+    await pipeline(part.file, createWriteStream(partialPath, { flags: "wx" }));
+
+    if (part.file.truncated) {
+      return {
+        ok: false,
+        status: 413,
+        error: "file_too_large",
+        message: `El archivo supera el máximo de ${Math.round(maxBytes / 1024 / 1024)} MB.`,
+      };
+    }
+
+    const { size } = await stat(partialPath);
+
+    if (size === 0) {
+      return { ok: false, status: 400, error: "empty_file", message: "El archivo está vacío." };
+    }
+
+    await rename(partialPath, finalPath);
+    kept = true;
+
+    return { ok: true, storageKey, byteSize: size };
+  } finally {
+    if (!kept) {
+      await unlink(partialPath).catch(() => undefined);
+    }
+  }
 }
 
 /* -------------------------------------------------------------------------- */
