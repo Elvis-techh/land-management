@@ -1,10 +1,13 @@
-// A consistent snapshot of everything that cannot be rebuilt: the SQLite file
-// and the uploads directory the receipt rows point at. One without the other is
-// a receipt whose proof of payment has vanished, so they are taken together.
+// A consistent snapshot of the SQLite file. `VACUUM INTO` writes a fresh,
+// defragmented copy while the database stays open for writes — no downtime, no
+// half-written file — and the copy is then opened and checked.
 //
-// `VACUUM INTO` writes a fresh, defragmented copy while the database stays open
-// for writes — no downtime, no half-written file. The uploads are tarred beside
-// it under the same timestamp.
+// The uploads the receipt rows point at are backed up by MIRRORING the folder
+// to the bucket, file by file (the rclone line in lindero-backup.service).
+// Uploaded files never change, so the mirror sends only new ones. A nightly
+// tarball of the whole folder is opt-in (BACKUP_UPLOADS_TARBALL=1), for a
+// machine with no mirror: on the shared droplet it only filled the disk bascula
+// writes to, with a full copy of every photo per night kept.
 //
 // This makes a LOCAL snapshot. Getting it OFF the machine is a second step
 // (rclone / rsync / a provider's volume snapshot) — see docs/deployment.md.
@@ -33,6 +36,7 @@ const databasePath = resolve(process.env.DATABASE_PATH ?? join(backendRoot, "dat
 const uploadsPath = resolve(process.env.UPLOADS_PATH ?? join(backendRoot, "data", "uploads"));
 const backupDir = resolve(process.env.BACKUP_PATH ?? join(backendRoot, "backups"));
 const keepDays = Number(process.env.BACKUP_KEEP_DAYS ?? 14);
+const wantsTarball = process.env.BACKUP_UPLOADS_TARBALL === "1";
 
 if (!existsSync(databasePath)) {
   console.error(`No database at ${databasePath} — nothing to back up.`);
@@ -53,9 +57,26 @@ try {
 } finally {
   db.close();
 }
-console.log(`Database  -> ${dbTarget} (${mb(dbTarget)} MB)`);
 
-if (existsSync(uploadsPath) && readdirSync(uploadsPath).length > 0) {
+// A backup nobody has opened is a hope. Prove this one opens and is sound, and
+// remove it if not, so the rclone copy can never send a broken one to the bucket.
+const check = new Database(dbTarget, { readonly: true });
+let checkResult;
+try {
+  checkResult = check.pragma("quick_check", { simple: true });
+} finally {
+  check.close();
+}
+if (checkResult !== "ok") {
+  rmSync(dbTarget);
+  console.error(`Snapshot failed quick_check and was removed: ${checkResult}`);
+  process.exit(1);
+}
+console.log(`Database  -> ${dbTarget} (${mb(dbTarget)} MB, quick_check ok)`);
+
+if (!wantsTarball) {
+  console.log("Uploads   -> mirrored to the bucket, no local tarball (BACKUP_UPLOADS_TARBALL=1 for one)");
+} else if (existsSync(uploadsPath) && readdirSync(uploadsPath).length > 0) {
   const uploadsTarget = join(backupDir, `uploads-${stamp}.tar.gz`);
   // -C so the archive holds "uploads/..." rather than an absolute path.
   execFileSync("tar", ["-czf", uploadsTarget, "-C", dirname(uploadsPath), basename(uploadsPath)], {
@@ -66,8 +87,9 @@ if (existsSync(uploadsPath) && readdirSync(uploadsPath).length > 0) {
   console.log("Uploads   -> none yet, skipped");
 }
 
-// Prune old snapshots. Keeps the pair (db + uploads) that is younger than
-// `keepDays`; a run a day means `keepDays` days of history.
+// Prune old snapshots, and old tarballs whether or not this run made one, so the
+// ones written before the tarball became opt-in clear themselves away. A run a
+// day means `keepDays` days of history.
 if (Number.isFinite(keepDays) && keepDays > 0) {
   const cutoff = Date.now() - keepDays * 86_400_000;
   let pruned = 0;

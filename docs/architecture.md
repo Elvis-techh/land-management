@@ -53,7 +53,7 @@ surprise:
   migrations run on boot from `backend/src/server.ts`. All three assume exactly
   one Node process owns the file. Running a second instance for horizontal scale
   needs Postgres first.
-- Backups are a scheduled `VACUUM INTO` plus a copy of the uploads directory —
+- Backups are a scheduled, checked `VACUUM INTO` plus a mirror of the uploads directory —
   see `docs/deployment.md`. A restore must be tested before go-live, per the
   reliability baseline below.
 
