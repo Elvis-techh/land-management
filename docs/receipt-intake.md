@@ -372,8 +372,10 @@ flags for this droplet:
 - `proxy_pass http://127.0.0.1:3001;` — **3001, not 3000.** 3000 is the scale
   API. Pointing Lindero's frontend at it is the one mistake here that fails
   quietly instead of loudly.
-- Leave `Strict-Transport-Security` commented out until HTTPS is confirmed
-  working. It is sticky in the browser and not quickly undone.
+- Add the browser security headers (HSTS among them) only once HTTPS is
+  confirmed working: step 9d of
+  [deployment-shared-droplet.md](deployment-shared-droplet.md). HSTS is sticky
+  in the browser and not quickly undone.
 
 ```bash
 sudo nginx -t && sudo systemctl reload nginx

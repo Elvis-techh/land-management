@@ -501,6 +501,66 @@ done
 The same `grep`, `nginx -t` and `.bak` advice as in 9b applies. The snippet
 names port 3001; if Lindero ever moves, change it there too.
 
+### 9d. Browser security headers
+
+The site sent none of the headers browsers use to protect a page. The one that
+matters most is HSTS: without it, someone who types the address on a hostile
+wifi can be shown a fake login page before the redirect to HTTPS happens.
+`deploy/nginx-headers.conf` adds HSTS (one year, this host only), refuses to be
+framed by other sites, stops content-type guessing, trims the referrer, turns
+off camera/microphone/location, and adds a Content-Security-Policy in
+**report-only** mode (it logs, it does not block).
+
+It goes inside each of the five static locations (`/`, `= /index.html`,
+`/assets/`, `= /sw.js`, `= /manifest.webmanifest`), never at server level and
+never in `location /api/`; the snippet's own comments say why.
+
+**HSTS is a promise to every browser that has seen it: for a year, this host
+is HTTPS or nothing.** If the certificate ever lapses, those browsers refuse the
+site outright instead of offering "continue anyway". So first make sure
+renewal works:
+
+```bash
+sudo certbot renew --dry-run    # expect: "Congratulations, all simulated renewals succeeded"
+```
+
+Then, once, after a deploy that has the file:
+
+```bash
+sudo cp /opt/lindero/deploy/nginx-headers.conf /etc/nginx/snippets/lindero-headers.conf
+# Adds one include line inside each static location of the HTTPS block, keeping
+# a .bak copy. Does nothing if the line is already there, so running it twice is safe.
+grep -q "lindero-headers" /etc/nginx/sites-available/lindero || \
+  sudo sed -i.bak -E '/listen[^;]*443/,$ s#^([[:space:]]*)location (/|= /index\.html|/assets/|= /sw\.js|= /manifest\.webmanifest) \{$#&\n\1    include snippets/lindero-headers.conf;#' \
+  /etc/nginx/sites-available/lindero
+grep -c "include snippets/lindero-headers" /etc/nginx/sites-available/lindero   # expect 5
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+If the count is not 5, the file is written differently from the example: do
+not reload; put the old file back with
+`sudo cp /etc/nginx/sites-available/lindero.bak /etc/nginx/sites-available/lindero`
+and add the line by hand. If `nginx -t` fails, nothing has been reloaded; the
+same `.bak` puts it back.
+
+To check it, the page should carry the headers and the API should not:
+
+```bash
+curl -sI https://lindero.basculacentral.com/ | grep -ciE "strict-transport|x-frame|x-content-type|referrer-policy|permissions-policy|content-security"   # expect 6
+curl -sI https://lindero.basculacentral.com/api/health | grep -ci "x-frame"                                                                             # expect 0
+```
+
+Then open a receipt's comprobante and a contract's scan in the app: the viewer
+frames files from `/api/`, so a blank viewer would mean a header landed there.
+
+**After a week**, open the browser's DevTools console on a few screens
+(Recibos, a contract with a scan, the Drive picker). No `[Report Only]` lines
+means the policy fits; a follow-up change renames the header to
+`Content-Security-Policy` so it starts blocking.
+
+To take HSTS back, removing the line is not enough: browsers keep the promise
+they already have. Send `max-age=0` for a while instead, then remove it.
+
 ### 10. Firewall
 
 The rules in [deployment.md](deployment.md) as they stand, SSH and Nginx only,
