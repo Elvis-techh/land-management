@@ -13,6 +13,8 @@
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
     "db:bootstrap": "npm run db:bootstrap --workspace @lindero/backend",
     "db:migrate": "npm run db:migrate --workspace @lindero/backend",
     "db:seed": "npm run db:seed --workspace @lindero/backend",
@@ -23,6 +25,7 @@
     "node": ">=22"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.0",
     "concurrently": "^10.0.5"
   }
 }
