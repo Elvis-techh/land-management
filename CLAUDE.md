@@ -66,4 +66,6 @@ Do not keep branches as backups: `main`'s history and the releases already are.
 
 ## Checks before pushing
 
-`npm run typecheck` and `npm test` from the repository root.
+`npm run typecheck` and `npm test` from the repository root. The **Tests**
+workflow (`.github/workflows/tests.yml`) runs them, plus a build, on every pull
+request; do not merge one whose check is red.
