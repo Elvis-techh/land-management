@@ -1,0 +1,41 @@
+# Run the checks CLAUDE.md asks for before pushing (typecheck, tests, and a
+# build) on every pull request and every push to main, so each pull request
+# page shows a green ✅ or a red ❌ before anyone merges it.
+#
+# The build here uses no Google Drive values; it only proves the code builds.
+# The build that goes to the droplet is still made by the Deploy workflow.
+
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A newer push to the same pull request cancels the older, now pointless run.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run typecheck
+
+      - run: npm test
+
+      - run: npm run build
