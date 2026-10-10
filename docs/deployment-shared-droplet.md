@@ -524,7 +524,10 @@ renewal works:
 sudo certbot renew --dry-run    # expect: "Congratulations, all simulated renewals succeeded"
 ```
 
-Then, once, after a deploy that has the file:
+Then, once, after a deploy that has the file. (Claude can run this step, with
+the renewal check and the checks below, as `ssh lindero-ops install-headers`
+through its locked key; see [claude-ops-key.md](claude-ops-key.md). The commands
+here are the same thing by hand.)
 
 ```bash
 sudo cp /opt/lindero/deploy/nginx-headers.conf /etc/nginx/snippets/lindero-headers.conf
