@@ -21,7 +21,9 @@ the GitHub Actions tools, and confirm the run succeeded. The workflow runs the
 tests, builds with the Google Drive values from the repository variables, and
 publishes the result to the `deploy-build` branch. The droplet's
 `lindero-autodeploy.timer` picks it up within two minutes. Claude cannot reach
-the droplet. It can reach the live site only when the cloud environment allows
+the droplet, except through its locked key once that is set up
+(docs/claude-ops-key.md: `ssh lindero-ops <action>`, a fixed list of read-only
+checks plus runbook step 9d). It can reach the live site only when the cloud environment allows
 `lindero.basculacentral.com`: then check `/api/health`, and that the
 `/assets/index-*.js` named in the live page matches the one on `deploy-build`
 (that is the proof the new build is live). Screens behind the login still need
