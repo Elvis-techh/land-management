@@ -68,6 +68,9 @@ export const users = sqliteTable(
  * read from JavaScript. Everything that matters — who you are, what role you
  * have — is looked up here, server-side, on every request. That is why a user
  * editing their own cookie cannot promote themselves.
+ *
+ * `id` is the SHA-256 of the cookie's token, not the token (`sessionKey` in
+ * src/auth/session.ts), so a copy of this table signs nobody in.
  */
 export const sessions = sqliteTable("sessions", {
   id: text("id").primaryKey(),
