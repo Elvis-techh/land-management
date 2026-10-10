@@ -35,8 +35,8 @@ const authPlugin: FastifyPluginAsync<AuthPluginOptions> = async (app, options) =
   // Resolve the session on every request, before any route handler runs. The
   // user is read from the database, never from the cookie's contents.
   app.addHook("onRequest", async (request) => {
-    const sessionId = request.cookies[SESSION_COOKIE];
-    request.user = sessionId ? getSessionUser(options.db, sessionId) : null;
+    const token = request.cookies[SESSION_COOKIE];
+    request.user = token ? getSessionUser(options.db, token) : null;
   });
 
   app.decorate("requireUser", async (request: FastifyRequest, reply: FastifyReply) => {

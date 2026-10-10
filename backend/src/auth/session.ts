@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 
 import { and, eq, gt, isNull, lt } from "drizzle-orm";
 
@@ -17,23 +17,37 @@ export interface SessionUser {
 }
 
 /**
- * Create a login session.
+ * What the database stores for a session token: its SHA-256, never the token.
  *
- * The id is 32 random bytes — far too much to guess — and it is the ONLY thing
- * the browser receives. The user's identity and role are never put in the
- * cookie, so there is nothing in it for an attacker to edit in their favour.
+ * The nightly backup copies the database to the bucket, and copies get pulled
+ * down for diagnosis. Were the token itself stored, anyone holding a copy could
+ * put a row's id in a cookie and be that user, the supervisor included, with no
+ * password. A hash cannot be turned back into the token. A 256-bit random token
+ * needs no slow hash (scrypt is for passwords people choose); SHA-256 is enough.
  */
-export function createSession(db: Db, userId: string, sessionDays: number): string {
-  const id = randomBytes(32).toString("base64url");
-  const expiresAt = new Date(Date.now() + sessionDays * 24 * 60 * 60 * 1000).toISOString();
-
-  db.insert(sessions).values({ id, userId, expiresAt }).run();
-
-  return id;
+function sessionKey(token: string): string {
+  return createHash("sha256").update(token).digest("base64url");
 }
 
 /**
- * Look up who a session belongs to, or `null` if it is unknown, expired, or
+ * Create a login session, and return the token for the cookie.
+ *
+ * The token is 32 random bytes — far too much to guess — and it is the ONLY
+ * thing the browser receives. The user's identity and role are never put in the
+ * cookie, so there is nothing in it for an attacker to edit in their favour.
+ * Only the browser ever holds the token; the database keeps its `sessionKey`.
+ */
+export function createSession(db: Db, userId: string, sessionDays: number): string {
+  const token = randomBytes(32).toString("base64url");
+  const expiresAt = new Date(Date.now() + sessionDays * 24 * 60 * 60 * 1000).toISOString();
+
+  db.insert(sessions).values({ id: sessionKey(token), userId, expiresAt }).run();
+
+  return token;
+}
+
+/**
+ * Look up who a session token belongs to, or `null` if it is unknown, expired, or
  * belongs to an account that has been deactivated.
  *
  * Runs on every authenticated request, which is why role changes take effect
@@ -43,7 +57,7 @@ export function createSession(db: Db, userId: string, sessionDays: number): stri
  * `deleteSessionsForUser`, but that is housekeeping: this clause is what makes
  * the answer safe even if a session is somehow missed.
  */
-export function getSessionUser(db: Db, sessionId: string): SessionUser | null {
+export function getSessionUser(db: Db, token: string): SessionUser | null {
   const now = new Date().toISOString();
 
   const row = db
@@ -57,7 +71,7 @@ export function getSessionUser(db: Db, sessionId: string): SessionUser | null {
     .innerJoin(users, eq(users.id, sessions.userId))
     .where(
       and(
-        eq(sessions.id, sessionId),
+        eq(sessions.id, sessionKey(token)),
         gt(sessions.expiresAt, now),
         isNull(users.deactivatedAt),
       ),
@@ -71,8 +85,8 @@ export function getSessionUser(db: Db, sessionId: string): SessionUser | null {
   return { id: row.id, name: row.name, email: row.email, role: row.role };
 }
 
-export function destroySession(db: Db, sessionId: string): void {
-  db.delete(sessions).where(eq(sessions.id, sessionId)).run();
+export function destroySession(db: Db, token: string): void {
+  db.delete(sessions).where(eq(sessions.id, sessionKey(token))).run();
 }
 
 /**

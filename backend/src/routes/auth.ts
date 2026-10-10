@@ -88,7 +88,7 @@ export const authRoutes: FastifyPluginAsync<AuthRoutesOptions> = async (app, opt
         });
       }
 
-      const sessionId = createSession(app.db, user.id, options.sessionDays);
+      const token = createSession(app.db, user.id, options.sessionDays);
 
       // Overwritten, not appended: the Usuarios screen wants the latest sign-in
       // and nothing else, so a login leaves no row in the Historial.
@@ -98,7 +98,7 @@ export const authRoutes: FastifyPluginAsync<AuthRoutesOptions> = async (app, opt
         .where(eq(users.id, user.id))
         .run();
 
-      reply.setCookie(SESSION_COOKIE, sessionId, {
+      reply.setCookie(SESSION_COOKIE, token, {
         path: "/",
         // The browser will not expose this cookie to JavaScript, so a script
         // injected into the page cannot steal the session.
@@ -126,10 +126,10 @@ export const authRoutes: FastifyPluginAsync<AuthRoutesOptions> = async (app, opt
   );
 
   app.post("/auth/logout", async (request, reply) => {
-    const sessionId = request.cookies[SESSION_COOKIE];
+    const token = request.cookies[SESSION_COOKIE];
 
-    if (sessionId) {
-      destroySession(app.db, sessionId);
+    if (token) {
+      destroySession(app.db, token);
     }
 
     reply.clearCookie(SESSION_COOKIE, { path: "/" });

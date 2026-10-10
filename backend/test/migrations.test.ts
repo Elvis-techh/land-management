@@ -494,3 +494,23 @@ describe("0017 — the last sign-in moves onto the account", () => {
     sqlite.close();
   });
 });
+
+describe("0018 — sessions keyed by a hash of the token", () => {
+  it("ends every session that stored the raw token", () => {
+    const { db, sqlite } = createDb(":memory:");
+
+    sqlite.exec(`
+      CREATE TABLE sessions (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, expires_at TEXT NOT NULL);
+      INSERT INTO sessions VALUES ('raw-token-1', 'u1', '2099-01-01T00:00:00.000Z');
+      INSERT INTO sessions VALUES ('raw-token-2', 'u2', '2099-01-01T00:00:00.000Z');
+    `);
+
+    // A raw token already copied into a backup must not keep working, so the
+    // rows are removed rather than hashed in place.
+    runMigrations(db, sqlite, folderWith("0018_hash_session_ids"));
+
+    assert.deepEqual(sqlite.prepare("SELECT id FROM sessions").all(), []);
+
+    sqlite.close();
+  });
+});
