@@ -43,7 +43,8 @@ through fixes this way, and explain each step briefly the first time:
    assigned (`ccr-...`) and cannot be chosen; the pull request title then
    carries the purpose.
 2. **Prove it before merging.** A test that fails without the fix and passes
-   with it, plus `npm run typecheck` and `npm test`. For speed or memory work,
+   with it, plus `npm run typecheck` and `npm test`, and `npm run test:e2e`
+   (docs/browser-tests.md) when the change shows on screen. For speed or memory work,
    run the **Benchmark** workflow (`before: main`, `after: <branch>`) and check
    every row still says "Same answer".
 3. **One pull request per fix.** Title starts with the review ID, e.g.
