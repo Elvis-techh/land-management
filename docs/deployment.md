@@ -137,9 +137,13 @@ half-built schema.
 ## Backups
 
 `backend/scripts/backup.mjs` writes a consistent snapshot of the database
-(`VACUUM INTO`) and a tarball of the uploads directory, under the same
-timestamp, into `BACKUP_PATH`. It prunes snapshots older than `BACKUP_KEEP_DAYS`
-(default 14).
+(`VACUUM INTO`) into `BACKUP_PATH`, opens it and runs SQLite's `quick_check`,
+and fails (removing the snapshot) if that does not say `ok`. It prunes snapshots
+older than `BACKUP_KEEP_DAYS` (default 14).
+
+It does not tar the uploads directory unless `BACKUP_UPLOADS_TARBALL=1`: the
+uploads are backed up by the mirror below, and a nightly tarball is a full copy
+of every photo on the same disk. Turn it on only where there is no mirror.
 
 ```bash
 sudo cp deploy/lindero-backup.{service,timer} /etc/systemd/system/
@@ -172,10 +176,13 @@ sudo -u lindero cp /opt/lindero/backend/backups/lindero-<stamp>.db \
 sudo -u lindero rm -f /opt/lindero/backend/data/lindero.db-wal \
                       /opt/lindero/backend/data/lindero.db-shm
 
-# The uploads:
-sudo -u lindero rm -rf /opt/lindero/backend/data/uploads
-sudo -u lindero tar -xzf /opt/lindero/backend/backups/uploads-<stamp>.tar.gz \
-                   -C /opt/lindero/backend/data
+# The uploads, from the off-site mirror (deployment-shared-droplet.md, step 11):
+sudo -u lindero -H rclone --config /opt/lindero/backend/rclone.conf \
+  copy spaces:lindero-backups/uploads /opt/lindero/backend/data/uploads
+# …or, only where BACKUP_UPLOADS_TARBALL=1 writes tarballs:
+# sudo -u lindero rm -rf /opt/lindero/backend/data/uploads
+# sudo -u lindero tar -xzf /opt/lindero/backend/backups/uploads-<stamp>.tar.gz \
+#                    -C /opt/lindero/backend/data
 
 sudo systemctl start lindero-api
 ```

@@ -291,11 +291,14 @@ BACKUP_KEEP_DAYS=3                          # NOT 14 — see "Disk" below
 TIME_ZONE=America/Tegucigalpa
 ```
 
-**Disk.** Every backup run tars the *whole* uploads directory afresh. Proof-of-
-payment photos accumulate, and 14 of those tarballs on a disk with 4.6 GB free
-— shared with bascula-central's database — is how both applications stop
-writing at the same moment. Keep 3 days locally and push the rest off the
-machine (step 9), which is what bascula-central already does with its 2.
+**Disk.** The backup used to tar the *whole* uploads directory afresh every
+night. Proof-of-payment photos accumulate, and 14 of those tarballs on a disk
+with 4.6 GB free — shared with bascula-central's database — is how both
+applications stop writing at the same moment. Since P1-6 it writes no tarball
+(the uploads are mirrored to the bucket, step 11) unless
+`BACKUP_UPLOADS_TARBALL=1`; leave that unset here. Keep 3 days of database
+snapshots locally and push them off the machine, which is what bascula-central
+already does with its 2.
 
 ### 6. Build on the laptop, copy up
 
@@ -396,7 +399,8 @@ On the laptop, with the dev server **stopped**:
 cd backend
 npm run db:backup            # VACUUM INTO — a clean file, no -wal to carry
 scp backups/lindero-<stamp>.db root@<DROPLET_IP>:/tmp/
-# and the uploads tarball too, if backups/uploads-<stamp>.tar.gz was written
+# and the uploads: run it as `BACKUP_UPLOADS_TARBALL=1 npm run db:backup` for a
+# backups/uploads-<stamp>.tar.gz to copy as well
 ```
 
 On the droplet:
@@ -607,8 +611,10 @@ name — so the bucket held one full copy of every photo for every night since
 go-live: 1.07 GiB after 26 days, and growing by (size of the uploads folder) ×
 (nights). Uploaded files are written once and never changed, so the bucket now
 keeps one copy of each and `copy` sends only the ones it does not have. The
-nightly tarball is still made in `backups/`, as a quick local undo, but it is
-not uploaded.
+nightly tarball is no longer made at all (P1-6): it was three more full copies
+of the folder on the shared disk, and a gzip of all of it on the shared vCPU
+every night. The ones already in `backups/` are pruned with the old database
+snapshots after `BACKUP_KEEP_DAYS`.
 
 `copy`, never `sync`. `copy` cannot delete from the bucket, so an empty or
 missing uploads folder cannot wipe the off-site copy. The price is that a file
