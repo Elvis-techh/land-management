@@ -83,9 +83,12 @@ export default defineConfig({
     // on port 3000. This means frontend code always calls "/api/lots" and never
     // needs to know the backend's address, in dev or in production — and it is
     // why a tunnel only ever has to expose ONE port, not two.
+    //
+    // LINDERO_API_URL moves that target, so the browser tests (e2e/) can run
+    // their own backend on another port beside a dev server already running.
     proxy: {
       "/api": {
-        target: "http://localhost:3000",
+        target: process.env.LINDERO_API_URL ?? "http://localhost:3000",
         changeOrigin: true,
       },
     },

@@ -17,3 +17,8 @@ backend/data/
 # Local backup snapshots
 backend/backups/
 *.tar.gz
+
+# Browser tests (Playwright): its throwaway database and its reports
+e2e/.data/
+test-results/
+playwright-report/

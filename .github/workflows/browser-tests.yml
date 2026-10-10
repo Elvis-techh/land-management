@@ -1,0 +1,53 @@
+# Open Lindero in a real Chrome and click through it (login, every screen, and
+# a whole sale: customer → lot → contract → payment), on a desktop-sized and a
+# phone-sized screen. Runs on every pull request and every push to main; the
+# pull request page shows a ✅ or ❌ for it.
+#
+# The tests start their own backend with the demo data from `db:seed`; nothing
+# touches the droplet or the real database. See playwright.config.ts and
+# docs/browser-tests.md.
+
+name: Browser tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# A newer push to the same pull request cancels the older, now pointless run.
+concurrency:
+  group: browser-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  browser-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Install Chrome for the tests
+        run: npx playwright install --with-deps chromium
+
+      - run: npm run test:e2e
+
+      # When a test fails, the report holds a screenshot and a step-by-step
+      # recording of what the browser saw. Download it from the run's page.
+      - name: Keep the report
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-test-report
+          path: playwright-report/
+          retention-days: 14
