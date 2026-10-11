@@ -62,6 +62,14 @@ describe("claude-ops forced command", () => {
     assert.equal(helper(`include_count "${example}"`).trim(), "5");
   });
 
+  it("runs the renewal check without certbot's random wait, which outlasts the time limit", () => {
+    // With no terminal on stdin, certbot first sleeps 1–480 s, silently; the
+    // first install-headers on the droplet was killed by `timeout 300` in it.
+    const renewal = readFileSync(script, "utf8").match(/^.*certbot renew .*$/m)?.[0] ?? "";
+    assert.match(renewal, /--dry-run/);
+    assert.match(renewal, /--no-random-sleep-on-renew/);
+  });
+
   it("masks secrets in what it prints, but keeps file paths readable", () => {
     const masked = helper(
       "redact",

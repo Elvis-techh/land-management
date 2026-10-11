@@ -191,8 +191,10 @@ install_headers() {
   [[ $lindero_before == 200 ]] || fail "Lindero is not answering 200 before the change. Nothing changed."
 
   # HSTS makes browsers refuse the site outright if the certificate lapses.
-  echo "==> Certificate renewal (dry run, about a minute)"
-  timeout 300 certbot renew --dry-run --cert-name "$LINDERO_HOST" 2>&1 | tail -n 5 ||
+  # With no terminal on stdin, certbot first waits a silent random 1-480 s to
+  # spread load on Let's Encrypt; the option skips that, as at the console.
+  echo "==> Certificate renewal (dry run, about ten seconds)"
+  timeout 300 certbot renew --dry-run --no-random-sleep-on-renew --cert-name "$LINDERO_HOST" 2>&1 | tail -n 5 ||
     fail "certbot renew --dry-run failed: fix renewal before promising HSTS. Nothing changed."
 
   echo "==> Editing"
