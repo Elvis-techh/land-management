@@ -10,7 +10,6 @@ import { roleCan } from "../lib/capabilities.js";
 import { holdsLot } from "../lib/holding.js";
 import { businessToday } from "../lib/time.js";
 
-
 /**
  * The lots list, shaped exactly as the table needs it.
  *

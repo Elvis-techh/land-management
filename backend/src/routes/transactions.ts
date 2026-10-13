@@ -18,7 +18,6 @@ import { openContract } from "../lib/holding.js";
 import { replayContract } from "../lib/ledger.js";
 import { businessToday } from "../lib/time.js";
 
-
 const PAYMENT_METHODS = ["cash", "transfer", "card"] as const;
 const PAYMENT_TYPES = ["down_payment", "installment", "full_payment", "adjustment"] as const;
 

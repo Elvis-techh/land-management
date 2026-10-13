@@ -9,7 +9,6 @@ import { AREA_UNITS } from "../lib/area.js";
 import { recordAudit } from "../lib/audit.js";
 import { businessToday } from "../lib/time.js";
 
-
 /**
  * A project row with the counts the Proyectos screen shows.
  *

@@ -10,7 +10,6 @@ import { openContract } from "../lib/holding.js";
 import { normalizePhone } from "../lib/phone.js";
 import { businessToday } from "../lib/time.js";
 
-
 /**
  * Every customer's ACTIVE contracts, in one query.
  *
