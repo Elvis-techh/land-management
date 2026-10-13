@@ -6,7 +6,7 @@ import type { MoneyView } from "../../lib/money";
 import { cents, formatMoney } from "../../lib/money";
 import { ROLE_LABELS } from "../../lib/permissions";
 import type { ContractStatus } from "../../types";
-import { STATUS_PRESENTATION } from "../contracts/contractPresentation";
+import { KIND_LABELS, STATUS_PRESENTATION } from "../contracts/contractPresentation";
 import { paymentTypeLabel } from "../receipts/paymentType";
 import { METHOD_LABELS } from "../receipts/transactionFilters";
 import type { AuditAction, AuditEvent, AuditPage as AuditPageData } from "./api";
@@ -56,6 +56,7 @@ const fieldLabels: Record<string, string> = {
   passwordResetAt: "Contraseña cambiada",
   // A contract's terms — edits, reprices, and the two sides of an adenda.
   status: "Situación",
+  kind: "Reserva o contrato",
   saleType: "Forma de pago",
   salePriceCents: "Precio de venta",
   downPaymentCents: "Prima",
@@ -64,6 +65,7 @@ const fieldLabels: Record<string, string> = {
   dueDay: "Día de pago",
   signedOn: "Firma",
   firstDueOn: "Primera cuota",
+  expiresOn: "Vence la reserva",
   paidToDateCents: "Pagado",
   settlement: "Lo ya pagado",
   replacedBy: "Reemplazado por",
@@ -116,6 +118,9 @@ function formatValue(field: string, value: unknown, money: MoneyView): string {
   }
   if (field === "type" && typeof value === "string") {
     return paymentTypeLabel(value);
+  }
+  if (field === "kind" && typeof value === "string" && value in KIND_LABELS) {
+    return KIND_LABELS[value as keyof typeof KIND_LABELS];
   }
   // "replaced" is how the database spells it; "Reemplazado" is how it is said.
   if (field === "status" && typeof value === "string" && value in STATUS_PRESENTATION) {
