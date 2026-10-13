@@ -321,7 +321,7 @@ function present(
      * lot is available again and the Contratos screen shows this one as
      * "Vencida". Derived here, like every other status in the app.
      */
-    expired: isReservationExpired(row.kind, row.expiresOn, asOf),
+    expired: isReservationExpired(row.kind, row.status, row.expiresOn, asOf),
     lot: {
       id: row.lotId,
       code: row.lotCode,
@@ -1034,7 +1034,9 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
       // will hold the lot today: a reservation left expired holds nothing.
       const asOf = today();
 
-      if (!isReservationExpired(parsed.data.kind, parsed.data.expiresOn, asOf)) {
+      if (
+        !isReservationExpired(parsed.data.kind, existing.status, parsed.data.expiresOn, asOf)
+      ) {
         const other = app.db
           .select({ code: contracts.code })
           .from(contracts)

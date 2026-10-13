@@ -157,17 +157,20 @@ export function financedCents(terms: Pick<ContractTerms, "salePriceCents" | "dow
  * the whole point of that date is that the hold ENDS on it — the lot goes back
  * on the market by itself. Nothing sweeps expired reservations to a closed
  * status; like every other status in this app, it is derived on read. A signed
- * `contract` never expires this way, only a `reservation`.
+ * `contract` never expires this way, only a `reservation`. Nor does a
+ * reservation paid in full (`paid_off`): it is a sale in all but name, and
+ * letting it lapse would put a paid-for lot back on sale.
  *
  * `asOf` and `expiresOn` are both YYYY-MM-DD calendar dates, so a plain string
  * comparison orders them correctly.
  */
 export function isReservationExpired(
   kind: string,
+  status: string,
   expiresOn: string | null | undefined,
   asOf: string,
 ): boolean {
-  return kind === "reservation" && expiresOn != null && expiresOn < asOf;
+  return kind === "reservation" && status === "active" && expiresOn != null && expiresOn < asOf;
 }
 
 /**

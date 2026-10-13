@@ -6,12 +6,16 @@ import { contracts } from "../db/schema.js";
 /**
  * SQL fragment: this reservation has passed its expiry date.
  *
+ * Only an unpaid hold (`active`) can lapse. A reservation paid in full is a
+ * sale in all but name and keeps its lot whatever its date says.
+ *
  * `asOf` and `expires_on` are both YYYY-MM-DD, so `<` compares them correctly.
  * Shared by the two predicates below so "the hold has lapsed" is written once.
  */
 function expiredReservation(asOf: string): SQL {
   return sql`(
     ${contracts.kind} = 'reservation'
+    AND ${contracts.status} = 'active'
     AND ${contracts.expiresOn} IS NOT NULL
     AND ${contracts.expiresOn} < ${asOf}
   )`;
