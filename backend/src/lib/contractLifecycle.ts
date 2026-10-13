@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 
 import type { Db } from "../db/client.js";
 import { contracts, payments } from "../db/schema.js";
+import { isReservationExpired } from "./contracts.js";
 import { replayContract } from "./ledger.js";
 
 /** A database or transaction handle — enough of one to read and settle a contract. */
@@ -71,4 +72,34 @@ export function syncContractLifecycle(
     .run();
 
   return target === "paid_off" ? "settled" : "reopened";
+}
+
+/**
+ * May money be posted to this contract today? `null` when it may, otherwise the
+ * reason, in the words staff will read.
+ *
+ * Two things close a contract to money. A closed status (anything but `active`
+ * or `paid_off`), written as the two that stay open so a closed status added
+ * later is refused without anybody having to remember this function. And a
+ * reservation past its date: it still reads `active`, because nothing sweeps
+ * it, but its lot is free and may already belong to someone else, so money
+ * posted here would be a balance on another customer's lot.
+ */
+export function moneyRefusal(
+  contract: { code: string; status: string; kind: string; expiresOn: string | null },
+  asOf: string,
+): string | null {
+  if (contract.status !== "active" && contract.status !== "paid_off") {
+    return `El contrato ${contract.code} está cerrado y no admite pagos.`;
+  }
+
+  if (isReservationExpired(contract.kind, contract.status, contract.expiresOn, asOf)) {
+    return (
+      `La reserva ${contract.code} venció el ${contract.expiresOn} y su lote quedó libre. ` +
+      "Renuévala con «Editar términos» (si el lote sigue libre) o conviértela en contrato " +
+      "antes de cobrar."
+    );
+  }
+
+  return null;
 }
