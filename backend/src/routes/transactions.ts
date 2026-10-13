@@ -448,20 +448,56 @@ export const transactionRoutes: FastifyPluginAsync = async (app) => {
         }
       }
 
-      const contract = app.db
+      const involved = app.db
         .select({
           id: contracts.id,
           code: contracts.code,
+          status: contracts.status,
           salePriceCents: contracts.salePriceCents,
         })
         .from(contracts)
-        .where(eq(contracts.id, existing.contractId))
-        .get();
+        .where(
+          inArray(contracts.id, [existing.contractId, ...siblings.map((row) => row.contractId)]),
+        )
+        .all();
+
+      const contract = involved.find((row) => row.id === existing.contractId);
 
       if (!contract) {
         return reply
           .code(404)
           .send({ error: "contract_not_found", message: "El contrato ya no existe." });
+      }
+
+      /*
+       * Money on a closed contract was settled when it closed: kept, held,
+       * refunded, or left behind on purpose by an adenda. Moving an amount or a
+       * date rewrites that settlement, and a date moved past an adenda recreates
+       * exactly what POST /contracts/amendments refuses to create. Reference,
+       * method, type and notes stay correctable on any contract.
+       *
+       * The sibling lines never change amount, only date (see the loop below),
+       * so a sibling is checked only when its date would actually move.
+       */
+      const isClosed = (status: string) => status !== "active" && status !== "paid_off";
+      const statusOf = new Map(involved.map((row) => [row.id, row]));
+      const moving = [
+        ...(body.amountCents !== existing.amountCents || body.paidOn !== existing.paidOn
+          ? [existing]
+          : []),
+        ...siblings.filter((sibling) => sibling.paidOn !== body.paidOn),
+      ];
+      const blocked = moving
+        .map((row) => statusOf.get(row.contractId))
+        .find((row) => row !== undefined && isClosed(row.status));
+
+      if (blocked) {
+        return reply.code(409).send({
+          error: "contract_closed",
+          message:
+            `El contrato ${blocked.code} está cerrado. Puedes corregir la referencia o el ` +
+            "método, pero no el monto ni la fecha de un pago que quedó resuelto al cerrarlo.",
+        });
       }
 
       if (!body.allowOverpayment) {
