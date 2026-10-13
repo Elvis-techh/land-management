@@ -28,11 +28,11 @@ import {
   sendStoredFile,
 } from "../lib/storedFiles.js";
 import { recordAudit } from "../lib/audit.js";
-import { syncContractLifecycle } from "../lib/contractLifecycle.js";
+import { moneyRefusal, syncContractLifecycle } from "../lib/contractLifecycle.js";
 import type { ContractTerms, SaleType } from "../lib/contracts.js";
 import { appliedInstallments, buildSchedule } from "../lib/contracts.js";
 import { orderLedger, receiptFigures, replayContract } from "../lib/ledger.js";
-import { parseTimestamp } from "../lib/time.js";
+import { businessToday, parseTimestamp } from "../lib/time.js";
 import {
   allocateReceiptCode,
   generateLookupCode,
@@ -549,11 +549,15 @@ function originalAmounts(
 }
 
 export interface ReceiptRoutesOptions {
+  /** IANA name — see `timeZone` in src/config/env.ts. Decides when a reservation lapses. */
+  timeZone: string;
   /** Where uploaded proof-of-payment files are written. See config/env.ts. */
   uploadsPath: string;
 }
 
 export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (app, options) => {
+  const today = () => businessToday(options.timeZone);
+
   // Registered inside this plugin rather than app-wide, so the only routes that
   // can accept a file upload are the ones below. The limits are the real guard:
   // Fastify itself will refuse a body past `fileSize` before it reaches a
@@ -883,11 +887,15 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
           code: contracts.code,
           customerId: contracts.customerId,
           status: contracts.status,
+          kind: contracts.kind,
+          expiresOn: contracts.expiresOn,
           salePriceCents: contracts.salePriceCents,
         })
         .from(contracts)
         .where(inArray(contracts.id, [...seen]))
         .all();
+
+      const asOf = today();
 
       const byId = new Map(contractRows.map((row) => [row.id, row]));
 
@@ -910,14 +918,11 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
           });
         }
 
-        // The two statuses that still take money, rather than the ones that do
-        // not: a closed status added later (`replaced`, by an adenda) is then
-        // refused here without anybody having to remember this line.
-        if (contract.status !== "active" && contract.status !== "paid_off") {
-          return reply.code(409).send({
-            error: "contract_closed",
-            message: `El contrato ${contract.code} está cerrado y no admite pagos.`,
-          });
+        // A closed contract, or a reservation past its date. See moneyRefusal.
+        const refusal = moneyRefusal(contract, asOf);
+
+        if (refusal) {
+          return reply.code(409).send({ error: "contract_closed", message: refusal });
         }
 
         if (!body.allowOverpayment) {
@@ -1403,11 +1408,15 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
           code: contracts.code,
           customerId: contracts.customerId,
           status: contracts.status,
+          kind: contracts.kind,
+          expiresOn: contracts.expiresOn,
           salePriceCents: contracts.salePriceCents,
         })
         .from(contracts)
         .where(inArray(contracts.id, [...seen]))
         .all();
+
+      const asOf = today();
 
       const contractById = new Map(contractRows.map((row) => [row.id, row]));
       const liveByContract = new Map(liveRows.map((row) => [row.contractId, row]));
@@ -1432,14 +1441,16 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
           });
         }
 
-        // The two statuses that still take money, rather than the ones that do
-        // not: a closed status added later (`replaced`, by an adenda) is then
-        // refused here without anybody having to remember this line.
-        if (contract.status !== "active" && contract.status !== "paid_off") {
-          return reply.code(409).send({
-            error: "contract_closed",
-            message: `El contrato ${contract.code} está cerrado y no admite pagos.`,
-          });
+        // A closed contract, or a reservation past its date. See moneyRefusal.
+        // A lapsed reservation may still KEEP what this receipt already gave it
+        // (or less): moving money off it onto a live contract is exactly what
+        // the office should be able to do. Only new money is refused.
+        const refusal = moneyRefusal(contract, asOf);
+        const alreadyHeld = liveByContract.get(contract.id)?.amountCents ?? 0;
+        const closed = contract.status !== "active" && contract.status !== "paid_off";
+
+        if (refusal && (closed || line.amountCents > alreadyHeld)) {
+          return reply.code(409).send({ error: "contract_closed", message: refusal });
         }
 
         if (!body.allowOverpayment) {
