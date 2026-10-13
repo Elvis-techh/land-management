@@ -71,11 +71,13 @@ const projectsListQuery = (db: import("../db/client.js").Db, asOf: string) => {
          WHERE lots.project_id = projects.id AND lots.archived_at IS NULL)
       `,
       // Gone: paid at contado, or paid off in full. Either way there is nothing
-      // left to collect and the lot is no longer ours.
+      // left to collect and the lot is no longer ours. A reservation paid off in
+      // full counts here too: it is a sale in all but name.
       soldCount: sql<number>`
         (SELECT COUNT(*) FROM lots
          JOIN contracts ON contracts.lot_id = lots.id
-           AND contracts.status IN ('active', 'paid_off') AND contracts.kind = 'contract'
+           AND contracts.status IN ('active', 'paid_off')
+           AND (contracts.kind = 'contract' OR contracts.status = 'paid_off')
            AND contracts.sale_type <> 'donation'
            AND (contracts.sale_type = 'cash' OR contracts.status = 'paid_off')
          WHERE lots.project_id = projects.id AND lots.archived_at IS NULL)
@@ -85,7 +87,8 @@ const projectsListQuery = (db: import("../db/client.js").Db, asOf: string) => {
       donatedCount: sql<number>`
         (SELECT COUNT(*) FROM lots
          JOIN contracts ON contracts.lot_id = lots.id
-           AND contracts.status IN ('active', 'paid_off') AND contracts.kind = 'contract'
+           AND contracts.status IN ('active', 'paid_off')
+           AND (contracts.kind = 'contract' OR contracts.status = 'paid_off')
            AND contracts.sale_type = 'donation'
          WHERE lots.project_id = projects.id AND lots.archived_at IS NULL)
       `,

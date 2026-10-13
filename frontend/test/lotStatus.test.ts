@@ -78,4 +78,18 @@ describe("lotStatus", () => {
       );
     }
   });
+
+  it("calls a reservation paid in full vendido, not reservado (P3-3)", () => {
+    // Paid in full is final, whatever the row started life as. The server
+    // keeps such a lot held past the reservation's date; this screen must not
+    // call it a hold that could still lapse.
+    assert.equal(
+      lotStatus(lot({ ...holding("cash", "paid_off"), kind: "reservation" })),
+      "sold",
+    );
+    assert.equal(
+      lotStatus(lot({ ...holding("donation", "paid_off"), kind: "reservation" })),
+      "donated",
+    );
+  });
 });

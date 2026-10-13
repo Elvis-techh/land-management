@@ -28,6 +28,12 @@ export function lotStatus(lot: Lot): LotStatus {
     return "available";
   }
 
+  // Paid in full is final, whatever the row started life as: a reservation paid
+  // off is a sale in all but name, and the backend no longer lets it lapse.
+  if (lot.holding.status === "paid_off") {
+    return lot.holding.saleType === "donation" ? "donated" : "sold";
+  }
+
   // A hold, whatever it was going to be paid with. It has not been sold on any
   // terms yet, so the terms do not get a say here.
   if (lot.holding.kind === "reservation") {
@@ -38,9 +44,5 @@ export function lotStatus(lot: Lot): LotStatus {
     return "donated";
   }
 
-  if (lot.holding.saleType === "cash") {
-    return "sold";
-  }
-
-  return lot.holding.status === "paid_off" ? "sold" : "financed";
+  return lot.holding.saleType === "cash" ? "sold" : "financed";
 }
