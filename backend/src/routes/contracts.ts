@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
 import multipart from "@fastify/multipart";
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from "fastify";
@@ -436,6 +436,24 @@ const contractBody = z.object({
    * have one yet.
    */
   joinGroupOfContractId: z.string().uuid().nullish(),
+});
+
+/**
+ * Every term PATCH /contracts/:id can change, for its audit row. A term left
+ * out here could move without the Historial showing any difference.
+ */
+const termsSnapshot = (row: typeof contracts.$inferSelect) => ({
+  kind: row.kind,
+  saleType: row.saleType,
+  salePriceCents: row.salePriceCents,
+  downPaymentCents: row.downPaymentCents,
+  termMonths: row.termMonths,
+  monthlyPaymentCents: row.monthlyPaymentCents,
+  dueDay: row.dueDay,
+  signedOn: row.signedOn,
+  firstDueOn: row.firstDueOn,
+  expiresOn: row.expiresOn,
+  notes: row.notes,
 });
 
 /** Editing terms keeps the same lot and customer: a different lot is a different sale. */
@@ -995,6 +1013,46 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
         });
       }
 
+      // A signed sale does not turn back into a hold. A reservation with a past
+      // expiry date stops holding its lot, so this edit could quietly put a lot
+      // that is already paid for back on sale, with the money left on this
+      // contract. Undoing a sale is a cancellation, which asks what happens to
+      // what was paid.
+      if (existing.kind === "contract" && parsed.data.kind === "reservation") {
+        return reply.code(400).send({
+          error: "invalid_terms",
+          message:
+            "Un contrato firmado no vuelve a ser reserva. Si la venta se deshizo, cancélalo " +
+            "para decidir qué pasa con lo pagado.",
+        });
+      }
+
+      // One holder per lot, the rule POST /contracts and reassign-lot already
+      // obey. A lapsed reservation keeps status 'active', and its lot may have
+      // been sold since; extending it or converting it to a contract must not
+      // put a second holder on that lot. Only asked when the edited contract
+      // will hold the lot today: a reservation left expired holds nothing.
+      const asOf = today();
+
+      if (!isReservationExpired(parsed.data.kind, parsed.data.expiresOn, asOf)) {
+        const other = app.db
+          .select({ code: contracts.code })
+          .from(contracts)
+          .where(
+            and(eq(contracts.lotId, existing.lotId), ne(contracts.id, existing.id), holdsLot(asOf)),
+          )
+          .get();
+
+        if (other) {
+          return reply.code(409).send({
+            error: "lot_taken",
+            message:
+              `El lote ya tiene el contrato ${other.code} vigente. ` +
+              "Esta reserva venció y no puede reactivarse sobre una venta posterior.",
+          });
+        }
+      }
+
       const now = new Date().toISOString();
 
       const updated = app.db.transaction((tx) => {
@@ -1024,26 +1082,8 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
           entityId: existing.id,
           action: isRepricing ? "reprice" : "update",
           reason: parsed.data.reason ?? null,
-          before: {
-            kind: existing.kind,
-            saleType: existing.saleType,
-            salePriceCents: existing.salePriceCents,
-            downPaymentCents: existing.downPaymentCents,
-            termMonths: existing.termMonths,
-            monthlyPaymentCents: existing.monthlyPaymentCents,
-            dueDay: existing.dueDay,
-            signedOn: existing.signedOn,
-          },
-          after: {
-            kind: next.kind,
-            saleType: next.saleType,
-            salePriceCents: next.salePriceCents,
-            downPaymentCents: next.downPaymentCents,
-            termMonths: next.termMonths,
-            monthlyPaymentCents: next.monthlyPaymentCents,
-            dueDay: next.dueDay,
-            signedOn: next.signedOn,
-          },
+          before: termsSnapshot(existing),
+          after: termsSnapshot(next),
         });
 
         // A new price can push the balance to zero (settling the contract) or,

@@ -307,13 +307,21 @@ export function ContractEditDialog({
               value={kind}
               onChange={(event) => setKind(event.target.value as HoldingKind)}
             >
-              {(Object.keys(KIND_LABELS) as HoldingKind[]).map((value) => (
-                <option key={value} value={value}>
-                  {KIND_LABELS[value]}
-                </option>
-              ))}
+              {/* A signed sale does not go back to being a hold; the server
+                  refuses it. Undoing a sale is «Cancelar». */}
+              {(Object.keys(KIND_LABELS) as HoldingKind[])
+                .filter((value) => contract.kind === "reservation" || value === "contract")
+                .map((value) => (
+                  <option key={value} value={value}>
+                    {KIND_LABELS[value]}
+                  </option>
+                ))}
             </select>
-            <span className="field-hint">Una reserva es un apartado; un contrato es la venta.</span>
+            <span className="field-hint">
+              {contract.kind === "contract"
+                ? "Un contrato firmado no vuelve a ser reserva. Si la venta se deshizo, cancélalo."
+                : "Una reserva es un apartado; un contrato es la venta."}
+            </span>
           </div>
 
           <div className="form-field">
