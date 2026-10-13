@@ -8,9 +8,8 @@ import { contracts, customers, lots, payments, projects } from "../db/schema.js"
 import { recordAudit } from "../lib/audit.js";
 import { roleCan } from "../lib/capabilities.js";
 import { holdsLot } from "../lib/holding.js";
+import { businessToday } from "../lib/time.js";
 
-/** Today as a YYYY-MM-DD calendar date — every "is it expired yet" question is a date. */
-const today = () => new Date().toISOString().slice(0, 10);
 
 /**
  * The lots list, shaped exactly as the table needs it.
@@ -131,7 +130,16 @@ const archiveLotBody = z.object({
   reason: z.string().trim().min(10).max(500),
 });
 
-export const lotRoutes: FastifyPluginAsync = async (app) => {
+interface LotRoutesOptions {
+  /** IANA name — see `timeZone` in src/config/env.ts. Decides what "today" is. */
+  timeZone: string;
+}
+
+export const lotRoutes: FastifyPluginAsync<LotRoutesOptions> = async (app, options) => {
+  // The office's calendar date, not UTC's: from 18:00 in Tegucigalpa UTC is
+  // already tomorrow. See lib/time.ts.
+  const today = () => businessToday(options.timeZone);
+
   app.get<{ Querystring: { includeArchived?: string } }>(
     "/lots",
     { onRequest: app.requireUser },

@@ -8,9 +8,8 @@ import { contracts, customers, lots, payments, projects } from "../db/schema.js"
 import { recordAudit } from "../lib/audit.js";
 import { openContract } from "../lib/holding.js";
 import { normalizePhone } from "../lib/phone.js";
+import { businessToday } from "../lib/time.js";
 
-/** Today as a YYYY-MM-DD calendar date. */
-const today = () => new Date().toISOString().slice(0, 10);
 
 /**
  * Every customer's ACTIVE contracts, in one query.
@@ -156,7 +155,16 @@ function identificationClash(
   return `La identidad ${identification} ya está registrada a nombre de ${clash.fullName}.`;
 }
 
-export const customerRoutes: FastifyPluginAsync = async (app) => {
+interface CustomerRoutesOptions {
+  /** IANA name — see `timeZone` in src/config/env.ts. Decides what "today" is. */
+  timeZone: string;
+}
+
+export const customerRoutes: FastifyPluginAsync<CustomerRoutesOptions> = async (app, options) => {
+  // The office's calendar date, not UTC's: from 18:00 in Tegucigalpa UTC is
+  // already tomorrow. See lib/time.ts.
+  const today = () => businessToday(options.timeZone);
+
   app.get("/customers", { onRequest: app.requireUser }, async (request, reply) => {
     const rows = app.db.select().from(customers).orderBy(asc(customers.fullName)).all();
 
