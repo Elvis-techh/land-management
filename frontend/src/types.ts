@@ -422,6 +422,10 @@ export interface AppliedInstallment {
   applied: Cents;
   /** Was the cuota left fully covered afterwards? */
   settled: boolean;
+  /** The cuota's full scheduled amount. */
+  installment: Cents;
+  /** What the cuota still needs after this payment. Zero once settled. */
+  remaining: Cents;
 }
 
 /**
