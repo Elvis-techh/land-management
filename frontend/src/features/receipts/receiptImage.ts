@@ -81,6 +81,22 @@ function embeddedFontCss(node: HTMLElement): Promise<string> {
 }
 
 /**
+ * Wait until every picture on the receipt — the logo — has arrived.
+ *
+ * The image is drawn the moment a receipt is opened, and the first time that
+ * happens the logo is usually still downloading. An `<img>` that has not loaded
+ * is laid out zero pixels tall, and the renderer copies that height onto its
+ * clone, so the PNG came out with no logo while the preview and the printout,
+ * drawn later, had it. A picture that fails to load is let go: a receipt
+ * without a logo beats no receipt.
+ */
+function imagesLoaded(node: HTMLElement): Promise<unknown> {
+  return Promise.all(
+    Array.from(node.querySelectorAll("img"), (img) => img.decode().catch(() => undefined)),
+  );
+}
+
+/**
  * Render a receipt to a PNG file, named after the receipt.
  *
  * Takes the offscreen STAGE — `.receipt-share-stage` — rather than the preview
@@ -105,6 +121,8 @@ export async function receiptToPng(stage: HTMLElement, receiptCode: string): Pro
   if (node === null) {
     throw new Error("No hay un recibo que convertir en imagen.");
   }
+
+  await imagesLoaded(node);
 
   const blob = await toBlob(node, {
     pixelRatio: PIXEL_RATIO,
