@@ -375,7 +375,32 @@ describe("what a receipt prints", () => {
     );
   });
 
-  it("counts the customer's cumulative total across every lot they hold", () => {
+  it("counts only the lots on the receipt in its cumulative total, so the summary adds up", () => {
+    // A customer with two lots pays on lote A alone. The money already paid on
+    // lote B is not part of lote A's contract, and counting it would print a
+    // "total pagado" that does not reconcile with lote A's price and balance.
+    const customerCredits: TestCredit[] = [
+      credit({ id: "a1", contractId: "lote-a", paidOn: "2026-01-15", amountCents: lempiras(8_000) }),
+      credit({ id: "b1", contractId: "lote-b", paidOn: "2026-01-20", amountCents: lempiras(30_000) }),
+      credit({ id: "a2", contractId: "lote-a", paidOn: "2026-02-15", amountCents: lempiras(4_000) }),
+    ];
+
+    const february = receiptFigures({
+      paymentIds: ["a2"],
+      customerCredits,
+      salePriceByContract,
+    });
+
+    assert.equal(february.cumulativePaidCents, lempiras(12_000));
+
+    // Valor del contrato − total pagado = nuevo balance, on the face of it.
+    assert.equal(
+      salePriceByContract.get("lote-a")! - february.cumulativePaidCents,
+      february.newBalanceCents,
+    );
+  });
+
+  it("counts every lot on a multi-lot receipt in its cumulative total", () => {
     const customerCredits: TestCredit[] = [
       credit({ id: "p1", contractId: "lote-a", paidOn: "2026-01-15", amountCents: lempiras(8_000) }),
       credit({ id: "p2", contractId: "lote-b", paidOn: "2026-01-15", amountCents: lempiras(7_000) }),
