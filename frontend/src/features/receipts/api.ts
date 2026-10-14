@@ -41,7 +41,14 @@ interface ReceiptResponse {
     installmentCount: number;
     previousBalance: number;
     newBalance: number;
-    appliedTo: Array<{ number: number; dueOn: string; appliedCents: number; settled: boolean }>;
+    appliedTo: Array<{
+      number: number;
+      dueOn: string;
+      appliedCents: number;
+      settled: boolean;
+      installmentCents: number;
+      remainingCents: number;
+    }>;
   }>;
 }
 
@@ -53,8 +60,12 @@ function toLine(line: NonNullable<ReceiptResponse["lines"]>[number]): ReceiptLin
     previousBalance: cents(line.previousBalance),
     newBalance: cents(line.newBalance),
     appliedTo: line.appliedTo.map((installment) => ({
-      ...installment,
+      number: installment.number,
+      dueOn: installment.dueOn,
+      settled: installment.settled,
       applied: cents(installment.appliedCents),
+      installment: cents(installment.installmentCents),
+      remaining: cents(installment.remainingCents),
     })),
   };
 }

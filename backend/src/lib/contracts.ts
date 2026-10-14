@@ -458,6 +458,10 @@ export interface AppliedInstallment {
   appliedCents: number;
   /** Was the installment left fully covered afterwards? */
   settled: boolean;
+  /** The installment's full scheduled amount, so a receipt can tell a crumb from a cuota. */
+  installmentCents: number;
+  /** What the installment still needs after this payment. Zero once settled. */
+  remainingCents: number;
 }
 
 /**
@@ -512,6 +516,8 @@ export function appliedInstallments(
       dueOn: installment.dueOn,
       appliedCents: overlap,
       settled: to >= end,
+      installmentCents: installment.amountCents,
+      remainingCents: Math.max(0, end - to),
     });
   }
 

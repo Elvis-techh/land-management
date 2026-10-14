@@ -213,7 +213,7 @@ export function ReceiptPaper({ receipt, money }: ReceiptPaperProps) {
         </thead>
         <tbody>
           {receipt.lines.map((line) => {
-            const applied = appliedLabel(line);
+            const applied = appliedLabel(line, money);
 
             return (
               <tr key={line.paymentId}>
@@ -223,9 +223,10 @@ export function ReceiptPaper({ receipt, money }: ReceiptPaperProps) {
                     {line.projectName ? ` · ${line.projectName}` : ""}
                   </span>
 
-                  {/* Where the lot sits in its schedule, and nothing else —
-                      see `appliedLabel`. A cash sale has no schedule, so the
-                      line is dropped entirely rather than left empty. */}
+                  {/* What the money did to the lot's schedule: a cuota
+                      finished, part of one, several, or the whole lot paid
+                      off — see `appliedLabel`. A cash sale has no schedule,
+                      so the line is dropped entirely rather than left empty. */}
                   {applied && <span className="receipt-item-detail">{applied}</span>}
                 </td>
                 <td className="receipt-right">{formatDocumentMoney(line.amount, money)}</td>

@@ -148,6 +148,39 @@ describe("issuing a receipt", () => {
     assert.equal(applied[0].number, 1);
     assert.equal(applied[0].appliedCents, lempiras(3_000));
     assert.equal(applied[0].settled, true);
+    // The cuota's full size, and nothing left owing on it.
+    assert.equal(applied[0].installmentCents, lempiras(3_000));
+    assert.equal(applied[0].remainingCents, 0);
+
+    await app.close();
+  });
+
+  it("says how much of a part-paid cuota is still owed", async () => {
+    const { app, db, ids } = await buildTestApp();
+    const cookie = await login(app, "owner@test.hn", OWNER_PASSWORD);
+    const secondId = addSecondContract(db, ids);
+
+    // The L 10,000 prima, then L 1,000 of the first L 3,000 cuota.
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/receipts",
+      headers: { cookie },
+      payload: {
+        customerId: ids.customerId,
+        paidOn: "2026-02-05",
+        method: "cash",
+        lines: [{ contractId: secondId, amountCents: lempiras(11_000), type: "installment" }],
+      },
+    });
+
+    const { receipt } = response.json() as { receipt: Record<string, any> };
+    const [cuota] = receipt.lines[0].appliedTo;
+
+    assert.equal(cuota.number, 1);
+    assert.equal(cuota.appliedCents, lempiras(1_000));
+    assert.equal(cuota.settled, false);
+    assert.equal(cuota.installmentCents, lempiras(3_000));
+    assert.equal(cuota.remainingCents, lempiras(2_000));
 
     await app.close();
   });
