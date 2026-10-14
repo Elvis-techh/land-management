@@ -288,12 +288,17 @@ export interface ReceiptFigures {
   previousBalanceCents: number;
   newBalanceCents: number;
   /**
-   * Everything this customer has ever paid, across every contract, up to and
-   * including this receipt.
+   * Everything paid on the contracts this receipt touches, up to and including
+   * this receipt.
    *
-   * Customer-wide rather than per contract, because that is the figure somebody
-   * actually asks for — "how much have I given you in total" is never a
-   * question about one lot.
+   * Scoped to the same contracts as the balances beside it, so the summary
+   * reconciles on the face of the document: valor del contrato − total pagado =
+   * nuevo balance. It used to be customer-wide, and a customer with a second
+   * lot then read a "total pagado" that included money paid on a lot the
+   * receipt does not mention — figures that did not add up. The same scoping
+   * keeps an adenda's old contract out: the money paid under the old terms is
+   * not credited to the new price, and the old contract is never on a receipt
+   * for the new one.
    */
   cumulativePaidCents: number;
 }
@@ -307,22 +312,6 @@ export interface ReceiptFiguresInput<T extends LedgerCredit & { contractId: stri
   salePriceByContract: ReadonlyMap<string, number>;
   /** Empty today. Keyed by contract id. See `LedgerCharge`. */
   chargesByContract?: ReadonlyMap<string, readonly LedgerCharge[]>;
-  /**
-   * Contracts whose payments stop counting towards `cumulativePaidCents` on
-   * this receipt — in practice, the ones an adenda replaced before it was
-   * issued.
-   *
-   * An adenda leaves the money paid under the old terms on the old contract,
-   * kept by the business and NOT credited to the new price. A receipt for the
-   * new agreement that still added that money into "total pagado acumulado"
-   * would print L 800,000 of contract beside L 324,000 paid and L 650,000
-   * pending — figures that do not add up, and read as though the old money
-   * counted after all. Which contracts to leave out is decided by the caller,
-   * per receipt, so a receipt printed before the adenda keeps its figure.
-   *
-   * A payment printed on this receipt itself is never left out.
-   */
-  excludeFromCumulative?: ReadonlySet<string>;
 }
 
 /**
@@ -387,13 +376,10 @@ export function receiptFigures<T extends LedgerCredit & { contractId: string }>(
   // data render the same document.
   lines.sort((a, b) => (a.contractId < b.contractId ? -1 : a.contractId > b.contractId ? 1 : 0));
 
-  const excluded = input.excludeFromCumulative;
-  const cumulativeCredits =
-    excluded && excluded.size > 0
-      ? input.customerCredits.filter(
-          (credit) => !excluded.has(credit.contractId) || onThisReceipt.has(credit.id),
-        )
-      : input.customerCredits;
+  const contractsOnThisReceipt = new Set(lines.map((line) => line.contractId));
+  const cumulativeCredits = input.customerCredits.filter((credit) =>
+    contractsOnThisReceipt.has(credit.contractId),
+  );
 
   return {
     lines,
@@ -405,7 +391,7 @@ export function receiptFigures<T extends LedgerCredit & { contractId: string }>(
 }
 
 /**
- * Everything the customer had paid, across all their contracts, by the time
+ * Everything the customer had paid on the given credits' contracts by the time
  * this receipt was issued.
  *
  * "By the time" is measured against the LAST of this receipt's payments in

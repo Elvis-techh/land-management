@@ -140,9 +140,10 @@ export function ReceiptPaper({ receipt, money }: ReceiptPaperProps) {
   /*
    * "Valor Total del Contrato" — summed across the lots ON THIS RECEIPT.
    *
-   * Deliberately the same scope as `previousBalance` and `newBalance`, which
-   * `receiptFigures` accumulates only over the contracts this receipt touches.
-   * Summing every contract the customer holds would put a figure on the page
+   * Deliberately the same scope as `previousBalance`, `newBalance` and
+   * `cumulativePaid`, which `receiptFigures` accumulates only over the
+   * contracts this receipt touches — so valor − pagado = nuevo balance on the
+   * page. Summing every contract the customer holds would put a figure here
    * that the balances beside it do not describe.
    */
   const contractTotal = cents(

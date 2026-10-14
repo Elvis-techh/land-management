@@ -489,7 +489,7 @@ export interface Receipt {
   totalPaid: Cents;
   previousBalance: Cents;
   newBalance: Cents;
-  /** Everything this customer has ever paid, across every lot, up to this receipt. */
+  /** Everything paid on the lots on this receipt, up to and including it. Same scope as the balances, so the summary adds up. */
   cumulativePaid: Cents;
   transactionCount: number;
   method: string | null;
