@@ -16,9 +16,7 @@ import { syncContractLifecycle } from "../lib/contractLifecycle.js";
 import { roleCan } from "../lib/capabilities.js";
 import { openContract } from "../lib/holding.js";
 import { replayContract } from "../lib/ledger.js";
-
-/** Today as a YYYY-MM-DD calendar date. */
-const today = () => new Date().toISOString().slice(0, 10);
+import { businessToday } from "../lib/time.js";
 
 const PAYMENT_METHODS = ["cash", "transfer", "card"] as const;
 const PAYMENT_TYPES = ["down_payment", "installment", "full_payment", "adjustment"] as const;
@@ -148,7 +146,16 @@ const editBody = z.object({
   applyToPaymentIds: z.array(z.string().min(1)).max(50).default([]),
 });
 
-export const transactionRoutes: FastifyPluginAsync = async (app) => {
+interface TransactionRoutesOptions {
+  /** IANA name — see `timeZone` in src/config/env.ts. Decides what "today" is. */
+  timeZone: string;
+}
+
+export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = async (app, options) => {
+  // The office's calendar date, not UTC's: from 18:00 in Tegucigalpa UTC is
+  // already tomorrow. See lib/time.ts.
+  const today = () => businessToday(options.timeZone);
+
   app.get("/transactions", { onRequest: app.requireUser }, async (request, reply) => {
     // The biggest list in the app, re-read by every tab that comes back to
     // the front. When nothing has been written since this browser's copy, say

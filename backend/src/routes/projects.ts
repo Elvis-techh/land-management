@@ -7,9 +7,7 @@ import { z } from "zod";
 import { lots, projects } from "../db/schema.js";
 import { AREA_UNITS } from "../lib/area.js";
 import { recordAudit } from "../lib/audit.js";
-
-/** Today as a YYYY-MM-DD calendar date. */
-const today = () => new Date().toISOString().slice(0, 10);
+import { businessToday } from "../lib/time.js";
 
 /**
  * A project row with the counts the Proyectos screen shows.
@@ -106,7 +104,16 @@ const archiveBody = z.object({
   reason: z.string().trim().min(10).max(500),
 });
 
-export const projectRoutes: FastifyPluginAsync = async (app) => {
+interface ProjectRoutesOptions {
+  /** IANA name — see `timeZone` in src/config/env.ts. Decides what "today" is. */
+  timeZone: string;
+}
+
+export const projectRoutes: FastifyPluginAsync<ProjectRoutesOptions> = async (app, options) => {
+  // The office's calendar date, not UTC's: from 18:00 in Tegucigalpa UTC is
+  // already tomorrow. See lib/time.ts.
+  const today = () => businessToday(options.timeZone);
+
   app.get("/projects", { onRequest: app.requireUser }, async (request, reply) => {
     const rows = projectsListQuery(app.db, today()).all();
 

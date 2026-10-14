@@ -152,9 +152,9 @@ export async function buildApp(config: AppConfig, db: Db) {
         timeZone: config.timeZone,
       });
 
-      await api.register(lotRoutes);
-      await api.register(projectRoutes);
-      await api.register(customerRoutes);
+      await api.register(lotRoutes, { timeZone: config.timeZone });
+      await api.register(projectRoutes, { timeZone: config.timeZone });
+      await api.register(customerRoutes, { timeZone: config.timeZone });
       await api.register(contractRoutes, {
         timeZone: config.timeZone,
         uploadsPath: config.uploadsPath,
@@ -163,7 +163,7 @@ export async function buildApp(config: AppConfig, db: Db) {
         timeZone: config.timeZone,
         uploadsPath: config.uploadsPath,
       });
-      await api.register(transactionRoutes);
+      await api.register(transactionRoutes, { timeZone: config.timeZone });
       await api.register(permissionRoutes);
       await api.register(userRoutes);
       await api.register(exchangeRateRoutes);
