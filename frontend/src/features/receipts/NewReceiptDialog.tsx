@@ -16,7 +16,8 @@ import {
   PAYMENT_TYPE_OPTIONS,
   outstandingDownPayment,
   sharedPaymentType,
-  suggestPaymentType,
+  paysOffEarly,
+  suggestPaymentTypeFor,
 } from "./paymentType";
 import type { PendingProof, ProofLot } from "./ProofDropzone";
 import { MAX_PROOFS, ProofDropzone, acceptProofFiles } from "./ProofDropzone";
@@ -156,7 +157,7 @@ export function NewReceiptDialog({
    * who bought a second lot last month is settling its prima while still paying
    * cuotas on the first.
    *
-   * A lot with no entry here follows `suggestPaymentType`. That absence is also
+   * A lot with no entry here follows `suggestPaymentTypeFor`. That absence is also
    * what keeps "nobody has touched this" apart from "somebody picked exactly
    * what was suggested": the first has to keep following the customer being
    * changed, the second has to survive it. The keys are contract ids and the
@@ -205,7 +206,28 @@ export function NewReceiptDialog({
    * failing that what the contract itself implies.
    */
   const typeFor = (contract: Contract): PaymentType =>
-    typeByContract[contract.id] ?? suggestPaymentType(contract);
+    typeByContract[contract.id] ?? suggestedTypeFor(contract);
+
+  /*
+   * What this lot receives, in centavos: the amount at the top with one lot,
+   * its own line with several. Zero while nothing usable is typed.
+   */
+  const amountCentsFor = (contract: Contract): number => {
+    const typed = parseMoneyInput(isMultiLot ? (amountByContract[contract.id] ?? "") : amountText);
+    return Number.isNaN(typed) || typed <= 0 ? 0 : Math.round(typed * 100);
+  };
+
+  /** The suggestion for this lot, now that the amount it receives is known. */
+  const suggestedTypeFor = (contract: Contract): PaymentType =>
+    suggestPaymentTypeFor(contract, amountCentsFor(contract));
+
+  /*
+   * This lot is on "Pago total" because the amount pays it off early, not
+   * because anybody chose it. Said beside the field, so a type that followed
+   * the amount never changes without the screen saying why.
+   */
+  const autoPayoff = (contract: Contract): boolean =>
+    typeByContract[contract.id] === undefined && paysOffEarly(contract, amountCentsFor(contract));
 
   /** The lot the top field speaks for, when there is exactly one. */
   const soleLot = payable.length === 1 ? payable[0]! : null;
@@ -340,16 +362,16 @@ export function NewReceiptDialog({
        * same figure is two fields that can drift, and the one the user cannot
        * see is the one that wins.
        */
-      const typed = parseMoneyInput(isMultiLot ? (amountByContract[contract.id] ?? "") : amountText);
+      const amountCents = amountCentsFor(contract);
 
-      if (Number.isNaN(typed) || typed <= 0) {
+      if (amountCents <= 0) {
         continue;
       }
 
       drafts.push({
         contractId: contract.id,
-        amountCents: Math.round(typed * 100),
-        type: typeByContract[contract.id] ?? suggestPaymentType(contract),
+        amountCents,
+        type: typeFor(contract),
       });
     }
 
@@ -868,14 +890,19 @@ export function NewReceiptDialog({
               Faltan {formatMoney(cents(outstandingDownPayment(soleLot)), money)} de la prima.
             </span>
           )}
+          {soleLot && autoPayoff(soleLot) && (
+            <span className="field-hint">
+              Salda el lote antes de su última cuota: se registra como «Pago total».
+            </span>
+          )}
           {soleLot &&
             typeByContract[soleLot.id] !== undefined &&
-            typeByContract[soleLot.id] !== suggestPaymentType(soleLot) && (
+            typeByContract[soleLot.id] !== suggestedTypeFor(soleLot) && (
               <span className="field-hint">
                 Sugerido:{" "}
                 {
                   PAYMENT_TYPE_OPTIONS.find(
-                    (entry) => entry.value === suggestPaymentType(soleLot),
+                    (entry) => entry.value === suggestedTypeFor(soleLot),
                   )?.label
                 }
               </span>
@@ -1056,6 +1083,9 @@ export function NewReceiptDialog({
                       {/* Per row, because with several lots this is the one
                           that differs between them — and it is the whole
                           reason the column exists. */}
+                      {autoPayoff(contract) && (
+                        <span className="cell-sub">salda el lote: pago total</span>
+                      )}
                       {outstandingDownPayment(contract) > 0 && (
                         <span className="cell-sub">
                           faltan {formatMoney(cents(outstandingDownPayment(contract)), money)} de

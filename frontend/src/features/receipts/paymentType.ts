@@ -93,6 +93,43 @@ export function suggestPaymentType(contract: TypeableContract): PaymentType {
   return "installment";
 }
 
+/** Just enough of a lot to tell a payoff from its last cuota. Both in centavos. */
+export interface PayableLot {
+  /** What the lot still owes in all. */
+  balance: number;
+  /** What its next cuota (or the rest of its prima) still needs. */
+  health: { nextDueAmount: number };
+}
+
+/**
+ * Does this amount pay the lot off ahead of its schedule?
+ *
+ * It must clear the whole balance, AND the balance must be more than what is
+ * due right now. The second half is what keeps the last cuota a cuota: when
+ * all that is left is the final installment, paying it is paying a cuota like
+ * any other, even though the balance reaches zero. Only clearing cuotas that
+ * were not yet due is a pago total.
+ */
+export function paysOffEarly(lot: PayableLot, amountCents: number): boolean {
+  return amountCents > 0 && amountCents >= lot.balance && lot.balance > lot.health.nextDueAmount;
+}
+
+/**
+ * The type to suggest once the amount is known: "Pago total" when it pays the
+ * lot off early, otherwise what the contract alone suggests.
+ *
+ * The one exception to "not from the amount" above, and a narrow one: it
+ * changes only at the single point where the amount clears the balance, the
+ * form says so beside the field when it does, and a type picked by hand is
+ * never touched.
+ */
+export function suggestPaymentTypeFor(
+  contract: TypeableContract & PayableLot,
+  amountCents: number,
+): PaymentType {
+  return paysOffEarly(contract, amountCents) ? "full_payment" : suggestPaymentType(contract);
+}
+
 /**
  * The one type a set of lots is all on, or `null` when they are not.
  *
