@@ -3718,8 +3718,13 @@ body.modal-open {
   color: var(--red-dark);
 }
 
+/* The split table's amount and type per lot are the same kind of field, but sit
+   in a `<td>` rather than a `.form-field`. Left out of this rule they fell back
+   to the browser's own square black box. */
 .form-field input,
-.form-field select {
+.form-field select,
+.split-table input,
+.split-table select {
   width: 100%;
   min-height: 42px;
   padding: 10px 12px;
@@ -3734,7 +3739,9 @@ body.modal-open {
 }
 
 .form-field input:focus,
-.form-field select:focus {
+.form-field select:focus,
+.split-table input:focus,
+.split-table select:focus {
   background: var(--card);
   border-color: var(--clay);
   box-shadow: 0 0 0 3px var(--clay-bg);
@@ -6678,9 +6685,9 @@ input:disabled {
  * 264px cannot hold a lot code, "L. 164,000.00" and an editable amount side by
  * side — not by shrinking the input, which was the first instinct: the balance
  * alone wants about 100px in the mono face, and squeezing all three only moves
- * which one gets cut. So the row becomes two lines instead: the lot names
- * itself across the top, and the balance and the field it feeds sit together
- * underneath, where the eye compares them anyway.
+ * which one gets cut. So the row becomes lines instead: the lot names
+ * itself across the top, the balance and what is due next take the line under
+ * it, and the amount and the type sit side by side at the bottom.
  *
  * A grid on the `tr` rather than a media query full of widths. The header row
  * goes with it — "Lote / Saldo actual / Recibe" over columns that no longer
@@ -6711,8 +6718,8 @@ input:disabled {
 
   .split-table tr {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: start;
     gap: 4px 10px;
     padding: 10px 0;
     border-bottom: 1px solid var(--line);
@@ -6735,8 +6742,12 @@ input:disabled {
     border-bottom: none;
   }
 
-  /* The lot takes the whole top line; the other two share the one below. */
-  .split-table td:first-child {
+  /* The lot takes the top line, and the balance the one under it, whole: the
+     line beneath the balance ("próxima L. 48,334 · adelanto L. 33,332") is
+     the widest thing in the row. It used to share its line with the amount
+     field, ran under it and lost the adelanto. */
+  .split-table td:first-child,
+  .split-table td:nth-child(2) {
     grid-column: 1 / -1;
   }
 
@@ -6744,19 +6755,17 @@ input:disabled {
     text-align: left;
   }
 
-  /* Wide enough for "125,000.00" and no wider — the balance beside it needs
-     the rest of the line. Keyed on its position rather than on `:last-child`,
-     which is Tipo here and the balance itself on a single-lot receipt. */
-  .split-table td:nth-child(3) {
-    width: 8.5rem;
+  /* The two fields side by side at the bottom, half each: about 145px apiece,
+     enough for "L. 125,000.00" and for "Pago total". The floors the table
+     layout needs on a desktop would only push them past the edge here. */
+  .split-table .col-receive,
+  .split-table .col-type {
+    width: auto;
+    min-width: 0;
   }
 
-  /* Tipo gets the whole third line. Squeezed in beside the amount it would be
-     a select about four characters wide, and "Pago total" would read as
-     "Pago…" on the row where knowing which it is matters most. */
-  .split-table .col-type {
-    grid-column: 1 / -1;
-    width: auto;
+  .split-table .col-type .cell-sub {
+    margin-top: 4px;
   }
 }
 
