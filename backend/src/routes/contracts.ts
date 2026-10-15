@@ -377,6 +377,7 @@ function present(
       nextDueAmount: health.nextDueAmountCents,
       nextInstallment: health.nextInstallmentCents,
       nextDueCredit: health.nextDueCreditCents,
+      nextDueIsDownPayment: health.nextDueIsDownPayment,
       settled: health.settled,
     },
     installmentCount: buildSchedule(terms).length,

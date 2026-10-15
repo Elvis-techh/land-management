@@ -47,6 +47,13 @@ export function defaultMessage(contract: Contract, money: MoneyView): string {
     )}. ¿Podemos coordinar el pago?`;
   }
 
+  if (contract.health.nextDueIsDownPayment && contract.health.nextDueAmount > 0) {
+    return `${greeting} ${reference} Tiene pendiente ${formatMoney(
+      contract.health.nextDueAmount,
+      money,
+    )} de la prima. ¿Podemos coordinar el pago?`;
+  }
+
   if (contract.health.nextDueOn && contract.health.nextDueAmount > 0) {
     // The regular cuota, with any advance named beside it, the same way the
     // screens show it: "L 7,249.51" would read as a different cuota.

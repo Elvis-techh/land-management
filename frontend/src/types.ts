@@ -309,6 +309,11 @@ export interface ContractHealth {
   nextInstallment: Cents;
   /** Already paid toward the next cuota by earlier payments: an advance. */
   nextDueCredit: Cents;
+  /**
+   * What is owed next is the rest of the prima, not a cuota: the fields above
+   * then describe the prima (`nextDueAmount` is what is left of it).
+   */
+  nextDueIsDownPayment: boolean;
   /** Nothing further is owed. Kept apart from the lifecycle above. */
   settled: boolean;
 }

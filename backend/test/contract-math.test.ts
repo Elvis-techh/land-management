@@ -203,6 +203,26 @@ describe("payment health", () => {
     assert.equal(report.nextDueCreditCents, 0);
   });
 
+  it("asks for the rest of the prima, not cuota 1, while the prima is short", () => {
+    // L 10,000 of the L 25,000 prima paid. The next payment fills the prima
+    // before it reaches any cuota, so that is what is owed next.
+    const report = assessContract(financed, lempiras(10_000), "2026-01-20");
+
+    assert.equal(report.nextDueIsDownPayment, true);
+    assert.equal(report.nextDueOn, financed.signedOn);
+    assert.equal(report.nextDueAmountCents, lempiras(15_000));
+    assert.equal(report.nextInstallmentCents, lempiras(25_000));
+    assert.equal(report.nextDueCreditCents, lempiras(10_000));
+  });
+
+  it("goes back to the cuotas once the prima is complete", () => {
+    const report = assessContract(financed, financed.downPaymentCents, "2026-01-20");
+
+    assert.equal(report.nextDueIsDownPayment, false);
+    assert.equal(report.nextDueOn, "2026-02-05");
+    assert.equal(report.nextDueAmountCents, lempiras(6_700));
+  });
+
   it("does not announce that paying exactly on the due date is paying ahead", () => {
     // The trap the two expectations exist to avoid: on the 6th the March
     // installment is inside its grace, so measuring "ahead" against the graced

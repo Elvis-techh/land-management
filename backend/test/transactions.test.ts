@@ -4,7 +4,7 @@ import { describe, it } from "node:test";
 
 import { eq } from "drizzle-orm";
 
-import { auditEvents, contracts, payments } from "../src/db/schema.js";
+import { auditEvents, contracts, customers, payments } from "../src/db/schema.js";
 import { OWNER_PASSWORD, STAFF_PASSWORD, buildTestApp, login } from "./helpers.js";
 
 const lempiras = (amount: number) => Math.round(amount * 100);
@@ -185,6 +185,87 @@ describe("dividing one amount across a customer's lots", () => {
 
     assert.equal(lines[0]!.amountCents, lempiras(170_000));
     assert.equal(unallocatedCents, lempiras(30_000));
+
+    await app.close();
+  });
+
+  it("asks for the rest of the prima before any cuota, so the prima is shared evenly", async () => {
+    // The case from the site: two lots, L 50,000 of prima each with L 20,000
+    // already paid, and L 60,000 handed over. Cuota 1 (L 45,000) used to be the
+    // floor, which two lots could not both reach, so one took L 45,000 and the
+    // other L 15,000 with a warning. The prima comes first, so each lot needs
+    // L 30,000, and that is exactly what each one gets.
+    const { app, db, ids } = await buildTestApp();
+    const cookie = await login(app, "owner@test.hn", OWNER_PASSWORD);
+    const customerId = randomUUID();
+    const contractIds = [randomUUID(), randomUUID()];
+
+    db.insert(customers)
+      .values({
+        id: customerId,
+        fullName: "Cliente Dos Lotes",
+        identification: "0801-1990-00002",
+        phone: "+50499990001",
+        customerSince: 2026,
+      })
+      .run();
+
+    db.insert(contracts)
+      .values(
+        contractIds.map((id, index) => ({
+          id,
+          code: `CT-PRIMA-00${index + 1}`,
+          lotId: ids.freeLotId,
+          customerId,
+          kind: "contract" as const,
+          status: "active" as const,
+          saleType: "financed" as const,
+          salePriceCents: lempiras(320_000),
+          downPaymentCents: lempiras(50_000),
+          termMonths: 6,
+          monthlyPaymentCents: lempiras(45_000),
+          dueDay: 5,
+          signedOn: "2026-09-01",
+        })),
+      )
+      .run();
+
+    db.insert(payments)
+      .values(
+        contractIds.map((contractId) => ({
+          id: randomUUID(),
+          contractId,
+          amountCents: lempiras(20_000),
+          originalAmountCents: lempiras(20_000),
+          originalCurrency: "HNL",
+          exchangeRate: "1",
+          paidOn: "2026-09-01",
+          method: "cash" as const,
+          type: "down_payment" as const,
+          recordedBy: ids.ownerId,
+        })),
+      )
+      .run();
+
+    const response = await app.inject({
+      method: "GET",
+      url: `/api/customers/${customerId}/split?amountCents=${lempiras(60_000)}`,
+      headers: { cookie },
+    });
+
+    assert.equal(response.statusCode, 200);
+
+    const { lines } = response.json() as {
+      lines: Array<{ amountCents: number; belowMinimum: boolean }>;
+    };
+
+    assert.deepEqual(
+      lines.map((line) => [line.amountCents, line.belowMinimum]),
+      [
+        [lempiras(30_000), false],
+        [lempiras(30_000), false],
+      ],
+    );
 
     await app.close();
   });

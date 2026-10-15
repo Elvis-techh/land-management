@@ -39,6 +39,7 @@ interface ContractsResponse {
         nextDueAmount: number;
         nextInstallment: number;
         nextDueCredit: number;
+        nextDueIsDownPayment: boolean;
         settled: boolean;
       };
     }

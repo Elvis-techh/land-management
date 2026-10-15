@@ -485,7 +485,7 @@ export function NewReceiptDialog({
         const codes = short.map((line) => line.lotCode).join(", ");
 
         notes.push(
-          `El monto no alcanza la cuota completa de ${codes}. Ajusta las líneas a mano o ` +
+          `El monto no alcanza la prima o la cuota completa de ${codes}. Ajusta las líneas a mano o ` +
             (short.length > 1 ? "esos lotes quedarán atrasados." : "ese lote quedará atrasado."),
         );
       }
@@ -1006,7 +1006,12 @@ export function NewReceiptDialog({
                     <span className="cell-money is-balance">
                       {formatMoney(contract.balance, money)}
                     </span>
-                    {contract.health.nextDueOn && (
+                    {contract.health.nextDueOn && contract.health.nextDueIsDownPayment && (
+                      <span className="cell-sub">
+                        prima pendiente {formatMoney(contract.health.nextDueAmount, money)}
+                      </span>
+                    )}
+                    {contract.health.nextDueOn && !contract.health.nextDueIsDownPayment && (
                       <span className="cell-sub">
                         próxima {formatMoney(contract.health.nextInstallment, money)}
                         {contract.health.nextDueCredit > 0 &&
