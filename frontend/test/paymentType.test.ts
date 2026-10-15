@@ -73,49 +73,62 @@ describe("suggestPaymentType", () => {
 });
 
 /*
- * "Pago total" from the amount: only when it clears the balance AND that is
- * more than the next cuota. The last cuota stays a cuota.
+ * "Pago total" by the calendar: the payment clears the balance before the last
+ * cuota's own period begins. In that period, or later, it is the last cuota.
  */
 describe("suggestPaymentTypeFor", () => {
-  /** Prima settled, L 160,000 still owed, the next cuota L 48,334. */
+  /**
+   * A 6-cuota contract due on the 5th, July to December 2026: the last cuota's
+   * period begins the day after 5 November. Prima settled, L 5,000 left.
+   */
   const paying = {
     ...financed,
     downPaymentPaid: 2_500_000,
-    balance: 16_000_000,
-    health: { nextDueAmount: 4_833_400 },
+    balance: 500_000,
+    earlyPayoffThrough: "2026-11-05",
   };
 
-  it("calls it a pago total when the amount pays the lot off early", () => {
-    assert.equal(suggestPaymentTypeFor(paying, 16_000_000), "full_payment");
+  it("calls it a pago total when the balance is cleared before the last cuota's period", () => {
+    // The case from the site: only the rest of the last cuota is left, but in
+    // October, two months before it falls due.
+    assert.equal(suggestPaymentTypeFor(paying, 500_000, "2026-10-15"), "full_payment");
   });
 
-  it("counts an amount over the balance as paying it off too", () => {
-    assert.equal(suggestPaymentTypeFor(paying, 16_500_000), "full_payment");
+  it("still calls it a pago total on the second-to-last due date itself", () => {
+    assert.equal(suggestPaymentTypeFor(paying, 500_000, "2026-11-05"), "full_payment");
   });
 
-  it("keeps a cuota a cuota when the amount does not clear the balance", () => {
-    assert.equal(suggestPaymentTypeFor(paying, 4_833_400), "installment");
-    assert.equal(suggestPaymentTypeFor(paying, 15_999_999), "installment");
+  it("keeps it a cuota once the last cuota's period has begun", () => {
+    assert.equal(suggestPaymentTypeFor(paying, 500_000, "2026-11-06"), "installment");
+    assert.equal(suggestPaymentTypeFor(paying, 500_000, "2026-12-05"), "installment");
   });
 
-  it("keeps the last cuota a cuota even though the balance reaches zero", () => {
-    // The case from the site: L 5,000 left, and that is what the last cuota
-    // still needs.
-    const lastCuota = { ...paying, balance: 500_000, health: { nextDueAmount: 500_000 } };
-
-    assert.equal(paysOffEarly(lastCuota, 500_000), false);
-    assert.equal(suggestPaymentTypeFor(lastCuota, 500_000), "installment");
+  it("keeps it a cuota when the last cuota is paid late", () => {
+    assert.equal(suggestPaymentTypeFor(paying, 500_000, "2027-01-20"), "installment");
   });
 
-  it("calls it a pago total when the whole price is paid while the prima is still owed", () => {
-    const primaOwed = { ...financed, balance: 16_000_000, health: { nextDueAmount: 2_500_000 } };
-
-    assert.equal(suggestPaymentTypeFor(primaOwed, 16_000_000), "full_payment");
-    assert.equal(suggestPaymentTypeFor(primaOwed, 2_500_000), "down_payment");
+  it("counts an amount over the balance as clearing it too", () => {
+    assert.equal(suggestPaymentTypeFor(paying, 900_000, "2026-10-15"), "full_payment");
   });
 
-  it("says nothing about an empty amount", () => {
-    assert.equal(paysOffEarly(paying, 0), false);
+  it("keeps the contract's own type when the amount does not clear the balance", () => {
+    assert.equal(suggestPaymentTypeFor(paying, 499_999, "2026-10-15"), "installment");
+  });
+
+  it("calls it a pago total when the whole price is paid early while the prima is still owed", () => {
+    const primaOwed = { ...financed, balance: 16_000_000, earlyPayoffThrough: "2027-05-05" };
+
+    assert.equal(suggestPaymentTypeFor(primaOwed, 16_000_000, "2026-10-15"), "full_payment");
+    assert.equal(suggestPaymentTypeFor(primaOwed, 2_500_000, "2026-10-15"), "down_payment");
+  });
+
+  it("never calls it early on a contract with fewer than two cuotas", () => {
+    assert.equal(paysOffEarly({ balance: 500_000, earlyPayoffThrough: null }, 500_000, "2026-10-15"), false);
+  });
+
+  it("says nothing about an empty amount or a missing date", () => {
+    assert.equal(paysOffEarly(paying, 0, "2026-10-15"), false);
+    assert.equal(paysOffEarly(paying, 500_000, ""), false);
   });
 });
 

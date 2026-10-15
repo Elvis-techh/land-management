@@ -219,7 +219,7 @@ export function NewReceiptDialog({
 
   /** The suggestion for this lot, now that the amount it receives is known. */
   const suggestedTypeFor = (contract: Contract): PaymentType =>
-    suggestPaymentTypeFor(contract, amountCentsFor(contract));
+    suggestPaymentTypeFor(contract, amountCentsFor(contract), paidOn);
 
   /*
    * This lot is on "Pago total" because the amount pays it off early, not
@@ -227,7 +227,8 @@ export function NewReceiptDialog({
    * the amount never changes without the screen saying why.
    */
   const autoPayoff = (contract: Contract): boolean =>
-    typeByContract[contract.id] === undefined && paysOffEarly(contract, amountCentsFor(contract));
+    typeByContract[contract.id] === undefined &&
+    paysOffEarly(contract, amountCentsFor(contract), paidOn);
 
   /** The lot the top field speaks for, when there is exactly one. */
   const soleLot = payable.length === 1 ? payable[0]! : null;
@@ -376,7 +377,7 @@ export function NewReceiptDialog({
     }
 
     return drafts;
-  }, [payable, isMultiLot, amountByContract, amountText, typeByContract]);
+  }, [payable, isMultiLot, amountByContract, amountText, typeByContract, paidOn]);
 
   const total = lines.reduce((sum, line) => sum + line.amountCents, 0);
 

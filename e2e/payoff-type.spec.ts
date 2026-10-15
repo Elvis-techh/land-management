@@ -30,6 +30,18 @@ test("paying off the whole balance early is filed as a pago total", async ({ pag
   await expect(type).not.toHaveValue("full_payment");
   await expect(hint).toHaveCount(0);
 
+  // The whole balance again, but dated in the last cuota's own period (José's
+  // 23rd cuota falls due 5 December 2027): that is the last cuota, not a
+  // payoff. Back to today's date and it is early again.
+  const date = dialog.getByLabel("Fecha del pago *");
+  const today = await date.inputValue();
+  await dialog.getByLabel("Monto *").fill(balance);
+  await date.fill("2027-12-20");
+  await expect(type).not.toHaveValue("full_payment");
+  await expect(hint).toHaveCount(0);
+  await date.fill(today);
+  await expect(type).toHaveValue("full_payment");
+
   // Picked by hand, it stays put even when the amount would pay the lot off.
   await type.selectOption("adjustment");
   await dialog.getByLabel("Monto *").fill(balance);
