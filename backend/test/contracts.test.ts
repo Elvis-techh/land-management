@@ -303,7 +303,9 @@ describe("a purchase of several lots", async () => {
 
     const response = await app.inject({
       method: "GET",
-      url: `/api/contracts/groups/${groupId}/split?amountCents=${lempiras(25_000)}`,
+      // Enough to cover every lot's L 10,000 prima, which is owed before any
+      // cuota; below that the split favours finishing whole primas instead.
+      url: `/api/contracts/groups/${groupId}/split?amountCents=${lempiras(40_000)}`,
       headers: { cookie: ownerCookie },
     });
 
@@ -313,7 +315,7 @@ describe("a purchase of several lots", async () => {
     assert.equal(body.unallocatedCents, 0);
     assert.deepEqual(
       body.lines.map((line: { amountCents: number }) => line.amountCents).sort((a: number, b: number) => a - b),
-      [lempiras(8_333.33), lempiras(8_333.33), lempiras(8_333.34)],
+      [lempiras(13_333.33), lempiras(13_333.33), lempiras(13_333.34)],
     );
     // Every line says what the lot will owe afterwards, so the split can be
     // checked before any money is recorded.

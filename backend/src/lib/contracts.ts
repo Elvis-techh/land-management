@@ -372,6 +372,15 @@ export interface HealthReport {
    * L 0.49 already paid.
    */
   nextDueCreditCents: number;
+  /**
+   * The next thing owed is what is left of the prima, not a cuota. Until the
+   * prima is complete every payment goes to it first (the schedule walk in
+   * `outstandingInstallments` deducts it before cuota 1), so asking for cuota 1
+   * then would ask for money the next payment cannot reach. The fields above
+   * then describe the prima: due on the signing date, `nextInstallmentCents` the
+   * whole prima, `nextDueCreditCents` what was already paid of it.
+   */
+  nextDueIsDownPayment: boolean;
   /** Nothing further is owed. Kept apart from the contract's own lifecycle. */
   settled: boolean;
 }
@@ -410,12 +419,17 @@ export function assessContract(
     monthly > 0 ? Math.ceil(arrearsCents / monthly) : arrearsCents > 0 ? 1 : 0;
   const monthsAhead = monthly > 0 ? Math.floor(aheadCents / monthly) : 0;
 
-  const upcoming = outstandingInstallments(terms, paidToDateCents)[0];
+  const primaOwed = !settled && paidToDateCents < terms.downPaymentCents;
+  const upcoming: ScheduledInstallment | undefined = primaOwed
+    ? { number: 0, dueOn: terms.signedOn, amountCents: terms.downPaymentCents - paidToDateCents }
+    : outstandingInstallments(terms, paidToDateCents)[0];
   const upcomingInFull =
     upcoming === undefined
       ? 0
-      : (schedule.find((installment) => installment.number === upcoming.number)
-          ?.amountCents ?? upcoming.amountCents);
+      : primaOwed
+        ? terms.downPaymentCents
+        : (schedule.find((installment) => installment.number === upcoming.number)
+            ?.amountCents ?? upcoming.amountCents);
 
   let status: PaymentHealth = "current";
 
@@ -441,6 +455,7 @@ export function assessContract(
     nextDueAmountCents: settled ? 0 : (upcoming?.amountCents ?? 0),
     nextInstallmentCents: settled ? 0 : upcomingInFull,
     nextDueCreditCents: settled || upcoming === undefined ? 0 : upcomingInFull - upcoming.amountCents,
+    nextDueIsDownPayment: primaOwed,
     settled,
   };
 }

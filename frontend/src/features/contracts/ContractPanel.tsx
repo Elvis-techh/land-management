@@ -341,11 +341,18 @@ export function ContractPanel({
               whatever its schedule would still say. */}
           {isOpen && (
             <div className="cp-row">
-              <span>Próxima cuota</span>
+              <span>
+                {contract.health.nextDueIsDownPayment ? "Prima pendiente" : "Próxima cuota"}
+              </span>
               <span>
                 {contract.health.nextDueOn === null
                   ? "No queda nada por pagar"
-                  : `${formatDate(contract.health.nextDueOn)} · ${formatMoney(
+                  : contract.health.nextDueIsDownPayment
+                    ? `${formatMoney(contract.health.nextDueAmount, money)} de ${formatMoney(
+                        contract.health.nextInstallment,
+                        money,
+                      )}`
+                    : `${formatDate(contract.health.nextDueOn)} · ${formatMoney(
                       contract.health.nextInstallment,
                       money,
                     )}${

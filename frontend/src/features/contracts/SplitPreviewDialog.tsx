@@ -178,7 +178,7 @@ export function SplitPreviewDialog({ contracts, money, onClose }: SplitPreviewDi
 
             return (
               <p className="form-blocked">
-                El monto no alcanza la cuota completa de {codes}.{" "}
+                El monto no alcanza la prima o la cuota completa de {codes}.{" "}
                 {short.length > 1 ? "Esos lotes quedarán atrasados" : "Ese lote quedará atrasado"}{" "}
                 si se registra así.
               </p>
