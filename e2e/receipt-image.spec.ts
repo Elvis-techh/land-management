@@ -29,7 +29,7 @@ test("the receipt image includes the logo", async ({ page }) => {
   await dialog.getByRole("button", { name: "Registrar y emitir recibo" }).click();
   await expect(dialog).toHaveCount(0);
 
-  await page.locator(".txn-main").filter({ hasNotText: "sin recibo" }).first().click();
+  // Saving opens the receipt it issued, so there is no row to tap first.
 
   const ver = page.getByRole("button", { name: "Ver", exact: true });
   await expect(ver).toBeEnabled({ timeout: 15_000 });

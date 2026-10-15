@@ -182,6 +182,10 @@ export default function App() {
   const [customerBeingDeleted, setCustomerBeingDeleted] = useState<CustomerRecord | null>(null);
   const [isCreatingContract, setCreatingContract] = useState(false);
   const [isCreatingReceipt, setCreatingReceipt] = useState(false);
+  /* The receipt «Registrar un pago» just issued, waiting for Recibos to open
+     it. Cleared once taken, so later visits to Recibos start as they were. */
+  const [issuedReceiptId, setIssuedReceiptId] = useState<string | null>(null);
+  const clearIssuedReceipt = useCallback(() => setIssuedReceiptId(null), []);
 
   /* Comprobantes handed to the receipt form from outside it — shared in from
      WhatsApp, or dropped anywhere on the window — waiting for it to open with
@@ -1243,6 +1247,8 @@ export default function App() {
                 void reloadCustomers();
                 void reloadLots();
               }}
+              openReceiptId={issuedReceiptId}
+              onReceiptOpened={clearIssuedReceipt}
             />
           )}
 
@@ -1319,10 +1325,13 @@ export default function App() {
             setIntakeFiles(null);
             setIntakeNotice(null);
           }}
-          onIssued={() => {
+          onIssued={(receipt) => {
             setCreatingReceipt(false);
             setIntakeFiles(null);
             setIntakeNotice(null);
+            // Straight to the receipt just issued, to check, print or send it.
+            setIssuedReceiptId(receipt.id);
+            setActiveTab("receipts");
             // Everything that counts money has to be re-read, not just the
             // receipts: a payment moves the contract's balance, the lot's
             // paid-to-date and the customer's totals, all of which are
