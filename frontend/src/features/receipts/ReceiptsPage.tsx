@@ -78,6 +78,14 @@ interface ReceiptsPageProps {
    * re-derive — the same set a void refreshes, for the same reason.
    */
   onLedgerChanged: () => void;
+  /**
+   * A receipt to open as soon as this screen can: the one just issued from
+   * «Registrar un pago», so it can be checked, printed or sent straight away.
+   * Handed over once; `onReceiptOpened` tells the parent it was taken, so
+   * coming back to Recibos later does not reopen it.
+   */
+  openReceiptId?: string | null;
+  onReceiptOpened?: () => void;
 }
 
 /** "15 mar 2026" — compact, for a list rather than a document. */
@@ -512,6 +520,8 @@ export function ReceiptsPage({
   onEditTransaction,
   onProofsChanged,
   onLedgerChanged,
+  openReceiptId = null,
+  onReceiptOpened,
 }: ReceiptsPageProps) {
   const [view, setView] = useRememberedState<TransactionView>("receipts.view", "date");
   const [search, setSearch] = useRememberedState("receipts.search", "");
@@ -575,6 +585,14 @@ export function ReceiptsPage({
   } | null>(null);
   const [detail, setDetail] = useState<Receipt | null>(null);
   const [isLoadingDetail, setLoadingDetail] = useState(false);
+
+  // The receipt just issued: open it the way a tap on its row would.
+  useEffect(() => {
+    if (openReceiptId !== null) {
+      setSelectedReceiptId(openReceiptId);
+      onReceiptOpened?.();
+    }
+  }, [openReceiptId, onReceiptOpened, setSelectedReceiptId]);
 
   /*
    * Whatever is being looked at, and where it came from.
