@@ -1,9 +1,16 @@
 import { ApiError, api } from "../../lib/api";
 import type { ViewerFile } from "../../components/DocumentViewer";
 import { CLIENT_ID } from "../../lib/liveUpdates";
+import type { Cents } from "../../lib/money";
 import { cents } from "../../lib/money";
 import type { PaymentType } from "./paymentType";
-import type { Receipt, ReceiptAttachment, ReceiptLine, Transaction } from "../../types";
+import type {
+  AppliedInstallment,
+  Receipt,
+  ReceiptAttachment,
+  ReceiptLine,
+  Transaction,
+} from "../../types";
 
 /**
  * Exactly what the receipts endpoints send back. Money arrives as whole
@@ -441,4 +448,55 @@ export async function fetchDuplicates(query: {
   );
 
   return response.matches;
+}
+
+/** What a payment would do to one lot, before it is recorded. Money in centavos. */
+export interface AfterPayment {
+  appliedTo: AppliedInstallment[];
+  installmentCount: number;
+  newBalance: Cents;
+  settled: boolean;
+  nextDueAmount: Cents;
+  nextInstallment: Cents;
+  nextDueCredit: Cents;
+  nextDueIsDownPayment: boolean;
+}
+
+/**
+ * The outcome of paying `amountCents` on this contract: the cuotas it covers
+ * and what is owed after. Computed by the same server code that writes the
+ * receipt, so the preview and the receipt agree. Nothing is recorded.
+ */
+export async function fetchAfterPayment(contractId: string, amountCents: number): Promise<AfterPayment> {
+  const raw = await api.get<{
+    appliedTo: Array<{
+      number: number;
+      dueOn: string;
+      applied: number;
+      settled: boolean;
+      installment: number;
+      remaining: number;
+    }>;
+    installmentCount: number;
+    newBalance: number;
+    settled: boolean;
+    nextDueAmount: number;
+    nextInstallment: number;
+    nextDueCredit: number;
+    nextDueIsDownPayment: boolean;
+  }>(`/api/contracts/${contractId}/after-payment?amountCents=${amountCents}`);
+
+  return {
+    ...raw,
+    appliedTo: raw.appliedTo.map((entry) => ({
+      ...entry,
+      applied: cents(entry.applied),
+      installment: cents(entry.installment),
+      remaining: cents(entry.remaining),
+    })),
+    newBalance: cents(raw.newBalance),
+    nextDueAmount: cents(raw.nextDueAmount),
+    nextInstallment: cents(raw.nextInstallment),
+    nextDueCredit: cents(raw.nextDueCredit),
+  };
 }

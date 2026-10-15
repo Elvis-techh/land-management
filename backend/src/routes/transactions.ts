@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { FastifyPluginAsync } from "fastify";
 import { alias } from "drizzle-orm/sqlite-core";
 import { z } from "zod";
@@ -10,7 +10,7 @@ import type { AllocationTarget } from "../lib/allocation.js";
 import { attachmentsForPayment, attachmentsForReceipts } from "../lib/storedFiles.js";
 import { recordAudit } from "../lib/audit.js";
 import { dataVersion } from "../lib/changes.js";
-import { assessContract } from "../lib/contracts.js";
+import { appliedInstallments, assessContract, buildSchedule } from "../lib/contracts.js";
 import type { ContractTerms, SaleType } from "../lib/contracts.js";
 import { syncContractLifecycle } from "../lib/contractLifecycle.js";
 import { roleCan } from "../lib/capabilities.js";
@@ -335,6 +335,96 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
           // leaving somebody to wonder where their third lot went.
           .sort((a, b) => a.lotCode.localeCompare(b.lotCode, "es")),
         unallocatedCents: result.unallocatedCents,
+      };
+    },
+  );
+
+  /**
+   * What a payment of `amountCents` would do to one contract, before it is
+   * recorded: the cuotas it would cover, the balance left, and what would be
+   * owed next.
+   *
+   * Feeds the "después de este pago" line under each lot in «Registrar un
+   * pago», so the person at the window sees the outcome while typing the
+   * amount. It runs the same functions the receipt is written with
+   * (`appliedInstallments`, `assessContract`), so the line and the receipt
+   * cannot disagree. Nothing is written.
+   *
+   * Counted from everything paid so far. A payment dated before later ones is
+   * placed in its own spot when it is saved; this preview does not reorder.
+   */
+  app.get<{ Params: { id: string }; Querystring: { amountCents?: string } }>(
+    "/contracts/:id/after-payment",
+    { onRequest: app.requireUser },
+    async (request, reply) => {
+      const amountCents = Number(request.query.amountCents);
+
+      if (!Number.isInteger(amountCents) || amountCents <= 0) {
+        return reply.code(400).send({
+          error: "invalid_amount",
+          message: "Indica el monto, en centavos.",
+        });
+      }
+
+      const contract = app.db
+        .select({
+          saleType: contracts.saleType,
+          salePriceCents: contracts.salePriceCents,
+          downPaymentCents: contracts.downPaymentCents,
+          termMonths: contracts.termMonths,
+          monthlyPaymentCents: contracts.monthlyPaymentCents,
+          dueDay: contracts.dueDay,
+          signedOn: contracts.signedOn,
+          firstDueOn: contracts.firstDueOn,
+          createdAt: contracts.createdAt,
+        })
+        .from(contracts)
+        .where(eq(contracts.id, request.params.id))
+        .get();
+
+      if (!contract) {
+        return reply.code(404).send({ error: "not_found", message: "Ese contrato no existe." });
+      }
+
+      // A query of its own rather than a subquery in the select above: with a
+      // single table there, the column names are left unqualified, and
+      // "contracts.id" inside the subquery would quietly read payments.id.
+      const paid = app.db
+        .select({ total: sql<number>`COALESCE(SUM(${payments.amountCents}), 0)` })
+        .from(payments)
+        .where(and(eq(payments.contractId, request.params.id), isNull(payments.reversedAt)))
+        .get();
+
+      const terms: ContractTerms = {
+        saleType: contract.saleType as SaleType,
+        salePriceCents: contract.salePriceCents,
+        downPaymentCents: contract.downPaymentCents,
+        termMonths: contract.termMonths,
+        monthlyPaymentCents: contract.monthlyPaymentCents,
+        dueDay: contract.dueDay,
+        signedOn: contract.signedOn ?? contract.createdAt.slice(0, 10),
+        firstDueOn: contract.firstDueOn,
+      };
+      const before = paid?.total ?? 0;
+      const after = before + amountCents;
+      const health = assessContract(terms, after, today());
+
+      return {
+        appliedTo: appliedInstallments(terms, before, after).map((installment) => ({
+          number: installment.number,
+          dueOn: installment.dueOn,
+          applied: installment.appliedCents,
+          settled: installment.settled,
+          installment: installment.installmentCents,
+          remaining: installment.remainingCents,
+        })),
+        installmentCount: buildSchedule(terms).length,
+        newBalance: Math.max(0, terms.salePriceCents - after),
+        settled: health.settled,
+        nextDueAmount: health.nextDueAmountCents,
+        nextInstallment: health.nextInstallmentCents,
+        nextDueCredit: health.nextDueCreditCents,
+        nextDueIsDownPayment: health.nextDueIsDownPayment,
       };
     },
   );
