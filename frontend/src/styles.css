@@ -5229,6 +5229,16 @@ body.modal-open {
     /* The gesture bar overlaps the bottom of the screen on phones like the S24.
        `env()` is 0 where there is no such inset, so this costs nothing. */
     padding: 14px 18px calc(14px + env(safe-area-inset-bottom, 0px));
+    flex-wrap: wrap;
+  }
+
+  /* On a phone the note takes its own line above the buttons. Beside them it
+     squeezed all three: "Escribe el motivo del cambio…" stacked five lines
+     deep and «Guardar corrección» lost its last letters. */
+  .modal-actions-hint {
+    flex: 1 0 100%;
+    max-width: none;
+    margin: 0 0 2px;
   }
 }
 
