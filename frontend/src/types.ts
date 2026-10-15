@@ -368,6 +368,12 @@ export interface Contract {
   health: ContractHealth;
   /** How many installments the schedule works out to. */
   installmentCount: number;
+  /**
+   * YYYY-MM-DD, the second-to-last cuota's due date. Clearing the balance on
+   * or before it pays the contract off early («Pago total»); after it, it is
+   * the last cuota. `null` with fewer than two cuotas.
+   */
+  earlyPayoffThrough: string | null;
   closedAt: string | null;
   closedReason: string | null;
   /**

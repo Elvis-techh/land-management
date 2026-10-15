@@ -3,7 +3,13 @@ import { describe, it } from "node:test";
 
 import { splitEvenly } from "../src/lib/allocation.js";
 import type { ContractTerms, ScheduledInstallment } from "../src/lib/contracts.js";
-import { addMonthsOnDay, assessContract, buildSchedule, firstDueDate } from "../src/lib/contracts.js";
+import {
+  addMonthsOnDay,
+  assessContract,
+  buildSchedule,
+  earlyPayoffThrough,
+  firstDueDate,
+} from "../src/lib/contracts.js";
 
 /** L 1 = 100 centavos, as everywhere else in the app. */
 const lempiras = (amount: number) => Math.round(amount * 100);
@@ -102,6 +108,21 @@ describe("the schedule", () => {
       schedule[0]!.amountCents = 0;
     });
     assert.equal(buildSchedule(financed)[0]!.amountCents, lempiras(6_700));
+  });
+});
+
+describe("paying off early", () => {
+  it("runs through the second-to-last cuota's due date", () => {
+    // 24 cuotas from 5 February 2026: the 23rd is due 5 December 2027.
+    assert.equal(earlyPayoffThrough(financed), "2027-12-05");
+  });
+
+  it("does not exist on a contract with a single cuota or none", () => {
+    assert.equal(earlyPayoffThrough({ ...financed, termMonths: 1 }), null);
+    assert.equal(
+      earlyPayoffThrough({ ...financed, saleType: "cash", downPaymentCents: 0, termMonths: null, monthlyPaymentCents: null }),
+      null,
+    );
   });
 });
 

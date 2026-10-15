@@ -93,30 +93,44 @@ export function suggestPaymentType(contract: TypeableContract): PaymentType {
   return "installment";
 }
 
-/** Just enough of a lot to tell a payoff from its last cuota. Both in centavos. */
+/** Just enough of a lot to tell a payoff from its last cuota. */
 export interface PayableLot {
-  /** What the lot still owes in all. */
+  /** What the lot still owes in all, in centavos. */
   balance: number;
-  /** What its next cuota (or the rest of its prima) still needs. */
-  health: { nextDueAmount: number };
+  /**
+   * YYYY-MM-DD, the second-to-last cuota's due date: the last day on which
+   * clearing the balance is early. `null` with fewer than two cuotas.
+   */
+  earlyPayoffThrough: string | null;
 }
 
 /**
- * Does this amount pay the lot off ahead of its schedule?
+ * Does this payment pay the lot off ahead of its schedule?
  *
- * It must clear the whole balance, AND the balance must be more than what is
- * due right now. The second half is what keeps the last cuota a cuota: when
- * all that is left is the final installment, paying it is paying a cuota like
- * any other, even though the balance reaches zero. Only clearing cuotas that
- * were not yet due is a pago total.
+ * By the CALENDAR, not by how much is left. It must clear the whole balance,
+ * on a date before the last cuota's own period begins (the period begins the
+ * day after the second-to-last cuota falls due). Paying off then settles cuotas
+ * the contract has not reached yet: a pago total.
+ *
+ * In the last cuota's period, or after it, finishing the contract is paying
+ * the last cuota, on time or late, and stays a cuota. Amounts alone could not
+ * tell these apart: a customer who has paid ahead can owe only "the rest of
+ * the last cuota" months before it is due.
  */
-export function paysOffEarly(lot: PayableLot, amountCents: number): boolean {
-  return amountCents > 0 && amountCents >= lot.balance && lot.balance > lot.health.nextDueAmount;
+export function paysOffEarly(lot: PayableLot, amountCents: number, paidOn: string): boolean {
+  return (
+    amountCents > 0 &&
+    amountCents >= lot.balance &&
+    lot.earlyPayoffThrough !== null &&
+    paidOn !== "" &&
+    paidOn <= lot.earlyPayoffThrough
+  );
 }
 
 /**
- * The type to suggest once the amount is known: "Pago total" when it pays the
- * lot off early, otherwise what the contract alone suggests.
+ * The type to suggest once the amount and the date are known: "Pago total"
+ * when the payment pays the lot off early, otherwise what the contract alone
+ * suggests.
  *
  * The one exception to "not from the amount" above, and a narrow one: it
  * changes only at the single point where the amount clears the balance, the
@@ -126,8 +140,9 @@ export function paysOffEarly(lot: PayableLot, amountCents: number): boolean {
 export function suggestPaymentTypeFor(
   contract: TypeableContract & PayableLot,
   amountCents: number,
+  paidOn: string,
 ): PaymentType {
-  return paysOffEarly(contract, amountCents) ? "full_payment" : suggestPaymentType(contract);
+  return paysOffEarly(contract, amountCents, paidOn) ? "full_payment" : suggestPaymentType(contract);
 }
 
 /**

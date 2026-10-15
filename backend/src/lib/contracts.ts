@@ -304,6 +304,21 @@ function expectedByCents(
 }
 
 /**
+ * The last day on which clearing the whole balance counts as paying the
+ * contract off EARLY: the due date of the second-to-last cuota.
+ *
+ * After it, the last cuota's own period has begun, so finishing the contract
+ * then is paying the last cuota, on time or late, and stays a cuota. On or
+ * before it, the payment settles cuotas the calendar has not reached yet: a
+ * pago total. `null` with fewer than two cuotas (or no schedule at all), where
+ * there is no "before the last cuota" to speak of.
+ */
+export function earlyPayoffThrough(terms: ContractTerms): string | null {
+  const schedule = buildSchedule(terms);
+  return schedule.length >= 2 ? schedule[schedule.length - 2]!.dueOn : null;
+}
+
+/**
  * The installments this contract still owes money on, in due-date order.
  *
  * The FIRST entry carries only what is left of it, so a part-paid installment

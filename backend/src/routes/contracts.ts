@@ -33,6 +33,7 @@ import type { ContractTerms, SaleType } from "../lib/contracts.js";
 import {
   assessContract,
   buildSchedule,
+  earlyPayoffThrough,
   financedCents,
   firstDueDate,
   isReservationExpired,
@@ -381,6 +382,8 @@ function present(
       settled: health.settled,
     },
     installmentCount: buildSchedule(terms).length,
+    /** See `earlyPayoffThrough`: how the payment form tells «Pago total» from the last cuota. */
+    earlyPayoffThrough: earlyPayoffThrough(terms),
     /**
      * How many files of signed paperwork this contract has.
      *
