@@ -2278,17 +2278,20 @@ body.is-dragging-file .proof-dropzone:not(.is-disabled) {
  * arrow are taken out of it — so the option that is selected by default came
  * out shaved, on a dialog with room to spare either side of the row.
  *
- * `flex: 0 1 auto` is the whole point: an auto basis takes the width the text
- * needs, and a shrink factor of 1 hands some of it back when the row genuinely
- * runs out — a phone, not the wide dialog this normally lives in. The floor
- * keeps it a usable target when that happens, the ceiling keeps an unusually
- * long lot code from crowding out the filename beside it, and the ellipsis
- * makes the shrunk state read as shortened rather than broken.
+ * It does not shrink either: the options are "Todo el recibo" and short lot
+ * codes, so its natural width is small, and the filename beside it is what
+ * gives way on a phone (it already ends in an ellipsis). A picker cut down to
+ * "Todo el r…" says nothing about which lot the slip is for.
+ *
+ * Scoped to `.proof-item` on purpose. «Registrar un pago» puts this list inside
+ * a `.form-field`, and `.form-field select` (width 100%, 42px tall, 10px 12px
+ * of padding) outranks a single class — so the picker filled the row, the
+ * filename vanished and the size was squeezed under it.
  */
-.proof-lot {
-  flex: 0 1 auto;
-  min-width: 5rem;
-  max-width: 13rem;
+.proof-item .proof-lot {
+  flex: 0 0 auto;
+  width: auto;
+  min-height: 0;
   padding: 4px 6px;
   border: 1px solid var(--line);
   border-radius: 6px;
