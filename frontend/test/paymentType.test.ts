@@ -5,8 +5,10 @@ import {
   PAYMENT_TYPE_OPTIONS,
   outstandingDownPayment,
   paymentTypeLabel,
+  paysOffEarly,
   sharedPaymentType,
   suggestPaymentType,
+  suggestPaymentTypeFor,
 } from "../src/features/receipts/paymentType";
 
 /*
@@ -67,6 +69,53 @@ describe("suggestPaymentType", () => {
 
   it("puts the prima ahead of the sale type when one was agreed and is unpaid", () => {
     assert.equal(suggestPaymentType({ ...financed, saleType: "cash" }), "down_payment");
+  });
+});
+
+/*
+ * "Pago total" from the amount: only when it clears the balance AND that is
+ * more than the next cuota. The last cuota stays a cuota.
+ */
+describe("suggestPaymentTypeFor", () => {
+  /** Prima settled, L 160,000 still owed, the next cuota L 48,334. */
+  const paying = {
+    ...financed,
+    downPaymentPaid: 2_500_000,
+    balance: 16_000_000,
+    health: { nextDueAmount: 4_833_400 },
+  };
+
+  it("calls it a pago total when the amount pays the lot off early", () => {
+    assert.equal(suggestPaymentTypeFor(paying, 16_000_000), "full_payment");
+  });
+
+  it("counts an amount over the balance as paying it off too", () => {
+    assert.equal(suggestPaymentTypeFor(paying, 16_500_000), "full_payment");
+  });
+
+  it("keeps a cuota a cuota when the amount does not clear the balance", () => {
+    assert.equal(suggestPaymentTypeFor(paying, 4_833_400), "installment");
+    assert.equal(suggestPaymentTypeFor(paying, 15_999_999), "installment");
+  });
+
+  it("keeps the last cuota a cuota even though the balance reaches zero", () => {
+    // The case from the site: L 5,000 left, and that is what the last cuota
+    // still needs.
+    const lastCuota = { ...paying, balance: 500_000, health: { nextDueAmount: 500_000 } };
+
+    assert.equal(paysOffEarly(lastCuota, 500_000), false);
+    assert.equal(suggestPaymentTypeFor(lastCuota, 500_000), "installment");
+  });
+
+  it("calls it a pago total when the whole price is paid while the prima is still owed", () => {
+    const primaOwed = { ...financed, balance: 16_000_000, health: { nextDueAmount: 2_500_000 } };
+
+    assert.equal(suggestPaymentTypeFor(primaOwed, 16_000_000), "full_payment");
+    assert.equal(suggestPaymentTypeFor(primaOwed, 2_500_000), "down_payment");
+  });
+
+  it("says nothing about an empty amount", () => {
+    assert.equal(paysOffEarly(paying, 0), false);
   });
 });
 
