@@ -62,6 +62,8 @@ through fixes this way, and explain each step briefly the first time:
 6. **Mark good versions with a release**, not a branch: once the owner has
    checked the site, suggest a GitHub release on `main` named by date, e.g.
    `v2026.10.09`. Releases are the "known-good" points to come back to.
+   Make it with the **Release** workflow (`.github/workflows/release.yml`, on
+   `main`, optional `title`); it picks the date name and refuses a red `main`.
 
 Branches are deleted after merge (the repository deletes them automatically
 once that setting is on), so the branch list stays `main` and `deploy-build`.

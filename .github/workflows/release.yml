@@ -1,0 +1,70 @@
+# Mark the current main as a known-good version with a GitHub release, named
+# by date (v2026.10.15, or v2026.10.15.2 for a second one that day). Run it by
+# hand (Actions → Release → Run workflow), or by Claude through the GitHub API,
+# once the owner has checked the site after a deploy.
+#
+# It refuses to release a commit whose Tests check is not green. The notes list
+# the pull requests merged since the previous release.
+
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      title:
+        description: "Short description shown next to the version (optional), e.g. 'P3-1 fix, checked live'"
+        type: string
+        default: ""
+
+# Two releases at once could pick the same name.
+concurrency: release
+
+permissions:
+  contents: write # to create the tag and the release
+  actions: read # to check the Tests run on main
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Tests passed on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          SHA=$(git rev-parse HEAD)
+          RESULT=$(gh api "repos/${{ github.repository }}/actions/workflows/tests.yml/runs?head_sha=$SHA&status=completed" \
+            --jq '.workflow_runs[0].conclusion // "none"')
+          if [ "$RESULT" != "success" ]; then
+            echo "::error::The Tests check on main ($SHA) is '$RESULT', not 'success'. Fix main before releasing it."
+            exit 1
+          fi
+
+      - name: Pick the version name
+        id: name
+        run: |
+          BASE="v$(date -u +%Y.%m.%d)"
+          TAG="$BASE"
+          N=2
+          while git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; do
+            TAG="$BASE.$N"
+            N=$((N + 1))
+          done
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.name.outputs.tag }}
+          TITLE: ${{ inputs.title }}
+        run: |
+          NAME="$TAG"
+          if [ -n "$TITLE" ]; then NAME="$TAG — $TITLE"; fi
+          gh release create "$TAG" --target "$(git rev-parse HEAD)" --title "$NAME" --generate-notes
+          echo "Released $NAME: ${{ github.server_url }}/${{ github.repository }}/releases/tag/$TAG" >> "$GITHUB_STEP_SUMMARY"
