@@ -21,8 +21,15 @@ import {
 } from "./paymentType";
 import type { PendingProof, ProofLot } from "./ProofDropzone";
 import { MAX_PROOFS, ProofDropzone, acceptProofFiles } from "./ProofDropzone";
-import type { ReceiptDraft, ReceiptDraftLine } from "./api";
-import { createReceipt, fetchCustomerSplit, fetchDuplicates, uploadAttachment } from "./api";
+import type { AfterPayment, ReceiptDraft, ReceiptDraftLine } from "./api";
+import {
+  createReceipt,
+  fetchAfterPayment,
+  fetchCustomerSplit,
+  fetchDuplicates,
+  uploadAttachment,
+} from "./api";
+import { afterPaymentLabel } from "./afterPaymentLabel";
 import type { DuplicateMatch } from "./api";
 import { AMOUNT_FIELD, CUSTOMER_FIELD, receiptBlocker } from "./receiptBlocker";
 
@@ -380,6 +387,50 @@ export function NewReceiptDialog({
   }, [payable, isMultiLot, amountByContract, amountText, typeByContract, paidOn]);
 
   const total = lines.reduce((sum, line) => sum + line.amountCents, 0);
+
+  /*
+   * What each lot's amount would do, asked of the server a moment after the
+   * typing stops: the "después de este pago" line under the lot. Kept with the
+   * amount it was asked for, so a stale answer for an amount since changed is
+   * never shown against the new one.
+   */
+  const [afterByContract, setAfterByContract] = useState<
+    Record<string, { amountCents: number; after: AfterPayment }>
+  >({});
+
+  useEffect(() => {
+    if (lines.length === 0) {
+      return;
+    }
+
+    let current = true;
+    const timer = window.setTimeout(() => {
+      for (const line of lines) {
+        fetchAfterPayment(line.contractId, line.amountCents)
+          .then((after) => {
+            if (current) {
+              setAfterByContract((known) => ({
+                ...known,
+                [line.contractId]: { amountCents: line.amountCents, after },
+              }));
+            }
+          })
+          // A preview that fails says nothing; the payment itself is unaffected.
+          .catch(() => undefined);
+      }
+    }, 350);
+
+    return () => {
+      current = false;
+      window.clearTimeout(timer);
+    };
+  }, [lines]);
+
+  /** The preview for this lot, only while it still matches what is typed. */
+  const afterFor = (contract: Contract): AfterPayment | null => {
+    const known = afterByContract[contract.id];
+    return known !== undefined && known.amountCents === amountCentsFor(contract) ? known.after : null;
+  };
 
   /**
    * Saldo actual − Monto, across the lots this receipt actually puts money on.
@@ -1044,6 +1095,11 @@ export function NewReceiptDialog({
                         próxima {formatMoney(contract.health.nextInstallment, money)}
                         {contract.health.nextDueCredit > 0 &&
                           ` · adelanto ${formatMoney(contract.health.nextDueCredit, money)}`}
+                      </span>
+                    )}
+                    {afterFor(contract) && (
+                      <span className="cell-sub after-payment">
+                        después: {afterPaymentLabel(afterFor(contract)!, money)}
                       </span>
                     )}
                   </td>

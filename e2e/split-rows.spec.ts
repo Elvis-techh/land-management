@@ -21,6 +21,9 @@ test("each lot shows its balance whole, with the amount and type below it", asyn
 
   const rows = dialog.locator(".split-table tbody tr");
   await expect(rows).toHaveCount(3);
+  // Each lot's "después:" line arrives a moment after the split and adds a line
+  // to the row; measure once it is there, not while the row is still growing.
+  await expect(dialog.locator(".after-payment")).toHaveCount(3);
 
   for (const row of await rows.all()) {
     const amount = row.locator(".col-receive input");

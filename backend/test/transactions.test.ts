@@ -288,6 +288,112 @@ describe("dividing one amount across a customer's lots", () => {
   });
 });
 
+describe("what a payment would do, before it is recorded", () => {
+  /** A financed lot: L 320,000, L 50,000 prima (paid), 6 cuotas of L 45,000. */
+  async function setUp() {
+    const { app, db, ids } = await buildTestApp();
+    const cookie = await login(app, "owner@test.hn", OWNER_PASSWORD);
+    const contractId = randomUUID();
+
+    db.insert(contracts)
+      .values({
+        id: contractId,
+        code: "CT-AFTER-001",
+        lotId: ids.freeLotId,
+        customerId: ids.customerId,
+        kind: "contract",
+        status: "active",
+        saleType: "financed",
+        salePriceCents: lempiras(320_000),
+        downPaymentCents: lempiras(50_000),
+        termMonths: 6,
+        monthlyPaymentCents: lempiras(45_000),
+        dueDay: 5,
+        signedOn: "2026-09-01",
+      })
+      .run();
+
+    db.insert(payments)
+      .values({
+        id: randomUUID(),
+        contractId,
+        amountCents: lempiras(50_000),
+        originalAmountCents: lempiras(50_000),
+        originalCurrency: "HNL",
+        exchangeRate: "1",
+        paidOn: "2026-09-01",
+        method: "cash",
+        type: "down_payment",
+        recordedBy: ids.ownerId,
+      })
+      .run();
+
+    const preview = (amount: number | string) =>
+      app.inject({
+        method: "GET",
+        url: `/api/contracts/${contractId}/after-payment?amountCents=${amount}`,
+        headers: { cookie },
+      });
+
+    return { app, preview };
+  }
+
+  it("names the cuota a full cuota completes, and the next one", async () => {
+    const { app, preview } = await setUp();
+    const body = (await preview(lempiras(45_000))).json();
+
+    assert.deepEqual(
+      body.appliedTo.map((entry: { number: number; settled: boolean }) => [entry.number, entry.settled]),
+      [[1, true]],
+    );
+    assert.equal(body.installmentCount, 6);
+    assert.equal(body.newBalance, lempiras(225_000));
+    assert.equal(body.settled, false);
+    assert.equal(body.nextInstallment, lempiras(45_000));
+    assert.equal(body.nextDueCredit, 0);
+
+    await app.close();
+  });
+
+  it("carries what is left over into the next cuota as an advance", async () => {
+    const { app, preview } = await setUp();
+    const body = (await preview(lempiras(60_000))).json();
+
+    assert.equal(body.newBalance, lempiras(210_000));
+    assert.equal(body.nextDueAmount, lempiras(30_000));
+    assert.equal(body.nextDueCredit, lempiras(15_000));
+
+    await app.close();
+  });
+
+  it("says the contract is paid when the amount clears the balance", async () => {
+    const { app, preview } = await setUp();
+    const body = (await preview(lempiras(270_000))).json();
+
+    assert.equal(body.newBalance, 0);
+    assert.equal(body.settled, true);
+    assert.equal(body.appliedTo.length, 6);
+
+    await app.close();
+  });
+
+  it("refuses a missing amount and an unknown contract", async () => {
+    const { app, preview } = await setUp();
+    assert.equal((await preview("0")).statusCode, 400);
+    assert.equal((await preview("abc")).statusCode, 400);
+
+    const cookie = await login(app, "owner@test.hn", OWNER_PASSWORD);
+    const missing = await app.inject({
+      method: "GET",
+      url: `/api/contracts/${randomUUID()}/after-payment?amountCents=100`,
+      headers: { cookie },
+    });
+    assert.equal(missing.statusCode, 404);
+
+    await app.close();
+  });
+});
+
 describe("correcting a transaction", () => {
   const editPayload = {
     amountCents: lempiras(10_000),

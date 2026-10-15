@@ -6689,6 +6689,17 @@ input:disabled {
   white-space: normal;
 }
 
+/* "después: Cuota 4 de 12 · completa · próxima L. 25,000" — what the amount
+   being typed will do. A sentence too, so it wraps; set apart from the
+   "próxima" line above it, which describes the lot BEFORE this payment. */
+.split-table .after-payment {
+  display: block;
+  margin-top: 2px;
+  white-space: normal;
+  color: var(--green-dark, #2e6b4a);
+  font-weight: 500;
+}
+
 /*
  * On a phone the three columns stop being three columns.
  *
