@@ -224,6 +224,20 @@ export function parseMoneyInput(formatted: string): number {
   return cleaned === "" ? Number.NaN : Number(cleaned);
 }
 
+/**
+ * The centavos behind a typed amount, or 0 when nothing usable is typed.
+ *
+ * For the screens that add typed amounts up as they go: an empty or
+ * half-typed field counts as nothing, rather than turning the running total
+ * into NaN. The field holds lempiras — "55,358.08" is 5,535,808 centavos — and
+ * reading that number as centavos was a hundredfold error that crashed on any
+ * amount with centavos.
+ */
+export function typedCents(formatted: string): number {
+  const typed = parseMoneyInput(formatted);
+  return Number.isNaN(typed) || typed <= 0 ? 0 : Math.round(typed * 100);
+}
+
 /** Fill an edit field from stored centavos, with separators already in place. */
 export function toMoneyInput(amount: Cents): string {
   return formatMoneyInput((amount / 100).toFixed(2));

@@ -25,6 +25,9 @@ const env = {
   EXCHANGE_RATE_REFRESH_HOURS: "0",
   // Every test logs in; the real limit (10 a minute) would lock the run out.
   LOGIN_ATTEMPTS_PER_MINUTE: "1000",
+  // Every request in the run comes from this one machine, so the whole suite
+  // shares one person's allowance and outgrows it as tests are added.
+  REQUESTS_PER_MINUTE: "100000",
 };
 
 rmSync(data, { recursive: true, force: true });

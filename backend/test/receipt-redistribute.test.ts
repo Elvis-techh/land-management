@@ -657,4 +657,86 @@ describe("redistributing a receipt between lots", () => {
 
     await app.close();
   });
+
+  /*
+   * A contract cancelled with «Queda como ingreso» keeps its payments, so its
+   * receipts keep naming its lot. When that money belonged to another of the
+   * customer's lots, «Repartir» is how it gets there: all of it may leave the
+   * closed contract, while keeping part of it there is refused like any other
+   * money on a closed contract.
+   */
+  it("moves a cancelled contract's share onto the customer's live lot", async () => {
+    const { app, db, ids } = await buildTestApp();
+    const cookie = await login(app, "owner@test.hn", OWNER_PASSWORD);
+
+    const issued = await issueSingleLotReceipt(
+      app,
+      cookie,
+      ids.contractId,
+      ids.customerId,
+      lempiras(40_000),
+    );
+    const lateId = addLateLot(db, ids);
+
+    const cancelled = await app.inject({
+      method: "POST",
+      url: `/api/contracts/${ids.contractId}/cancel`,
+      headers: { cookie },
+      payload: { reason: "El cliente cambió de lote dentro de la compra.", settlement: "none" },
+    });
+
+    assert.equal(cancelled.statusCode, 200);
+
+    const partly = await app.inject({
+      method: "POST",
+      url: `/api/receipts/${issued.id}/redistribute`,
+      headers: { cookie },
+      payload: {
+        reason: "La prima era del otro lote de la compra.",
+        lines: [
+          { contractId: ids.contractId, amountCents: lempiras(10_000) },
+          { contractId: lateId, amountCents: lempiras(30_000) },
+        ],
+      },
+    });
+
+    assert.equal(partly.statusCode, 409);
+    assert.equal(partly.json().error, "contract_closed");
+
+    const moved = await app.inject({
+      method: "POST",
+      url: `/api/receipts/${issued.id}/redistribute`,
+      headers: { cookie },
+      payload: {
+        reason: "La prima era del otro lote de la compra.",
+        lines: [{ contractId: lateId, amountCents: lempiras(40_000) }],
+      },
+    });
+
+    assert.equal(moved.statusCode, 200);
+
+    const { receipt } = moved.json() as { receipt: Record<string, any> };
+
+    assert.equal(receipt.totalPaid, lempiras(40_000));
+    assert.deepEqual(
+      receipt.lines.map((line: any) => [line.contractId, line.amount]),
+      [[lateId, lempiras(40_000)]],
+    );
+    // Only this receipt's money left; the contract's earlier payments stay.
+    assert.equal(
+      db
+        .select()
+        .from(payments)
+        .where(eq(payments.contractId, ids.contractId))
+        .all()
+        .filter((row) => row.receiptId === issued.id).length,
+      0,
+    );
+
+    // Still cancelled: moving its money away does not reopen it.
+    const closed = db.select().from(contracts).where(eq(contracts.id, ids.contractId)).get()!;
+    assert.equal(closed.status, "cancelled");
+
+    await app.close();
+  });
 });
