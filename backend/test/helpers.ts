@@ -26,6 +26,7 @@ const testConfig: AppConfig = {
   sessionDays: 7,
   // Effectively off for most tests; the rate-limit test lowers it on purpose.
   loginAttemptsPerMinute: 10_000,
+  requestsPerMinute: 300,
   // No test may reach the network. The exchange-rate tests drive the routes
   // directly and stub the provider where they need to.
   exchangeRateRefreshHours: 0,

@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import { Dialog } from "../../components/Dialog";
 import { IconClose } from "../../components/Icons";
 import type { MoneyView } from "../../lib/money";
-import { cents, formatMoney, formatMoneyInput, parseMoneyInput, toMoneyInput } from "../../lib/money";
+import { cents, formatMoney, formatMoneyInput, toMoneyInput, typedCents } from "../../lib/money";
 import type { Contract, Receipt } from "../../types";
 import { redistributeReceipt } from "./api";
 
@@ -115,7 +115,7 @@ export function ReceiptRedistributeDialog({
     () =>
       targets.map((target) => ({
         target,
-        amountCents: parseMoneyInput(amounts[target.contractId] ?? ""),
+        amountCents: typedCents(amounts[target.contractId] ?? ""),
       })),
     [targets, amounts],
   );
