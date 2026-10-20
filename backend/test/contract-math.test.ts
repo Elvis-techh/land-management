@@ -270,6 +270,76 @@ describe("payment health", () => {
     assert.equal(report.settled, true);
   });
 
+  /*
+   * The contract that read «7 meses atrasados» three months after it was
+   * signed: the L 160,000 prima never came in and one cuota of L 26,667 is
+   * late. The arrears were divided by the cuota, prima included, so the prima
+   * turned into six "months".
+   */
+  describe("a prima that has not come in", () => {
+    const july: ContractTerms = {
+      saleType: "financed",
+      salePriceCents: lempiras(960_000),
+      downPaymentCents: lempiras(160_000),
+      termMonths: 30,
+      monthlyPaymentCents: lempiras(26_667),
+      dueDay: 5,
+      signedOn: "2026-07-15",
+      firstDueOn: "2026-10-05",
+    };
+
+    it("counts the late cuotas as months and names the prima on its own", () => {
+      const report = assessContract(july, 0, "2026-10-20");
+
+      assert.equal(report.monthsBehind, 1);
+      assert.equal(report.downPaymentLate, true);
+      // What is owed does not change: the prima and the cuota.
+      assert.equal(report.arrearsCents, lempiras(160_000 + 26_667));
+    });
+
+    it("is at risk with the prima and a cuota both missed", () => {
+      assert.equal(assessContract(july, 0, "2026-10-20").status, "at_risk");
+    });
+
+    it("is overdue, not at risk, when only the prima is late", () => {
+      const report = assessContract(july, 0, "2026-08-01");
+
+      assert.equal(report.status, "overdue");
+      assert.equal(report.monthsBehind, 0);
+      assert.equal(report.downPaymentLate, true);
+    });
+
+    it("is still late when only part of the prima came in", () => {
+      const report = assessContract(july, lempiras(100_000), "2026-10-20");
+
+      assert.equal(report.monthsBehind, 1);
+      assert.equal(report.downPaymentLate, true);
+      assert.equal(report.arrearsCents, lempiras(60_000 + 26_667));
+    });
+
+    it("gives the prima the same five days of grace as a cuota", () => {
+      const report = assessContract(july, 0, "2026-07-19");
+
+      assert.equal(report.downPaymentLate, false);
+      assert.equal(report.status, "due_soon");
+    });
+
+    it("stops naming the prima once it is complete", () => {
+      const report = assessContract(july, july.downPaymentCents, "2026-10-20");
+
+      assert.equal(report.downPaymentLate, false);
+      assert.equal(report.monthsBehind, 1);
+      assert.equal(report.status, "overdue");
+    });
+  });
+
+  it("counts a cuota part-paid and past its grace as a month behind", () => {
+    const report = assessContract(financed, paidThrough(2) + lempiras(2_700), "2026-04-11");
+
+    assert.equal(report.monthsBehind, 1);
+    assert.equal(report.arrearsCents, lempiras(4_000));
+  });
+
   it("treats an unpaid cash sale as one overdue debt, not months of arrears", () => {
     const cash: ContractTerms = {
       saleType: "cash",

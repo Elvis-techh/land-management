@@ -299,7 +299,10 @@ export interface ContractHealth {
   status: PaymentHealth;
   /** What is late right now, after the five-day grace. Zero when up to date. */
   arrears: Cents;
+  /** Cuotas past their grace and not fully paid. The prima is not one of them. */
   monthsBehind: number;
+  /** The prima is past its grace and not complete. */
+  downPaymentLate: boolean;
   /** Customers here routinely pay two months at once. */
   monthsAhead: number;
   nextDueOn: string | null;

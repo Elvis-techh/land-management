@@ -25,6 +25,7 @@ import {
   PAYMENT_METHOD_LABELS,
   collectionRate,
   compareToPrevious,
+  debtorBehind,
   describeComparison,
   describeExpiry,
   formatDate,
@@ -583,7 +584,7 @@ export function DashboardPage({
                       <td className="col-money">
                         {moneyCell(debtor.arrearsCents, "is-balance")}
                         <span className="cell-sub">
-                          {pluralise(debtor.monthsBehind, "mes", "meses")}
+                          {debtorBehind(debtor)}
                         </span>
                       </td>
                       <td className="col-money">{moneyCell(debtor.balanceCents)}</td>

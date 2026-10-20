@@ -369,8 +369,17 @@ export interface HealthReport {
   balanceCents: number;
   /** What is late right now, after the grace period. Zero when up to date. */
   arrearsCents: number;
-  /** Whole months of arrears, as somebody would say it out loud. */
+  /**
+   * Cuotas past their grace and not fully paid, as somebody would say it out
+   * loud. The prima is not one of them: see `downPaymentLate`.
+   */
   monthsBehind: number;
+  /**
+   * The prima is past its grace and not complete. Named on its own because it
+   * is not a month: a L 160,000 prima divided by a L 26,667 cuota used to be
+   * reported as six of them.
+   */
+  downPaymentLate: boolean;
   /** Whole months paid in advance. Customers here routinely pay two at once. */
   monthsAhead: number;
   /** The next installment falling due, or null once the term is over. */
@@ -421,23 +430,44 @@ export function assessContract(
   const balanceCents = Math.max(0, terms.salePriceCents - paidToDateCents);
   const settled = terms.salePriceCents - paidToDateCents <= 0;
 
+  const graceDate = shiftDays(asOf, -GRACE_DAYS);
   const dueBySchedule = expectedByCents(terms, schedule, asOf);
-  const dueAfterGrace = expectedByCents(terms, schedule, shiftDays(asOf, -GRACE_DAYS));
+  const dueAfterGrace = expectedByCents(terms, schedule, graceDate);
 
   const arrearsCents = settled ? 0 : Math.max(0, dueAfterGrace - paidToDateCents);
   const aheadCents = Math.max(0, paidToDateCents - dueBySchedule);
 
-  // A cash sale or a donation has no monthly, so arrears cannot be counted in
-  // months. Any arrears at all on one of those is a single overdue debt.
   const monthly = terms.monthlyPaymentCents ?? 0;
-  const monthsBehind =
-    monthly > 0 ? Math.ceil(arrearsCents / monthly) : arrearsCents > 0 ? 1 : 0;
+  const primaOwed = !settled && paidToDateCents < terms.downPaymentCents;
+  const outstanding = outstandingInstallments(terms, paidToDateCents);
+
+  /*
+   * Months behind is the number of cuotas past their grace that the money has
+   * not reached, counted rather than worked out from the arrears. Dividing the
+   * arrears by the cuota counted an unpaid prima as months too.
+   *
+   * A cash sale or a donation has no monthly, so arrears cannot be counted in
+   * months. Any arrears at all on one of those is a single overdue debt.
+   */
+  const downPaymentLate =
+    monthly > 0 && primaOwed && utcDay(terms.signedOn) <= utcDay(graceDate);
+  const monthsBehind = settled
+    ? 0
+    : monthly > 0
+      ? outstanding.filter((installment) => utcDay(installment.dueOn) <= utcDay(graceDate))
+          .length
+      : arrearsCents > 0
+        ? 1
+        : 0;
   const monthsAhead = monthly > 0 ? Math.floor(aheadCents / monthly) : 0;
 
-  const primaOwed = !settled && paidToDateCents < terms.downPaymentCents;
+  // The prima counts as one missed payment toward "two or more", not as the
+  // number of cuotas its amount would make.
+  const missedPayments = monthsBehind + (downPaymentLate ? 1 : 0);
+
   const upcoming: ScheduledInstallment | undefined = primaOwed
     ? { number: 0, dueOn: terms.signedOn, amountCents: terms.downPaymentCents - paidToDateCents }
-    : outstandingInstallments(terms, paidToDateCents)[0];
+    : outstanding[0];
   const upcomingInFull =
     upcoming === undefined
       ? 0
@@ -448,9 +478,9 @@ export function assessContract(
 
   let status: PaymentHealth = "current";
 
-  if (monthsBehind >= AT_RISK_MONTHS) {
+  if (missedPayments >= AT_RISK_MONTHS) {
     status = "at_risk";
-  } else if (monthsBehind >= 1) {
+  } else if (missedPayments >= 1) {
     status = "overdue";
   } else if (
     !settled &&
@@ -465,6 +495,7 @@ export function assessContract(
     balanceCents,
     arrearsCents,
     monthsBehind,
+    downPaymentLate,
     monthsAhead,
     nextDueOn: settled ? null : (upcoming?.dueOn ?? null),
     nextDueAmountCents: settled ? 0 : (upcoming?.amountCents ?? 0),

@@ -196,6 +196,21 @@ export function pluralise(count: number, singular: string, plural: string): stri
   return `${count} ${count === 1 ? singular : plural}`;
 }
 
+/**
+ * How far behind a debtor is, under the amount they owe: "2 meses",
+ * "Prima · 1 mes", "Prima". The prima is named rather than counted in months —
+ * a L 160,000 prima is not six missed cuotas of L 26,667.
+ */
+export function debtorBehind(debtor: { monthsBehind: number; downPaymentLate: boolean }): string {
+  const months = debtor.monthsBehind > 0 ? pluralise(debtor.monthsBehind, "mes", "meses") : "";
+
+  if (!debtor.downPaymentLate) {
+    return months;
+  }
+
+  return months === "" ? "Prima" : `Prima · ${months}`;
+}
+
 /*
  * Dates arrive as plain YYYY-MM-DD calendar dates, never as instants — the same
  * rule and the same reason as features/contracts/contractPresentation.ts.

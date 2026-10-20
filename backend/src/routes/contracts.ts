@@ -373,6 +373,7 @@ function present(
       status: health.status,
       arrears: health.arrearsCents,
       monthsBehind: health.monthsBehind,
+      downPaymentLate: health.downPaymentLate,
       monthsAhead: health.monthsAhead,
       nextDueOn: health.nextDueOn,
       nextDueAmount: health.nextDueAmountCents,

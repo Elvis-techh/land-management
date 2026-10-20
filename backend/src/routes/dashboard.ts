@@ -177,6 +177,7 @@ interface Assessed {
   balanceCents: number;
   arrearsCents: number;
   monthsBehind: number;
+  downPaymentLate: boolean;
   settled: boolean;
   /** Health a month earlier. The only reason "slipped" and "recovered" exist. */
   previousStatus: PaymentHealth;
@@ -246,6 +247,7 @@ function assess(
     balanceCents: health.balanceCents,
     arrearsCents: health.arrearsCents,
     monthsBehind: health.monthsBehind,
+    downPaymentLate: health.downPaymentLate,
     settled: health.settled,
     previousStatus: assessContract(terms, row.paidThroughPreviousCents, previousAsOf).status,
     expected,
@@ -593,6 +595,7 @@ export const dashboardRoutes: FastifyPluginAsync<DashboardRoutesOptions> = async
       arrearsCents: entry.arrearsCents,
       balanceCents: entry.balanceCents,
       monthsBehind: entry.monthsBehind,
+      downPaymentLate: entry.downPaymentLate,
       lastPaymentOn: entry.row.lastPaymentOn,
     });
 
