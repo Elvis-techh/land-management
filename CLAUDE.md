@@ -74,3 +74,36 @@ Do not keep branches as backups: `main`'s history and the releases already are.
 `npm run typecheck` and `npm test` from the repository root. The **Tests**
 workflow (`.github/workflows/tests.yml`) runs them, plus a build, on every pull
 request; do not merge one whose check is red.
+
+## Working from a phone or a cloud session
+
+The owner often directs the work from a phone, through a cloud session. These
+hold there as much as anywhere:
+
+1. **Ask before building when the owner asks for an opinion.** "What do you
+   think?" or "how does this work?" gets an explanation and a proposal first;
+   build once they agree. Anything that decides how money is counted (payment
+   types, what is owed next, mora) is the owner's decision, never Claude's:
+   lay out the options and the trade-off, then wait.
+2. **Run the browser tests in a cloud session too.** The container's Chrome
+   is not the version Playwright expects, so `npm run test:e2e` fails at
+   launch. Do not skip the tests: point them at the installed Chrome with a
+   temporary config in the repository root, and delete it afterwards. Never
+   commit it.
+   ```ts
+   // playwright.claude-local.config.ts — temporary, never committed
+   import base from "./playwright.config";
+   export default { ...base, use: { ...base.use, launchOptions: { executablePath: "/opt/pw-browsers/chromium" } } };
+   ```
+   then `npx playwright test -c playwright.claude-local.config.ts`.
+3. **Do not run a code formatter over whole files.** The repository has no
+   formatter set up; running one (Prettier) once rewrote hundreds of unrelated
+   lines. Edit by hand, in the surrounding style.
+4. **Show the owner what changes on screen.** For a change they will see,
+   take a phone-sized screenshot from the browser test and send it with the
+   pull request, so they see it before it goes live.
+5. **A short 502 right after a deploy is the server restarting.** Check
+   `/api/health` again for a minute before reporting a problem.
+6. **Releases come after the owner confirms the site**, or when they ask for
+   one (to pull `main` on their computer, say). Give the Release workflow a
+   title naming what the release contains.
