@@ -6,6 +6,9 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { UpdateBanner } from "./components/UpdateBanner";
 import { registerServiceWorker } from "./lib/serviceWorker";
 import "./styles.css";
+// The signature's handwriting, shipped with the app rather than fetched from
+// Google, so the receipt image can always embed it. See receiptImage.ts.
+import "@fontsource/dancing-script/700.css";
 
 const rootElement = document.getElementById("root");
 
