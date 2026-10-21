@@ -917,6 +917,49 @@ tbody tr:hover {
   flex-shrink: 0;
 }
 
+/*
+ * "A newer Lindero is on the server." See lib/appVersion.ts.
+ *
+ * Pinned to the top, above the dialogs (50) and their menus, because a dialog
+ * is where somebody notices a button that is not there yet. A pill rather than
+ * a full-width bar, so it covers as little of the header under it as it can.
+ */
+.update-banner {
+  position: fixed;
+  top: calc(10px + env(safe-area-inset-top, 0px));
+  left: 50%;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  padding: 8px 8px 8px 16px;
+  background: var(--card);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  box-shadow: 0 6px 24px rgba(61, 49, 42, 0.18);
+  transform: translateX(-50%);
+}
+
+.update-banner-text {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.update-banner .btn-primary,
+.update-banner .btn-secondary {
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+@media print {
+  .update-banner {
+    display: none;
+  }
+}
+
 /* ---------- receipts ---------- */
 .receipts-layout {
   display: grid;
