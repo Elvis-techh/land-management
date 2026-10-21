@@ -19,6 +19,8 @@ export type AppConfig = {
   sessionDays: number;
   /** Failed-login protection: attempts allowed per minute, per IP address. */
   loginAttemptsPerMinute: number;
+  /** The ceiling on every other request: requests allowed per minute, per IP address. */
+  requestsPerMinute: number;
   /**
    * How often to ask the provider for the lempira/dollar rate, in hours.
    * `0` turns the scheduler off entirely — the rate then only changes when a
@@ -150,6 +152,12 @@ export function loadConfig(environment = process.env): AppConfig {
     throw new Error("LOGIN_ATTEMPTS_PER_MINUTE must be a positive integer");
   }
 
+  const requestsPerMinute = Number(environment.REQUESTS_PER_MINUTE ?? 300);
+
+  if (!Number.isInteger(requestsPerMinute) || requestsPerMinute < 1) {
+    throw new Error("REQUESTS_PER_MINUTE must be a positive integer");
+  }
+
   const exchangeRateRefreshHours = Number(environment.EXCHANGE_RATE_REFRESH_HOURS ?? 6);
 
   if (!Number.isFinite(exchangeRateRefreshHours) || exchangeRateRefreshHours < 0) {
@@ -180,6 +188,7 @@ export function loadConfig(environment = process.env): AppConfig {
     cookieSecret,
     sessionDays,
     loginAttemptsPerMinute,
+    requestsPerMinute,
     exchangeRateRefreshHours,
     trustProxy: parseTrustProxy(environment.TRUST_PROXY),
     timeZone,

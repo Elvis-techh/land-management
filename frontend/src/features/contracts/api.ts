@@ -34,6 +34,7 @@ interface ContractsResponse {
         status: Contract["health"]["status"];
         arrears: number;
         monthsBehind: number;
+        downPaymentLate: boolean;
         monthsAhead: number;
         nextDueOn: string | null;
         nextDueAmount: number;

@@ -1,18 +1,23 @@
 import type { CSSProperties } from "react";
 
 import logoUrl from "../../assets/mr-investments.png";
-import { BUSINESS, CONTACT_LINE, THANK_YOU } from "../../lib/business";
+import { amountInWords } from "../../lib/amountInWords";
+import { BUSINESS, CONTACT_LINE, THANK_YOU, THANK_YOU_FINAL } from "../../lib/business";
 import { code128Geometry } from "../../lib/code128";
 import type { MoneyView } from "../../lib/money";
 import { cents, formatDocumentMoney } from "../../lib/money";
 import { formatPhone } from "../../lib/phone";
 import type { Receipt } from "../../types";
 import { appliedLabel } from "./appliedLabel";
+import { isFinalReceipt } from "./finalReceipt";
 
 interface ReceiptPaperProps {
   receipt: Receipt;
   money: MoneyView;
 }
+
+/** The "Recibí la cantidad de" line is in lempiras whatever the screen shows; the rate is unused. */
+const LEMPIRAS: MoneyView = { currency: "HNL", usdRate: 1 };
 
 const METHOD_LABELS: Record<string, string> = {
   cash: "Efectivo",
@@ -78,11 +83,13 @@ function clientDetail(customer: Receipt["customer"]): string | null {
  * document, so a change to the vertical rhythm in the stylesheet moves them.
  * Re-measure rather than adjust.
  *
- *     content@10pt ≈ 940px fixed  (letterhead, cliente box, table head,
- *                                  summary, signature, barcode, padding)
+ *     content@10pt ≈ 981px fixed  (letterhead, cliente box, amount in
+ *                                  words, table head, summary, signature,
+ *                                  barcode, padding)
  *                  + 68px per lot row
  *                  + 36px for a note
  *                  + 62px for the ANULADO banner
+ *                  + 12px for the final receipt's «Contrato pagado» line
  *
  * `USABLE_PX` is deliberately well short of the page, and it is the same budget
  * `.receipt-paper`'s `min-height: 264mm` uses in the print stylesheet — the two
@@ -102,12 +109,16 @@ function clientDetail(customer: Receipt["customer"]): string | null {
  * failure than print nobody can read.
  *
  * The 10pt ceiling is now only a guard. Even a one-lot receipt fills about
- * 1008px at 10pt, so the budget binds first and this rarely comes into play.
+ * 1049px at 10pt, so the budget binds first and this rarely comes into play.
  */
 const USABLE_PX = 1000;
 
 function printBaseFor(receipt: Receipt): string {
-  const estimatedPx = 940 + 68 * receipt.lines.length + (receipt.voidedAt ? 62 : 0);
+  const estimatedPx =
+    981 +
+    68 * receipt.lines.length +
+    (receipt.voidedAt ? 62 : 0) +
+    (isFinalReceipt(receipt) ? 12 : 0);
 
   const points = (10 * USABLE_PX) / estimatedPx;
 
@@ -151,6 +162,7 @@ export function ReceiptPaper({ receipt, money }: ReceiptPaperProps) {
   );
 
   const detail = clientDetail(receipt.customer);
+  const isFinal = isFinalReceipt(receipt);
   const barcode = code128Geometry(receipt.code);
 
   return (
@@ -175,7 +187,9 @@ export function ReceiptPaper({ receipt, money }: ReceiptPaperProps) {
         </div>
 
         <div className="receipt-meta">
-          <h1>RECIBO DE PAGO</h1>
+          <h1 className={isFinal ? "is-final" : undefined}>
+            {isFinal ? "RECIBO DE PAGO FINAL" : "RECIBO DE PAGO"}
+          </h1>
           <p>
             <span className="receipt-label">RECIBO #</span> {receipt.code}
           </p>
@@ -200,6 +214,17 @@ export function ReceiptPaper({ receipt, money }: ReceiptPaperProps) {
             is nothing to put in it — see `clientDetail`. */}
         {detail && <div className="receipt-client-detail">{detail}</div>}
       </div>
+
+      {/* The amount in words, as a receipt states it: digits can be misread or
+          altered with a pen, words cannot. Always lempiras, the money that was
+          handed over — so the figure beside it is too, whatever currency the
+          screen is showing. */}
+      <p className="receipt-words">
+        Recibí la cantidad de <strong>{amountInWords(receipt.totalPaid)}</strong>{" "}
+        <span className="receipt-words-figure">
+          ({formatDocumentMoney(receipt.totalPaid, LEMPIRAS)})
+        </span>
+      </p>
 
       {/* One row per lot. A customer who bought three lots hands over one
           amount, and each lot keeps its own balance — a merged total would
@@ -265,12 +290,26 @@ export function ReceiptPaper({ receipt, money }: ReceiptPaperProps) {
           {/* The figure the customer came to read. Boxed and red on the
               original, and kept that way: the three numbers above it are the
               working, and this is the answer. */}
-          <div className="receipt-highlight">
-            <span className="receipt-highlight-label">Nuevo Balance Pendiente</span>
-            <span className="receipt-highlight-value">
-              {formatDocumentMoney(receipt.newBalance, money)}
-            </span>
-          </div>
+          {isFinal ? (
+            // The last payment: the answer is not "L. 0.00 still owed", in the
+            // red that means money is outstanding, but that the lot is theirs.
+            <div className="receipt-highlight is-paid">
+              <span className="receipt-highlight-label">
+                <small>Contrato pagado en su totalidad</small>
+                Saldo Cancelado
+              </span>
+              <span className="receipt-highlight-value">
+                {formatDocumentMoney(receipt.newBalance, money)}
+              </span>
+            </div>
+          ) : (
+            <div className="receipt-highlight">
+              <span className="receipt-highlight-label">Nuevo Balance Pendiente</span>
+              <span className="receipt-highlight-value">
+                {formatDocumentMoney(receipt.newBalance, money)}
+              </span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -308,7 +347,7 @@ export function ReceiptPaper({ receipt, money }: ReceiptPaperProps) {
           <p className="receipt-signature-label">Firma Autorizada</p>
         </div>
 
-        <p className="receipt-thanks">{THANK_YOU}</p>
+        <p className="receipt-thanks">{isFinal ? THANK_YOU_FINAL : THANK_YOU}</p>
         <p className="receipt-contact">{CONTACT_LINE}</p>
 
         {/*

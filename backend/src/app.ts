@@ -43,7 +43,7 @@ export async function buildApp(config: AppConfig, db: Db) {
 
   // A generous ceiling for normal use; the login route is far stricter below.
   await app.register(rateLimit, {
-    max: 300,
+    max: config.requestsPerMinute,
     timeWindow: "1 minute",
   });
 

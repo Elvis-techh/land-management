@@ -111,10 +111,21 @@ export function primaryStamp(contract: Contract): { label: string; stampClass: s
  * carrying a reassuring line nobody reads.
  */
 export function healthDetail(contract: Contract): string {
-  const { monthsBehind, monthsAhead } = contract.health;
+  const { monthsBehind, monthsAhead, downPaymentLate } = contract.health;
 
-  if (monthsBehind > 0) {
-    return monthsBehind === 1 ? "1 mes atrasado" : `${monthsBehind} meses atrasados`;
+  // The prima is named, never counted in months: a L 160,000 prima is not six
+  // missed cuotas of L 26,667.
+  if (downPaymentLate || monthsBehind > 0) {
+    return [
+      downPaymentLate ? "Prima pendiente" : "",
+      monthsBehind === 0
+        ? ""
+        : monthsBehind === 1
+          ? "1 mes atrasado"
+          : `${monthsBehind} meses atrasados`,
+    ]
+      .filter((part) => part !== "")
+      .join(" · ");
   }
 
   if (monthsAhead > 0) {

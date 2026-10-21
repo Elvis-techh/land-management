@@ -1163,6 +1163,8 @@ tbody tr:hover {
   --r-muted: #4A5568;
   --r-border: #CBD5E1;
   --r-red: #D32F2F;
+  --r-green: #1E7B4C;
+  --r-green-bg: #EEF8F2;
   --r-highlight: #F8FAFC;
 
   display: flex;
@@ -1231,6 +1233,11 @@ tbody tr:hover {
   text-transform: uppercase;
 }
 
+/* «RECIBO DE PAGO FINAL»: the one receipt that closes the contract. */
+.receipt-meta h1.is-final {
+  color: var(--r-green);
+}
+
 .receipt-meta p {
   margin: 0.3125em 0;
 }
@@ -1285,6 +1292,23 @@ tbody tr:hover {
   margin-top: 0.3em;
   color: var(--r-muted);
   font-size: 1.0625em;
+}
+
+/* ---- how much, in words ---- */
+.receipt-words {
+  margin: 0 0 1.5em;
+  /* Part of the enlarged reading region — see `.receipt-client` above. */
+  font-size: 1.0625em;
+}
+
+.receipt-words strong {
+  color: var(--r-primary);
+  letter-spacing: 0.02em;
+}
+
+/* "(L. 5,358.08)" never split across lines, "L." on one and the figure on the next. */
+.receipt-words-figure {
+  white-space: nowrap;
 }
 
 /* ---- what the money was for ---- */
@@ -1429,6 +1453,26 @@ tbody tr:hover {
   color: var(--r-red);
   text-align: right;
   white-space: nowrap;
+}
+
+/* Paid off: green, because red says money is still owed and none is. */
+.receipt-highlight.is-paid {
+  border-color: #9FD3B5;
+  background: var(--r-green-bg);
+}
+
+.receipt-highlight.is-paid .receipt-highlight-value {
+  color: var(--r-green);
+}
+
+.receipt-highlight-label small {
+  display: block;
+  margin-bottom: 0.2em;
+  color: var(--r-green);
+  font-size: 0.62em;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 /*

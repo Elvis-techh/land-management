@@ -46,6 +46,8 @@ export interface Debtor {
   arrearsCents: Cents;
   balanceCents: Cents;
   monthsBehind: number;
+  /** The prima is past its grace and not complete. */
+  downPaymentLate: boolean;
   /** `null` for somebody who has never paid anything at all. */
   lastPaymentOn: string | null;
 }
