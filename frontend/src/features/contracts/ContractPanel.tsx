@@ -39,6 +39,8 @@ interface ContractPanelProps {
   onReassignLot: (contract: Contract) => void;
   onCancelContract: (contract: Contract) => void;
   onDefaultContract: (contract: Contract) => void;
+  /** Opens the constancia de cancelación total of a paid-off contract. */
+  onOpenConstancia: (contract: Contract) => void;
   /** Opens the adenda dialog for this contract's purchase. */
   onAmendContract: (contract: Contract) => void;
   /** Swaps the panel over to another contract — the other side of an adenda. */
@@ -162,6 +164,7 @@ export function ContractPanel({
   onReassignLot,
   onCancelContract,
   onDefaultContract,
+  onOpenConstancia,
   onAmendContract,
   onOpenContract,
   onDocumentsChanged,
@@ -183,6 +186,10 @@ export function ContractPanel({
   // A reservation is converted with «Editar términos», not amended.
   const canAmend =
     contract.status === "active" && contract.kind === "contract" && can(user, "contract:amend");
+  // Anyone may look at a standing constancia; issuing one is checked in the
+  // dialog. A donation was "paid" at zero, so there is nothing to certify.
+  const hasConstancia =
+    contract.status === "paid_off" && contract.kind === "contract" && contract.saleType !== "donation";
 
   return (
     <Dialog ariaLabel={`Contrato ${contract.code}`} onClose={onClose}>
@@ -495,6 +502,16 @@ export function ContractPanel({
             the destructive actions should not be where the hand goes by
             default. "Editar términos" needs an active contract; closing one
             works on a paid-off contract too. */}
+        {hasConstancia && (
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => onOpenConstancia(contract)}
+            title="La constancia de cancelación total, para el notario."
+          >
+            <span>Constancia</span>
+          </button>
+        )}
         {contract.status === "active" && canEdit && (
           <button
             type="button"

@@ -134,6 +134,13 @@
       "when": 1791658875421,
       "tag": "0018_hash_session_ids",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1792549360283,
+      "tag": "0019_constancias",
+      "breakpoints": true
     }
   ]
 }

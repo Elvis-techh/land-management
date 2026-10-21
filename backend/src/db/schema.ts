@@ -692,6 +692,52 @@ export const receipts = sqliteTable(
 );
 
 /**
+ * A «Constancia de Cancelación Total»: the document that says a paid-off
+ * contract owes nothing, the one a customer takes to the notary for the
+ * escritura.
+ *
+ * One per contract at a time. Its figures (the payment history, the total) are
+ * read from the payments on demand like a receipt's, but the fact it states is
+ * only true while the contract stays paid off, so a reopened or closed
+ * contract voids it: `voidedAt` is set, the row and its code survive, and
+ * looking the code up says ANULADA. A contract paid off again gets a new one.
+ *
+ * Identified the way a receipt is (see src/lib/receipts.ts): a gapless internal
+ * `number`, a random printed `code` that does not reveal how many have been
+ * issued, and a `lookupCode` the office types in to verify one.
+ */
+export const constancias = sqliteTable(
+  "constancias",
+  {
+    id: text("id").primaryKey(),
+    /** The internal sequence. Never printed. */
+    number: integer("number").notNull(),
+    /** What is printed: "CC-48273915". Random. */
+    code: text("code").notNull(),
+    /** "K7M2-9XQR", for verifying it from inside Lindero. */
+    lookupCode: text("lookup_code").notNull(),
+    contractId: text("contract_id")
+      .notNull()
+      .references(() => contracts.id),
+    /** Calendar date shown on the document. */
+    issuedOn: text("issued_on").notNull(),
+    issuedBy: text("issued_by")
+      .notNull()
+      .references(() => users.id),
+    /** Set when the contract stops being paid off. The row is never deleted. */
+    voidedAt: text("voided_at"),
+    voidReason: text("void_reason"),
+    createdAt: timestamp("created_at"),
+  },
+  (table) => [
+    uniqueIndex("constancias_number_unique").on(table.number),
+    uniqueIndex("constancias_code_unique").on(table.code),
+    uniqueIndex("constancias_lookup_code_unique").on(table.lookupCode),
+    index("constancias_contract_idx").on(table.contractId),
+  ],
+);
+
+/**
  * A file attached to a receipt — in practice, the customer's proof of transfer.
  *
  * The single most requested thing in a land office: somebody sends a photo of

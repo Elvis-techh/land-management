@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 
 import type { Db } from "../db/client.js";
 import { contracts, payments } from "../db/schema.js";
+import { voidConstancias } from "./constancias.js";
 import { isReservationExpired } from "./contracts.js";
 import { replayContract } from "./ledger.js";
 
@@ -70,6 +71,12 @@ export function syncContractLifecycle(
     .set({ status: target, updatedAt: new Date().toISOString() })
     .where(eq(contracts.id, contractId))
     .run();
+
+  // A constancia says the contract owes nothing, which has just stopped being
+  // true. See `voidConstancias`.
+  if (target === "active") {
+    voidConstancias(db, contractId, "El contrato volvió a tener saldo pendiente.");
+  }
 
   return target === "paid_off" ? "settled" : "reopened";
 }

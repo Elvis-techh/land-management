@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRememberedState } from "../../lib/viewMemory";
 
 import { IconChevronDown, IconPaperclip } from "../../components/Icons";
@@ -10,6 +10,7 @@ import type { User } from "../../lib/permissions";
 import { can } from "../../lib/permissions";
 import { buildProjectAccents } from "../../lib/projectAccent";
 import type { Contract } from "../../types";
+import { ConstanciaVerifyDialog } from "../constancias/ConstanciaVerifyDialog";
 import { ContactButtons } from "./ContactButtons";
 import { ContractToolbar } from "./ContractToolbar";
 import type { ContractFilters } from "./contractFilters";
@@ -100,6 +101,7 @@ export function ContractsPage({
 }: ContractsPageProps) {
   const canRecordPayment = can(user, "payment:record");
   const canAmend = can(user, "contract:amend");
+  const [isVerifying, setVerifying] = useState(false);
 
   const [search, setSearch] = useRememberedState("contracts.search", "");
   const [filters, setFilters] = useRememberedState<ContractFilters>(
@@ -213,6 +215,8 @@ export function ContractsPage({
 
   return (
     <section className="panel active">
+      {isVerifying && <ConstanciaVerifyDialog onClose={() => setVerifying(false)} />}
+
       <ContractToolbar
         projectNames={projectNames}
         filters={filters}
@@ -227,6 +231,13 @@ export function ContractsPage({
         allGroupsExpanded={allGroupsExpanded}
         onToggleAllGroups={toggleAllGroups}
       />
+
+      {/* For the call from a notary or a bank reading out a constancia's code. */}
+      <div className="constancia-verify-row">
+        <button type="button" className="link-btn" onClick={() => setVerifying(true)}>
+          Verificar una constancia
+        </button>
+      </div>
 
       <div className="card">
         <div className="table-wrap contracts-desktop">

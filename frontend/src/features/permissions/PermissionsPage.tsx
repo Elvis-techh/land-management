@@ -86,6 +86,13 @@ const GROUPS: Array<{
         label: "Cancelar contratos",
         hint: "Libera el lote y deja el contrato en el historial.",
       },
+      {
+        capability: "contract:certify",
+        label: "Emitir constancias de cancelación total",
+        hint:
+          "El documento que dice que un contrato pagado ya no debe nada, el que se lleva " +
+          "al notario. Solo para contratos en estado Pagado.",
+      },
     ],
   },
   {

@@ -10,6 +10,7 @@ import type { Db } from "./db/client.js";
 import { noteWrite, publishChange } from "./lib/changes.js";
 import { auditRoutes } from "./routes/audit.js";
 import { authRoutes } from "./routes/auth.js";
+import { constanciaRoutes } from "./routes/constancias.js";
 import { contractRoutes } from "./routes/contracts.js";
 import { customerRoutes } from "./routes/customers.js";
 import { dashboardRoutes } from "./routes/dashboard.js";
@@ -164,6 +165,7 @@ export async function buildApp(config: AppConfig, db: Db) {
         uploadsPath: config.uploadsPath,
       });
       await api.register(transactionRoutes, { timeZone: config.timeZone });
+      await api.register(constanciaRoutes, { timeZone: config.timeZone });
       await api.register(permissionRoutes);
       await api.register(userRoutes);
       await api.register(exchangeRateRoutes);

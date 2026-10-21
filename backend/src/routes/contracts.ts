@@ -39,6 +39,7 @@ import {
   isReservationExpired,
 } from "../lib/contracts.js";
 import { roleCan } from "../lib/capabilities.js";
+import { voidConstancias } from "../lib/constancias.js";
 import { syncContractLifecycle } from "../lib/contractLifecycle.js";
 import { holdsLot, openContract } from "../lib/holding.js";
 import { businessToday } from "../lib/time.js";
@@ -1620,6 +1621,15 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
         })
         .where(eq(contracts.id, existing.id))
         .run();
+
+      // A paid-off contract can be closed too, and then its constancia no
+      // longer describes it.
+      voidConstancias(
+        tx,
+        existing.id,
+        `Contrato ${kind.newStatus === "defaulted" ? "declarado incumplido" : "cancelado"}: ${parsed.data.reason}`,
+        closedAt,
+      );
 
       if (settlement === "refunded" && contractPayments.length > 0) {
         const note = `Contrato ${existing.code} ${

@@ -20,6 +20,7 @@ import { ContractCancelDialog } from "./features/contracts/ContractCancelDialog"
 import { ContractCreateDialog } from "./features/contracts/ContractCreateDialog";
 import { ContractEditDialog } from "./features/contracts/ContractEditDialog";
 import { ContractReassignLotDialog } from "./features/contracts/ContractReassignLotDialog";
+import { ConstanciaDialog } from "./features/constancias/ConstanciaDialog";
 import { ContractPanel } from "./features/contracts/ContractPanel";
 import { ContractsPage } from "./features/contracts/ContractsPage";
 import { SplitPreviewDialog } from "./features/contracts/SplitPreviewDialog";
@@ -208,6 +209,7 @@ export default function App() {
   const [receiptBeingVoided, setReceiptBeingVoided] = useState<Receipt | null>(null);
   const [transactionBeingEdited, setTransactionBeingEdited] = useState<Transaction | null>(null);
   const [contractBeingViewed, setContractBeingViewed] = useState<Contract | null>(null);
+  const [constanciaContract, setConstanciaContract] = useState<Contract | null>(null);
   const [contractBeingEdited, setContractBeingEdited] = useState<Contract | null>(null);
   const [contractLotBeingReassigned, setContractLotBeingReassigned] = useState<Contract | null>(
     null,
@@ -1531,11 +1533,20 @@ export default function App() {
           onReassignLot={setContractLotBeingReassigned}
           onCancelContract={setContractBeingCancelled}
           onDefaultContract={setContractBeingDefaulted}
+          onOpenConstancia={setConstanciaContract}
           onAmendContract={(contract) => setContractsBeingAmended(purchaseToAmend(contract))}
           onOpenContract={setContractBeingViewed}
           // The list marks which contracts have their signed copy on file, so
           // filing one from the panel has to re-read the list behind it.
           onDocumentsChanged={() => void reloadContracts()}
+        />
+      )}
+
+      {constanciaContract && (
+        <ConstanciaDialog
+          contract={constanciaContract}
+          canIssue={can(user, "contract:certify")}
+          onClose={() => setConstanciaContract(null)}
         />
       )}
 
