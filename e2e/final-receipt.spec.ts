@@ -27,7 +27,9 @@ test("paying a lot off issues the final receipt", async ({ page }, testInfo) => 
   await dialog.getByLabel("Letra del lote").fill("Y");
   await dialog.getByLabel("Número del lote").fill(lotNumber);
   await dialog.getByLabel("Área").fill("300");
-  await dialog.getByLabel("Precio base").fill("150000");
+  // Seven figures, the widest amount a receipt line realistically carries, so
+  // the check at the end covers the amount column at its tightest.
+  await dialog.getByLabel("Precio base").fill("1250000");
   await dialog.getByRole("button", { name: "Crear lote" }).click();
   await expect(dialog).toHaveCount(0);
 
@@ -38,7 +40,7 @@ test("paying a lot off issues the final receipt", async ({ page }, testInfo) => 
   await dialog.getByRole("searchbox", { name: "Buscar lote" }).fill(lot);
   await dialog.getByRole("option", { name: new RegExp(lot) }).click();
   await dialog.getByRole("button", { name: "Continuar" }).click();
-  await dialog.getByLabel("Prima acordada").fill("15000");
+  await dialog.getByLabel("Prima acordada").fill("125000");
   await dialog.getByLabel("Plazo en meses").fill("12");
   await dialog.getByLabel("Día de pago").fill("15");
   await expect(dialog.getByLabel("Cuota mensual")).not.toHaveValue("");
@@ -49,7 +51,7 @@ test("paying a lot off issues the final receipt", async ({ page }, testInfo) => 
   await page.getByRole("banner").getByRole("button", { name: "Nueva transacción" }).click();
   await dialog.getByRole("searchbox", { name: "Buscar cliente" }).fill(customer);
   await dialog.getByRole("option", { name: new RegExp(customer) }).click();
-  await dialog.getByLabel("Monto *").fill("150000");
+  await dialog.getByLabel("Monto *").fill("1250000");
   await dialog.getByRole("button", { name: "Registrar y emitir recibo" }).click();
   await expect(dialog).toHaveCount(0);
 
@@ -60,6 +62,20 @@ test("paying a lot off issues the final receipt", async ({ page }, testInfo) => 
   await expect(paper).toContainText("Saldo Cancelado");
   await expect(paper).not.toContainText("Nuevo Balance Pendiente");
   await expect(paper).toContainText("¡Felicidades por su terreno!");
+
+  // Every amount stays inside the document, however narrow the preview column:
+  // the lot line's "L. 1,250,000.00" once ran past the right edge on a phone.
+  const overflow = await paper.evaluate((el) => {
+    const edge = el.getBoundingClientRect().right - parseFloat(getComputedStyle(el).paddingRight);
+    return [...el.querySelectorAll(".receipt-right, .receipt-summary-row > span:last-child")]
+      .map((cell) => {
+        const range = document.createRange();
+        range.selectNodeContents(cell);
+        return { text: cell.textContent, past: range.getBoundingClientRect().right - edge };
+      })
+      .filter((cell) => cell.past > 0.5);
+  });
+  expect(overflow).toEqual([]);
 
   await paper.screenshot({ path: testInfo.outputPath("final-receipt.png") });
 });

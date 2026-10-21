@@ -1494,8 +1494,11 @@ tbody tr:hover {
     table-layout: fixed;
   }
 
+  /* Wide enough for "L. 9,999,999.99". The width is in the header's small
+     type, but the amount under it is set larger and never wraps, so 8.5em
+     here let anything from six figures up run past the paper's edge. */
   .receipt-items th.receipt-right {
-    width: 8.5em;
+    width: 12.5em;
     white-space: normal;
   }
 
