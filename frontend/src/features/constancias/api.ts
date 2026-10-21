@@ -28,7 +28,8 @@ export interface Constancia {
   /** Set once a contract on it stopped being paid off. The paper is then ANULADA. */
   voidedAt: string | null;
   voidReason: string | null;
-  customer: { fullName: string; identification: string | null };
+  /** `phone` is not printed: it is where «Enviar por WhatsApp» sends it. */
+  customer: { fullName: string; identification: string | null; phone: string | null };
   /** In lot order. One for an ordinary constancia, several for a combined one. */
   parts: ConstanciaPart[];
   /** The contracts' values, added up. */

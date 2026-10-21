@@ -99,7 +99,7 @@ function hasSecureApis(): boolean {
 }
 
 /** True on a phone or tablet, where "right-click" is not a thing anybody can do. */
-function isTouchDevice(): boolean {
+export function isTouchDevice(): boolean {
   return window.matchMedia("(pointer: coarse)").matches;
 }
 
@@ -136,7 +136,7 @@ export function copyGesture(): string {
  * `web.whatsapp.com`: it is the one URL that routes itself to the phone app,
  * the desktop app or the web client depending on where it is opened.
  */
-function chatUrl(phone: string, caption: string): string {
+export function chatUrl(phone: string, caption: string): string {
   return `https://wa.me/${phone.replace(/\D/g, "")}?text=${encodeURIComponent(caption)}`;
 }
 

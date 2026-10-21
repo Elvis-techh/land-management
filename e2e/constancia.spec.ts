@@ -114,9 +114,10 @@ test("a paid-off contract gets a constancia the office can verify", async ({ pag
   const constancia = await openConstancia(page, lot);
   await constancia.getByRole("button", { name: "Emitir constancia" }).click();
 
-  // The letter; the annex sheets after it carry the same paper class.
-  const paper = constancia.locator(".constancia-paper:not(.constancia-annex)");
-  const annex = constancia.locator(".constancia-annex");
+  // The letter on screen; the annex sheets after it carry the same paper
+  // class, and so does the offscreen copy the WhatsApp PDF is drawn from.
+  const paper = constancia.locator(".constancia-dialog-body .constancia-paper:not(.constancia-annex)");
+  const annex = constancia.locator(".constancia-dialog-body .constancia-annex");
   await expect(paper).toContainText("Constancia de Cancelación Total");
   await expect(paper).toContainText(customer);
   await expect(paper).toContainText("CIENTO CINCUENTA MIL LEMPIRAS EXACTOS (L. 150,000.00)");
@@ -170,7 +171,7 @@ test("a customer's paid-off lots can share one constancia", async ({ page }) => 
   await pay(page, customer, "135000");
 
   const constancia = await openConstancia(page, second);
-  const paper = constancia.locator(".constancia-paper:not(.constancia-annex)");
+  const paper = constancia.locator(".constancia-dialog-body .constancia-paper:not(.constancia-annex)");
 
   // The other paid-off lot is offered; ticked, the two make one constancia.
   await constancia.getByLabel(new RegExp(`Lote ${first}`)).check();
@@ -181,7 +182,7 @@ test("a customer's paid-off lots can share one constancia", async ({ page }) => 
   await expect(paper).toContainText("dichos contratos no presentan saldo pendiente");
   await expect(paper.locator(".constancia-history tbody tr")).toHaveCount(2);
   await expect(paper).toContainText("Total pagado · 3 pagos · 2 lotes");
-  const annex = constancia.locator(".constancia-annex");
+  const annex = constancia.locator(".constancia-dialog-body .constancia-annex");
   await expect(annex.locator("tbody tr")).toHaveCount(3);
   await expect(annex.locator("thead")).toContainText("Lote");
 
@@ -202,4 +203,63 @@ test("a customer's paid-off lots can share one constancia", async ({ page }) => 
   await expect(await verify(page, combinedCode)).toContainText(
     `VÁLIDA — ${customer}, Lotes ${first} y ${second} del Valle Verde`,
   );
+});
+
+/*
+ * «Enviar por WhatsApp» hands over the constancia as one PDF, every sheet a
+ * page. WhatsApp itself is not opened: `window.open` is recorded, and the
+ * browser has no share sheet here, so the app takes its computer route — the
+ * customer's chat with the message typed, and the PDF saved to attach.
+ */
+test("a constancia is sent on WhatsApp as a PDF", async ({ page }) => {
+  await page.addInitScript(() => {
+    const opened: string[] = [];
+    (window as unknown as { opened: string[] }).opened = opened;
+    window.open = ((url: string) => {
+      opened.push(url);
+      return null;
+    }) as typeof window.open;
+  });
+
+  const tag = uniqueTag();
+  const customer = `Envío ${tag}`;
+  const lotNumber = String(parseInt(tag, 36) % 9000 + 1000);
+
+  await logIn(page);
+  await goTo(page, "Clientes");
+  await page.getByRole("banner").getByRole("button", { name: "Nuevo cliente" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Nombre completo").fill(customer);
+  await dialog.getByLabel("Teléfono (opcional)").fill("9900-1122");
+  await dialog.getByRole("button", { name: "Crear cliente" }).click();
+  await expect(dialog).toHaveCount(0);
+
+  const lot = await sellLot(page, customer, "U", lotNumber);
+  await pay(page, customer, "15000");
+  await pay(page, customer, "135000");
+
+  const constancia = await openConstancia(page, lot);
+  await constancia.getByRole("button", { name: "Emitir constancia" }).click();
+
+  const send = constancia.getByRole("button", { name: "Enviar por WhatsApp" });
+  await expect(send).toBeEnabled({ timeout: 20_000 });
+
+  const download = page.waitForEvent("download");
+  await send.click();
+  const file = await download;
+
+  expect(file.suggestedFilename()).toMatch(/^Constancia CC-\d{8}\.pdf$/);
+  const pdf = (await import("node:fs")).readFileSync(await file.path());
+  expect(pdf.subarray(0, 5).toString()).toBe("%PDF-");
+  // The letter and its one annex sheet.
+  expect(pdf.toString("latin1").match(/\/Type\s*\/Page[^s]/g)?.length).toBe(2);
+
+  const opened = await page.evaluate(() => (window as unknown as { opened: string[] }).opened);
+  expect(opened).toHaveLength(1);
+  const chat = new URL(opened[0]!);
+  expect(chat.pathname).toBe("/50499001122");
+  expect(chat.searchParams.get("text")).toMatch(
+    new RegExp(`^Adjunto su \\*Constancia de Cancelación Total\\* del Lote ${lot} del Valle Verde\\.`),
+  );
+  await expect(constancia).toContainText("Adjúntalo en el chat con el clip y envía.");
 });

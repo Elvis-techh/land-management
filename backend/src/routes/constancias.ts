@@ -112,6 +112,7 @@ function presentConstancia(db: Db, id: string) {
       issuedByName: users.name,
       customerName: customers.fullName,
       customerIdentification: customers.identification,
+      customerPhone: customers.phone,
     })
     .from(constancias)
     .innerJoin(users, eq(users.id, constancias.issuedBy))
@@ -143,7 +144,12 @@ function presentConstancia(db: Db, id: string) {
     issuedBy: { name: row.issuedByName },
     voidedAt: row.voidedAt,
     voidReason: row.voidReason,
-    customer: { fullName: row.customerName, identification: row.customerIdentification },
+    // The phone is not printed: it is where «Enviar por WhatsApp» sends it.
+    customer: {
+      fullName: row.customerName,
+      identification: row.customerIdentification,
+      phone: row.customerPhone,
+    },
     parts,
     salePriceCents: parts.reduce((total, part) => total + part.contract.salePriceCents, 0),
     totalPaidCents: parts.reduce((total, part) => total + part.totalPaidCents, 0),

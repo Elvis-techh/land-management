@@ -1,11 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { Dialog } from "../../components/Dialog";
-import { IconClose } from "../../components/Icons";
+import { IconClose, IconWhatsApp } from "../../components/Icons";
 import type { CertifiableContract, Constancia } from "./api";
 import { coversExactly, fetchContractConstancias, issueConstancia } from "./api";
 import { ConstanciaPaper } from "./ConstanciaPaper";
+import type { ConstanciaShareOutcome } from "./constanciaShare";
+import { constanciaCaption, constanciaToPdf, sendConstanciaOnWhatsApp } from "./constanciaShare";
 
 interface ConstanciaDialogProps {
   contract: { id: string; code: string };
@@ -39,6 +41,10 @@ export function ConstanciaDialog({ contract, canIssue, onClose }: ConstanciaDial
   // On by default: the notary usually wants the detail, and leaving it out is
   // the decision somebody makes on purpose.
   const [withAnnex, setWithAnnex] = useState(true);
+  const shareStageRef = useRef<HTMLDivElement>(null);
+  const [isSending, setSending] = useState(false);
+  const [sendNote, setSendNote] = useState<{ tone: "info" | "error"; text: string } | null>(null);
+  const [pdf, setPdf] = useState<File | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -113,6 +119,83 @@ export function ConstanciaDialog({ contract, canIssue, onClose }: ConstanciaDial
     }
   };
 
+  /*
+   * The PDF, drawn as soon as the constancia is on screen and redrawn when the
+   * annex is switched on or off, so it is ready when «Enviar» is pressed.
+   *
+   * In advance, as the receipt's WhatsApp image is, because a phone only
+   * opens the share sheet during the click that asked for it, and drawing
+   * three sheets of A4 can take longer than the browser waits. Prepared on the
+   * click, the share sheet would quietly refuse.
+   */
+  useEffect(() => {
+    setPdf(null);
+
+    if (constancia === null || constancia.voidedAt !== null) {
+      return;
+    }
+
+    let cancelled = false;
+    // After the stage has laid out the sheets this render put in it.
+    const timer = window.setTimeout(() => {
+      const stage = shareStageRef.current;
+
+      if (stage === null) {
+        return;
+      }
+
+      constanciaToPdf(stage, constancia)
+        .then((file) => !cancelled && setPdf(file))
+        .catch(
+          (caught: unknown) =>
+            !cancelled &&
+            setSendNote({
+              tone: "error",
+              text: caught instanceof Error ? caught.message : "No se pudo preparar el PDF.",
+            }),
+        );
+    }, 200);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [constancia, withAnnex]);
+
+  /** Send the prepared PDF. See constanciaShare.ts for which route it takes. */
+  const send = async () => {
+    const phone = constancia?.customer.phone ?? null;
+
+    if (constancia === null || pdf === null || phone === null) {
+      return;
+    }
+
+    setSending(true);
+    setSendNote(null);
+
+    try {
+      const outcome: ConstanciaShareOutcome = await sendConstanciaOnWhatsApp(
+        pdf,
+        constanciaCaption(constancia),
+        phone,
+      );
+
+      if (outcome.status === "saved") {
+        setSendNote({
+          tone: "info",
+          text: `Se abrió el chat de ${constancia.customer.fullName} (${outcome.phone}) con el mensaje escrito, y se guardó «${outcome.fileName}». Adjúntalo en el chat con el clip y envía.`,
+        });
+      }
+    } catch (caught) {
+      setSendNote({
+        tone: "error",
+        text: caught instanceof Error ? caught.message : "No se pudo enviar la constancia.",
+      });
+    } finally {
+      setSending(false);
+    }
+  };
+
   const others = state.status === "ready" ? state.eligible.filter((c) => c.contractId !== contract.id) : [];
   const isCombined = selected.size > 1;
 
@@ -182,6 +265,11 @@ export function ConstanciaDialog({ contract, canIssue, onClose }: ConstanciaDial
         )}
         {constancia && <ConstanciaPaper constancia={constancia} withAnnex={withAnnex} />}
         {issueError && <p className="form-error">{issueError}</p>}
+        {sendNote && (
+          <p className={sendNote.tone === "error" ? "form-error" : "constancia-send-note"}>
+            {sendNote.text}
+          </p>
+        )}
       </div>
 
       <div className="modal-actions">
@@ -193,12 +281,39 @@ export function ConstanciaDialog({ contract, canIssue, onClose }: ConstanciaDial
             {isIssuing ? "Emitiendo…" : isCombined ? `Emitir constancia de ${selected.size} lotes` : "Emitir constancia"}
           </button>
         )}
+        {/* Not for a voided constancia: sending a document that says ANULADA
+            to the customer helps nobody, and neither does one with no phone. */}
+        {constancia && constancia.voidedAt === null && (
+          <button
+            type="button"
+            className="btn-secondary constancia-send"
+            onClick={() => void send()}
+            disabled={isSending || pdf === null || constancia.customer.phone === null}
+            title={
+              constancia.customer.phone === null
+                ? "Este cliente no tiene teléfono registrado"
+                : `Enviar la constancia a ${constancia.customer.fullName} por WhatsApp, en PDF`
+            }
+          >
+            <IconWhatsApp />
+            {pdf === null ? "Preparando PDF…" : isSending ? "Enviando…" : "Enviar por WhatsApp"}
+          </button>
+        )}
         {constancia && (
           <button type="button" className="btn-primary" onClick={() => window.print()}>
             Imprimir
           </button>
         )}
       </div>
+
+      {/* The copy the PDF is drawn from: laid out at A4 offscreen, like the
+          receipt's WhatsApp image, so the PDF matches the printout rather than
+          the narrow preview above. */}
+      {constancia && (
+        <div className="receipt-share-stage constancia-share-stage" ref={shareStageRef} aria-hidden="true">
+          <ConstanciaPaper constancia={constancia} withAnnex={withAnnex} />
+        </div>
+      )}
 
       {constancia &&
         createPortal(
