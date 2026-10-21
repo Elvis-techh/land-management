@@ -6,6 +6,7 @@ import { IconClose } from "../../components/Icons";
 import type { Constancia } from "./api";
 import { lookupConstancia } from "./api";
 import { ConstanciaPaper } from "./ConstanciaPaper";
+import { lotsPhrase } from "./constanciaLayout";
 
 /**
  * «Verificar constancia»: what the office does when a notary or a bank calls
@@ -76,7 +77,7 @@ export function ConstanciaVerifyDialog({ onClose }: { onClose: () => void }) {
             <p className={`constancia-verdict${result.voidedAt ? " is-void" : ""}`}>
               {result.voidedAt
                 ? `ANULADA — ${result.voidReason ?? ""}`
-                : `VÁLIDA — ${result.customer.fullName}, lote ${result.lot.code}, contrato ${result.contract.code}`}
+                : `VÁLIDA — ${result.customer.fullName}, ${lotsPhrase(result.parts)}`}
             </p>
             <ConstanciaPaper constancia={result} withAnnex />
           </>

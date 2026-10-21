@@ -1,9 +1,9 @@
 import { randomInt } from "node:crypto";
 
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 
 import type { Db } from "../db/client.js";
-import { constancias } from "../db/schema.js";
+import { constanciaContracts, constancias, contracts } from "../db/schema.js";
 
 /**
  * How a «Constancia de Cancelación Total» is identified, and how it stops
@@ -48,17 +48,21 @@ export function allocateConstanciaCode(isTaken: (code: string) => boolean): stri
 }
 
 /** A database or transaction handle — enough of one to void a constancia. */
-type ConstanciaWriter = Pick<Db, "update">;
+type ConstanciaWriter = Pick<Db, "select" | "update">;
 
 /**
- * Void the contract's standing constancia, if it has one.
+ * Void every standing constancia that speaks for this contract — its own, and
+ * any combined one it is part of.
  *
  * A constancia says the contract owes nothing. The moment that stops being true
  * — a payment reversed or corrected down and the balance reopens, or the
  * contract is cancelled or declared incumplido — the paper in the customer's
  * hands is wrong, so the record behind it is marked ANULADA, and that is what
- * looking its code up will say. The row and its code are kept: a constancia
- * that vanished cannot be told apart from one that never existed.
+ * looking its code up will say. A combined constancia is voided whole: it is
+ * one statement about all its lots, and it is no longer true of one of them.
+ * The reason names the contract, so a combined one says which lot did it. The
+ * rows and their codes are kept: a constancia that vanished cannot be told
+ * apart from one that never existed.
  *
  * Call inside the same transaction as the change that caused it.
  */
@@ -68,8 +72,25 @@ export function voidConstancias(
   reason: string,
   at: string = new Date().toISOString(),
 ): void {
+  const ids = db
+    .select({ id: constanciaContracts.constanciaId })
+    .from(constanciaContracts)
+    .where(eq(constanciaContracts.contractId, contractId))
+    .all()
+    .map((row) => row.id);
+
+  if (ids.length === 0) {
+    return;
+  }
+
+  const code = db
+    .select({ code: contracts.code })
+    .from(contracts)
+    .where(eq(contracts.id, contractId))
+    .get()?.code;
+
   db.update(constancias)
-    .set({ voidedAt: at, voidReason: reason })
-    .where(and(eq(constancias.contractId, contractId), isNull(constancias.voidedAt)))
+    .set({ voidedAt: at, voidReason: code ? `${reason} (contrato ${code})` : reason })
+    .where(and(inArray(constancias.id, ids), isNull(constancias.voidedAt)))
     .run();
 }

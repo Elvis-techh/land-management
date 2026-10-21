@@ -716,6 +716,7 @@ export const constancias = sqliteTable(
     code: text("code").notNull(),
     /** "K7M2-9XQR", for verifying it from inside Lindero. */
     lookupCode: text("lookup_code").notNull(),
+    /** The first contract it speaks for. All of them are in `constanciaContracts`. */
     contractId: text("contract_id")
       .notNull()
       .references(() => contracts.id),
@@ -734,6 +735,35 @@ export const constancias = sqliteTable(
     uniqueIndex("constancias_code_unique").on(table.code),
     uniqueIndex("constancias_lookup_code_unique").on(table.lookupCode),
     index("constancias_contract_idx").on(table.contractId),
+  ],
+);
+
+/**
+ * Which contracts a constancia speaks for.
+ *
+ * One row for an ordinary constancia, several for a combined one: a customer
+ * who paid off two lots can take one letter to the notary covering both. Every
+ * constancia has its rows here, the ones issued before combined constancias
+ * existed included (0020 copied them over), so this table alone answers
+ * "which constancias say this contract is paid?" — the question asked when a
+ * contract reopens and every one of them must be voided.
+ *
+ * `constancias.contract_id` stays as the first contract of the set, so a row
+ * written before this table still reads correctly on its own.
+ */
+export const constanciaContracts = sqliteTable(
+  "constancia_contracts",
+  {
+    constanciaId: text("constancia_id")
+      .notNull()
+      .references(() => constancias.id),
+    contractId: text("contract_id")
+      .notNull()
+      .references(() => contracts.id),
+  },
+  (table) => [
+    uniqueIndex("constancia_contracts_unique").on(table.constanciaId, table.contractId),
+    index("constancia_contracts_contract_idx").on(table.contractId),
   ],
 );
 

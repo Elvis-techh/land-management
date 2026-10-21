@@ -141,6 +141,13 @@
       "when": 1792549360283,
       "tag": "0019_constancias",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1792591801038,
+      "tag": "0020_constancia_contracts",
+      "breakpoints": true
     }
   ]
 }

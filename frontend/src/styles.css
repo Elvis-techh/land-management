@@ -3594,6 +3594,36 @@ body.is-dragging-file .proof-dropzone.is-slot:not(.is-disabled) {
   gap: 16px;
 }
 
+.constancia-lots {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.constancia-lots legend {
+  padding: 0 4px;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.constancia-lot-choice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+/* The project under a lot code in the combined constancia's table of lots. */
+.constancia-cell-note {
+  display: block;
+  color: var(--r-muted);
+  font-size: 0.85em;
+}
+
 .constancia-annex-toggle {
   display: flex;
   align-items: center;

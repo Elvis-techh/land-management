@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { after, describe, it } from "node:test";
 
-import { lots } from "../src/db/schema.js";
+import { customers, lots } from "../src/db/schema.js";
 import { CONSTANCIA_CODE_PATTERN } from "../src/lib/constancias.js";
 import { OWNER_PASSWORD, STAFF_PASSWORD, buildTestApp, login } from "./helpers.js";
 
@@ -64,8 +64,10 @@ describe("a constancia de cancelación total", async () => {
       })
     ).json().receipt;
 
-  const issue = (contractId: string, cookie = ownerCookie) =>
-    post(`/api/contracts/${contractId}/constancia`, {}, cookie);
+  const issue = (contractId: string | string[], cookie = ownerCookie) =>
+    post("/api/constancias", { contractIds: [contractId].flat() }, cookie);
+  const standing = async (contractId: string) =>
+    (await get(`/api/contracts/${contractId}/constancias`)).json().standing as Array<{ id: string }>;
 
   it("is refused while the contract still owes money", async () => {
     const contractId = await newContract();
@@ -100,12 +102,13 @@ describe("a constancia de cancelación total", async () => {
     assert.match(constancia.code, CONSTANCIA_CODE_PATTERN);
     assert.match(constancia.lookupCode, /^[0-9A-Z]{4}-[0-9A-Z]{4}$/);
     assert.equal(constancia.voidedAt, null);
-    assert.equal(constancia.contract.salePriceCents, lempiras(50_000));
+    assert.equal(constancia.parts.length, 1);
+    assert.equal(constancia.salePriceCents, lempiras(50_000));
     assert.equal(constancia.customer.fullName.length > 0, true);
     assert.equal(constancia.totalPaidCents, lempiras(50_000));
     assert.equal(constancia.lastPaidOn, "2026-03-05");
     assert.deepEqual(
-      constancia.payments.map((payment: { paidOn: string; amountCents: number }) => [
+      constancia.parts[0].payments.map((payment: { paidOn: string; amountCents: number }) => [
         payment.paidOn,
         payment.amountCents,
       ]),
@@ -115,8 +118,8 @@ describe("a constancia de cancelación total", async () => {
         ["2026-03-05", lempiras(35_000)],
       ],
     );
-    assert.equal(constancia.payments[0].receiptCode, prima.code);
-    assert.equal(constancia.payments[0].type, "down_payment");
+    assert.equal(constancia.parts[0].payments[0].receiptCode, prima.code);
+    assert.equal(constancia.parts[0].payments[0].type, "down_payment");
   });
 
   it("is issued once: asking again hands back the same one", async () => {
@@ -128,7 +131,7 @@ describe("a constancia de cancelación total", async () => {
 
     assert.equal(second.id, first.id);
     assert.equal(second.code, first.code);
-    assert.equal((await get(`/api/contracts/${contractId}/constancia`)).json().constancia.id, first.id);
+    assert.deepEqual((await standing(contractId)).map((c) => c.id), [first.id]);
   });
 
   it("is verified from its code, however it is typed", async () => {
@@ -156,7 +159,7 @@ describe("a constancia de cancelación total", async () => {
     const looked = (await get(`/api/constancias/lookup/${original.lookupCode}`)).json().constancia;
     assert.notEqual(looked.voidedAt, null, "the code now reads ANULADA");
     assert.match(looked.voidReason, /saldo pendiente/);
-    assert.equal((await get(`/api/contracts/${contractId}/constancia`)).json().constancia, null);
+    assert.deepEqual(await standing(contractId), []);
     assert.equal((await issue(contractId)).statusCode, 409);
 
     await pay(contractId, "2026-01-20", 50_000, "full_payment");
@@ -180,5 +183,106 @@ describe("a constancia de cancelación total", async () => {
     const looked = (await get(`/api/constancias/${constancia.id}`)).json().constancia;
     assert.notEqual(looked.voidedAt, null);
     assert.match(looked.voidReason, /cancelado: Acuerdo con el cliente/);
+  });
+
+  describe("for several lots at once", () => {
+    it("speaks for every lot chosen, with their values added up", async () => {
+      const first = await newContract();
+      const second = await newContract();
+      await pay(first, "2026-01-10", 50_000, "full_payment");
+      await pay(second, "2026-02-10", 10_000, "down_payment");
+      await pay(second, "2026-03-10", 40_000, "full_payment");
+
+      const response = await issue([second, first]);
+      assert.equal(response.statusCode, 200);
+      const { constancia } = response.json();
+
+      assert.deepEqual(
+        constancia.parts.map((part: { contract: { id: string } }) => part.contract.id),
+        [first, second],
+        "in lot order, whatever order they were asked in",
+      );
+      assert.equal(constancia.salePriceCents, lempiras(100_000));
+      assert.equal(constancia.totalPaidCents, lempiras(100_000));
+      assert.equal(constancia.lastPaidOn, "2026-03-10");
+      assert.equal(constancia.parts[1].payments.length, 2);
+
+      const again = (await issue([first, second])).json().constancia;
+      assert.equal(again.id, constancia.id, "the same set hands back the same constancia");
+    });
+
+    it("lives beside each lot's own constancia, and is voided whole when one lot reopens", async () => {
+      const first = await newContract();
+      const second = await newContract();
+      const firstReceipt = await pay(first, "2026-01-10", 50_000, "full_payment");
+      await pay(second, "2026-01-10", 50_000, "full_payment");
+
+      const own = (await issue(first)).json().constancia;
+      const othersOwn = (await issue(second)).json().constancia;
+      const combined = (await issue([first, second])).json().constancia;
+
+      assert.notEqual(combined.id, own.id);
+      assert.deepEqual(new Set((await standing(first)).map((c) => c.id)), new Set([own.id, combined.id]));
+
+      await post(`/api/receipts/${firstReceipt.id}/void`, { reason: "Cheque rebotado" });
+
+      const reread = async (id: string) => (await get(`/api/constancias/${id}`)).json().constancia;
+      const voided = await reread(combined.id);
+
+      assert.notEqual((await reread(own.id)).voidedAt, null);
+      assert.notEqual(voided.voidedAt, null);
+      assert.match(voided.voidReason, /contrato CT-/, "says which lot reopened it");
+      assert.equal((await reread(othersOwn.id)).voidedAt, null, "the other lot's own still stands");
+    });
+
+    it("lists what can go on one: the customer's paid-off contracts only", async () => {
+      const paid = await newContract();
+      const owing = await newContract();
+      await pay(paid, "2026-01-10", 50_000, "full_payment");
+      await pay(owing, "2026-01-10", 10_000, "down_payment");
+
+      const { eligible } = (await get(`/api/contracts/${paid}/constancias`)).json();
+      const ids = eligible.map((row: { contractId: string }) => row.contractId);
+
+      assert.ok(ids.includes(paid));
+      assert.ok(!ids.includes(owing));
+      assert.equal((await issue([paid, owing])).json().error, "not_paid_off");
+    });
+
+    it("is one customer's: lots of two customers cannot share one", async () => {
+      const mine = await newContract();
+      await pay(mine, "2026-01-10", 50_000, "full_payment");
+
+      const otherCustomer = randomUUID();
+      db.insert(customers)
+        .values({ id: otherCustomer, fullName: "Otra Clienta", phone: "+50499990002", customerSince: "2026-01-01" })
+        .run();
+      lotNumber += 1;
+      const lotId = randomUUID();
+      db.insert(lots)
+        .values({ id: lotId, projectId: ids.projectId, code: `CT-${lotNumber}`, areaM2: 300, basePriceCents: lempiras(20_000) })
+        .run();
+      const theirs = (
+        await post("/api/contracts", {
+          customerId: otherCustomer,
+          lotId,
+          kind: "contract",
+          saleType: "cash",
+          salePriceCents: lempiras(20_000),
+          downPaymentCents: 0,
+          signedOn: "2026-01-10",
+        })
+      ).json().contract.id;
+      await post("/api/receipts", {
+        customerId: otherCustomer,
+        paidOn: "2026-01-10",
+        method: "cash",
+        lines: [{ contractId: theirs, amountCents: lempiras(20_000), type: "full_payment" }],
+      });
+
+      const response = await issue([mine, theirs]);
+      assert.equal(response.statusCode, 409);
+      assert.equal(response.json().error, "different_customers");
+    });
   });
 });
