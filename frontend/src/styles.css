@@ -3194,20 +3194,25 @@ body.is-dragging-file .proof-dropzone.is-slot:not(.is-disabled) {
   gap: 8px;
 }
 
-.receipt-send {
+/* The constancia's «Enviar por WhatsApp» too: without a size its icon grew to
+   fill the dialog's footer on a phone. */
+.receipt-send,
+.constancia-send {
   display: inline-flex;
   align-items: center;
   gap: 6px;
 }
 
-.receipt-send svg {
+.receipt-send svg,
+.constancia-send svg {
   width: 15px;
   height: 15px;
   /* The glyph sits optically low against a capital E without this. */
   margin-top: -1px;
 }
 
-.receipt-send:disabled {
+.receipt-send:disabled,
+.constancia-send:disabled {
   opacity: 0.55;
   cursor: default;
 }

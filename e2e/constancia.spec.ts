@@ -243,6 +243,9 @@ test("a constancia is sent on WhatsApp as a PDF", async ({ page }) => {
 
   const send = constancia.getByRole("button", { name: "Enviar por WhatsApp" });
   await expect(send).toBeEnabled({ timeout: 20_000 });
+  // A button's height, not a poster: the icon once had no size and filled the
+  // footer on a phone, pushing the rest of the row out of sight.
+  expect((await send.boundingBox())!.height).toBeLessThan(60);
 
   const download = page.waitForEvent("download");
   await send.click();
