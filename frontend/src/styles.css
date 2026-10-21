@@ -3449,6 +3449,189 @@ body.is-dragging-file .proof-dropzone.is-slot:not(.is-disabled) {
   margin: 0;
 }
 
+/* ---------- constancia de cancelación total ---------- */
+
+/*
+ * The document reuses the receipt's paper, letterhead and signature
+ * (`.receipt-*`, above), so only what a letter has and a receipt does not is
+ * here: the title, the body text, the payment history and the seal.
+ */
+
+/* The copy that prints. Off screen until `@media print` below. */
+.constancia-print-root {
+  display: none;
+}
+
+.constancia-verify-row {
+  display: flex;
+  justify-content: flex-end;
+  margin: -6px 0 12px;
+  font-size: 0.8125rem;
+}
+
+.constancia-dialog-body {
+  padding: 20px 26px 8px;
+}
+
+.constancia-dialog-body .receipt-paper {
+  margin: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.constancia-verify-form {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  padding: 20px 26px 0;
+}
+
+.constancia-verify-form .form-field {
+  flex: 1;
+}
+
+.constancia-verify-form input {
+  font-family: var(--font-mono, monospace);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.constancia-verdict {
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: #EEF8F2;
+  color: #1E7B4C;
+  font-weight: 700;
+}
+
+.constancia-verdict.is-void {
+  background: #FDECEC;
+  color: #D32F2F;
+}
+
+.constancia-title {
+  margin: 0.4em 0 0.25em;
+  color: var(--r-primary);
+  font-size: 1.75em;
+  letter-spacing: 0.02em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.constancia-subtitle {
+  margin: 0 0 1.6em;
+  color: var(--r-muted);
+  text-align: center;
+}
+
+.constancia-body {
+  margin: 0 0 1.3em;
+  font-size: 1.15em;
+  line-height: 1.6;
+}
+
+/* "(L. 150,000.00)" never split after its "L.". */
+.constancia-figure {
+  white-space: nowrap;
+}
+
+.constancia-history {
+  margin-bottom: 1.3em;
+  padding: 1em 1.15em;
+  border: 1px solid var(--r-border);
+  border-radius: 8px;
+}
+
+.constancia-history h4 {
+  display: block;
+  margin: 0 0 0.6em;
+}
+
+/* Undo the app's table furniture, as `.receipt-items` does. */
+.constancia-history table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: inherit;
+}
+
+.constancia-history th,
+.constancia-history td {
+  padding: 0.35em 0.5em 0.35em 0;
+  border-bottom: 1px solid #EDF2F7;
+  font-size: inherit;
+  text-align: left;
+  white-space: normal;
+}
+
+.constancia-history th {
+  border-bottom-color: var(--r-border);
+  color: var(--r-muted);
+  font-size: 0.8em;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.constancia-history tbody tr:hover {
+  background: none;
+}
+
+.constancia-history .receipt-right {
+  padding-right: 0;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.constancia-history tfoot td {
+  padding-top: 0.55em;
+  border-bottom: none;
+  font-weight: 700;
+}
+
+.constancia-seal-row {
+  margin-bottom: 0.6em;
+  text-align: center;
+}
+
+.constancia-seal {
+  display: inline-block;
+  padding: 0.5em 1.2em;
+  border: 2px solid #1E7B4C;
+  border-radius: 6px;
+  color: #1E7B4C;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  transform: rotate(-3deg);
+}
+
+@media print {
+  /*
+   * With a constancia open, the copy in `.constancia-print-root` is the only
+   * thing on the page: everything else under <body>, the dialog and the app
+   * behind it included, is hidden. See ConstanciaDialog.
+   */
+  body.has-constancia > :not(.constancia-print-root) {
+    display: none !important;
+  }
+
+  body.has-constancia > .constancia-print-root {
+    display: block;
+  }
+
+  /* Justified on paper, where the line is wide enough to take it. On a
+     phone's narrow column it opens holes between the words. */
+  .constancia-body {
+    text-align: justify;
+    hyphens: auto;
+  }
+
+  /* A long history may run onto a second sheet; a row is never cut in half. */
+  .constancia-history tr,
+  .constancia-seal-row {
+    break-inside: avoid;
+  }
+}
+
 /* ---------- mobile overlay ---------- */
 .sidebar-overlay {
   position: fixed;

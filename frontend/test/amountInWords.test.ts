@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { amountInWords } from "../src/lib/amountInWords";
+import { amountInWords, dateInWords } from "../src/lib/amountInWords";
 import { cents } from "../src/lib/money";
 
 const lempiras = (amount: number) => cents(Math.round(amount * 100));
@@ -61,5 +61,17 @@ describe("amountInWords", () => {
       amountInWords(lempiras(21_001_001)),
       "VEINTIÚN MILLONES MIL UN LEMPIRAS EXACTOS",
     );
+  });
+});
+
+describe("dateInWords", () => {
+  it("writes the date a document is signed on", () => {
+    assert.equal(dateInWords("2026-10-13"), "a los trece días del mes de octubre de dos mil veintiséis");
+    assert.equal(dateInWords("2026-03-21"), "a los veintiún días del mes de marzo de dos mil veintiséis");
+    assert.equal(dateInWords("2027-03-01"), "al primer día del mes de marzo de dos mil veintisiete");
+  });
+
+  it("keeps «uno» whole in a year, which stands alone", () => {
+    assert.equal(dateInWords("2031-01-31"), "a los treinta y un días del mes de enero de dos mil treinta y uno");
   });
 });

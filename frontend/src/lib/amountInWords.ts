@@ -57,8 +57,12 @@ function belowThousand(n: number, beforeNoun: boolean): string {
   return parts.join(" ");
 }
 
-/** A whole number of lempiras in words, shortened as it stands before "lempiras". */
-function wholeNumber(n: number): string {
+/**
+ * A whole number in words. `beforeNoun` (the default) shortens a final "uno"
+ * as it stands before "lempiras" or "días"; a year stands alone and keeps it:
+ * "dos mil veintiuno".
+ */
+function wholeNumber(n: number, beforeNoun = true): string {
   if (n === 0) {
     return "CERO";
   }
@@ -78,7 +82,7 @@ function wholeNumber(n: number): string {
   }
 
   if (rest > 0) {
-    parts.push(belowThousand(rest, true));
+    parts.push(belowThousand(rest, beforeNoun));
   }
 
   return parts.join(" ");
@@ -102,4 +106,22 @@ export function amountInWords(amount: Cents): string {
   }
 
   return `${words}${of} ${noun} CON ${String(centavos).padStart(2, "0")}/100`;
+}
+
+const MONTHS = [
+  "enero", "febrero", "marzo", "abril", "mayo", "junio",
+  "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+];
+
+/**
+ * A date written out the way a notarial document closes:
+ *
+ *   a los trece días del mes de octubre de dos mil veintiséis
+ *   al primer día del mes de marzo de dos mil veintisiete
+ */
+export function dateInWords(isoDate: string): string {
+  const [year, month, day] = isoDate.split("-").map(Number);
+  const days = day === 1 ? "al primer día" : `a los ${wholeNumber(day!).toLowerCase()} días`;
+
+  return `${days} del mes de ${MONTHS[month! - 1]} de ${wholeNumber(year!, false).toLowerCase()}`;
 }
