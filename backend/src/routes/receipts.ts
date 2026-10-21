@@ -30,7 +30,7 @@ import {
 import { recordAudit } from "../lib/audit.js";
 import { moneyRefusal, syncContractLifecycle } from "../lib/contractLifecycle.js";
 import type { ContractTerms, SaleType } from "../lib/contracts.js";
-import { appliedInstallments, buildSchedule } from "../lib/contracts.js";
+import { appliedInstallments, assessContract, buildSchedule } from "../lib/contracts.js";
 import { orderLedger, receiptFigures, replayContract } from "../lib/ledger.js";
 import { businessToday } from "../lib/time.js";
 import {
@@ -200,6 +200,33 @@ type ContractDetail = {
   projectName: string;
 };
 
+/**
+ * What the lot owes next once this receipt's money is in: the cuota (or the
+ * rest of the prima) the customer should expect to pay, for the WhatsApp
+ * message that goes with the receipt. `null` once the lot is paid off.
+ *
+ * Measured at the receipt's own place in the ledger and on its own date, like
+ * every other figure on it, so an old receipt still says what was next then.
+ */
+function nextDueAfter(detail: ContractDetail, paidAfterCents: number, asOf: string) {
+  const health = assessContract(termsOf(detail), paidAfterCents, asOf);
+
+  if (health.settled || health.nextDueOn === null) {
+    return null;
+  }
+
+  return {
+    dueOn: health.nextDueOn,
+    /** What it still needs, after any advance. */
+    amountCents: health.nextDueAmountCents,
+    /** Already paid towards it by this or earlier payments. */
+    creditCents: health.nextDueCreditCents,
+    isDownPayment: health.nextDueIsDownPayment,
+    /** Whole cuotas paid ahead of the schedule on that date. */
+    monthsAhead: health.monthsAhead,
+  };
+}
+
 function termsOf(detail: ContractDetail): ContractTerms {
   return {
     saleType: detail.saleType as SaleType,
@@ -360,6 +387,11 @@ function presentReceipts(db: Db, rows: readonly ReceiptRow[], includeLines: bool
                         detail.salePriceCents - line.balanceAfterCents,
                       )
                     : [],
+                /** What this lot owes next, for the message sent with the receipt. */
+                nextDue:
+                  detail && line
+                    ? nextDueAfter(detail, detail.salePriceCents - line.balanceAfterCents, row.issuedOn)
+                    : null,
               };
             }),
           }
