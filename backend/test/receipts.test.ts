@@ -185,6 +185,52 @@ describe("issuing a receipt", () => {
     await app.close();
   });
 
+  it("says what each lot owes next, for the message sent with the receipt", async () => {
+    const { app, db, ids } = await buildTestApp();
+    const cookie = await login(app, "owner@test.hn", OWNER_PASSWORD);
+    const secondId = addSecondContract(db, ids);
+
+    const pay = async (paidOn: string, amount: number) => {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/receipts",
+        headers: { cookie },
+        payload: {
+          customerId: ids.customerId,
+          paidOn,
+          method: "cash",
+          lines: [{ contractId: secondId, amountCents: lempiras(amount), type: "installment" }],
+        },
+      });
+
+      return (response.json() as { receipt: Record<string, any> }).receipt.lines[0].nextDue;
+    };
+
+    // Part of the L 10,000 prima: the rest of it is next.
+    const prima = await pay("2026-01-10", 4_000);
+    assert.equal(prima.isDownPayment, true);
+    assert.equal(prima.amountCents, lempiras(6_000));
+    assert.equal(prima.creditCents, lempiras(4_000));
+
+    // The rest of the prima and L 1,000 of cuota 1: what cuota 1 still needs.
+    const abono = await pay("2026-02-01", 7_000);
+    assert.equal(abono.isDownPayment, false);
+    assert.equal(abono.dueOn, "2026-02-05");
+    assert.equal(abono.amountCents, lempiras(2_000));
+    assert.equal(abono.creditCents, lempiras(1_000));
+
+    // Cuota 1 finished and L 500 into cuota 2: cuota 2 is next, already started.
+    const ahead = await pay("2026-02-05", 2_500);
+    assert.equal(ahead.dueOn, "2026-03-05");
+    assert.equal(ahead.amountCents, lempiras(2_500));
+    assert.equal(ahead.creditCents, lempiras(500));
+
+    // Everything else: nothing is next.
+    assert.equal(await pay("2026-02-20", 66_500), null);
+
+    await app.close();
+  });
+
   it("refuses money for a contract that is not this customer's", async () => {
     const { app, db, ids } = await buildTestApp();
     const cookie = await login(app, "owner@test.hn", OWNER_PASSWORD);

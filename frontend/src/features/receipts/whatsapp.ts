@@ -42,18 +42,7 @@
  */
 
 import type { Receipt } from "../../types";
-
-/**
- * What the customer reads under the receipt.
- *
- * Deliberately a courtesy note and not a summary. It used to restate the code,
- * the amount and the new balance — which is every figure that is already on the
- * image, in a worse format, and it made the chat look like a machine had
- * written it. The picture is the document; this is the message a person would
- * type alongside it.
- */
-export const THANK_YOU_MESSAGE =
-  "Gracias por su reciente abono. Cualquier duda me deja saber.";
+import { receiptMessage } from "./receiptMessage";
 
 /**
  * The message to send with this particular receipt.
@@ -69,7 +58,10 @@ export function receiptCaption(receipt: Receipt): string {
     return `*RECIBO ANULADO* — ${receipt.voidReason ?? "sin motivo registrado"}`;
   }
 
-  return THANK_YOU_MESSAGE;
+  // What the payment did and what is next — see `receiptMessage`. It used to
+  // be the same «Gracias por su reciente abono» for every receipt, which
+  // answered nothing the customer actually wanted to know.
+  return receiptMessage(receipt);
 }
 
 /** Where a receipt got to, so the screen can tell the user what to do next. */

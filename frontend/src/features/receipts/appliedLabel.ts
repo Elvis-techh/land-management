@@ -25,6 +25,45 @@ function isSliver(installment: AppliedInstallment): boolean {
   return installment.applied < installment.installment * SLIVER_SHARE;
 }
 
+/** What a payment did to a lot's schedule, before it is put into words. */
+export type AppliedSummary =
+  /** Finished nothing: part of one cuota, and what that cuota still needs. */
+  | { kind: "abono"; installment: AppliedInstallment }
+  /** Finished cuotas `first` to `last`, `count` of them. */
+  | { kind: "finished"; first: number; last: number; count: number };
+
+/**
+ * Which cuotas a payment was FOR, the decision behind both the receipt line
+ * below and the WhatsApp message, so the two can never name different cuotas.
+ * `null` when it touched none: a prima, or a cash sale with no schedule.
+ */
+export function appliedSummary(line: Pick<ReceiptLine, "appliedTo">): AppliedSummary | null {
+  if (line.appliedTo.length === 0) {
+    return null;
+  }
+
+  const carried = line.appliedTo.filter((installment) => !isSliver(installment));
+  const touched = carried.length > 0 ? carried : line.appliedTo;
+  const finished = touched.filter((installment) => installment.settled);
+
+  if (finished.length === 0) {
+    // Strictly greater, so an exact tie keeps the earlier cuota: `appliedTo`
+    // arrives in schedule order.
+    const principal = touched.reduce((best, installment) =>
+      installment.applied > best.applied ? installment : best,
+    );
+
+    return { kind: "abono", installment: principal };
+  }
+
+  return {
+    kind: "finished",
+    first: finished[0]!.number,
+    last: finished[finished.length - 1]!.number,
+    count: finished.length,
+  };
+}
+
 /**
  * What this money did to the lot's schedule, in one line under the lot code:
  *
@@ -41,41 +80,34 @@ function isSliver(installment: AppliedInstallment): boolean {
  * what is still missing.
  */
 export function appliedLabel(line: AppliedLabelLine, money: MoneyView): string | null {
-  if (line.appliedTo.length === 0) {
+  const summary = appliedSummary(line);
+
+  if (summary === null) {
     return null;
   }
-
-  const carried = line.appliedTo.filter((installment) => !isSliver(installment));
-  const touched = carried.length > 0 ? carried : line.appliedTo;
-  const finished = touched.filter((installment) => installment.settled);
 
   // "de 12" only when we know the total. A cash sale has no schedule, and
   // "cuota 3 de 0" is worse than saying nothing.
   const total = line.installmentCount > 0 ? ` de ${line.installmentCount}` : "";
 
-  if (finished.length === 0) {
-    // Strictly greater, so an exact tie keeps the earlier cuota: `appliedTo`
-    // arrives in schedule order.
-    const principal = touched.reduce((best, installment) =>
-      installment.applied > best.applied ? installment : best,
-    );
+  if (summary.kind === "abono") {
+    const { number, remaining } = summary.installment;
 
-    return `Abono a cuota ${principal.number}${total} · faltan ${formatDocumentMoney(principal.remaining, money)}`;
+    return `Abono a cuota ${number}${total} · faltan ${formatDocumentMoney(remaining, money)}`;
   }
 
-  const first = finished[0]!.number;
-  const last = finished[finished.length - 1]!.number;
+  const { first, last, count } = summary;
   const paidOff = line.newBalance === 0;
 
-  if (paidOff && finished.length > 1) {
+  if (paidOff && count > 1) {
     return `Pago total · cuotas ${first} a ${last}${total}`;
   }
 
-  if (finished.length === 1) {
+  if (count === 1) {
     return `Cuota ${first}${total} · ${paidOff ? "última cuota" : "completa"}`;
   }
 
-  const range = finished.length === 2 ? `${first} y ${last}` : `${first} a ${last}`;
+  const range = count === 2 ? `${first} y ${last}` : `${first} a ${last}`;
 
   return `Cuotas ${range}${total} · completas`;
 }

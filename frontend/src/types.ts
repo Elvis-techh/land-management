@@ -466,6 +466,21 @@ export interface ReceiptLine {
   newBalance: Cents;
   /** Which cuotas this money went towards. */
   appliedTo: AppliedInstallment[];
+  /** What the lot owes next once this money is in. `null` once it is paid off. */
+  nextDue: NextDue | null;
+}
+
+/** The next cuota (or the rest of the prima), as of a receipt. */
+export interface NextDue {
+  dueOn: string;
+  /** What it still needs, after any advance. */
+  amount: Cents;
+  /** Already paid towards it. */
+  credit: Cents;
+  /** It is the rest of the prima, not a cuota. */
+  isDownPayment: boolean;
+  /** Whole cuotas paid ahead of the schedule on the receipt's date. */
+  monthsAhead: number;
 }
 
 /**
