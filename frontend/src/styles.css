@@ -1287,6 +1287,23 @@ tbody tr:hover {
   font-size: 1.0625em;
 }
 
+/* ---- how much, in words ---- */
+.receipt-words {
+  margin: 0 0 1.5em;
+  /* Part of the enlarged reading region — see `.receipt-client` above. */
+  font-size: 1.0625em;
+}
+
+.receipt-words strong {
+  color: var(--r-primary);
+  letter-spacing: 0.02em;
+}
+
+/* "(L. 5,358.08)" never split across lines, "L." on one and the figure on the next. */
+.receipt-words-figure {
+  white-space: nowrap;
+}
+
 /* ---- what the money was for ---- */
 .receipt-items {
   width: 100%;
