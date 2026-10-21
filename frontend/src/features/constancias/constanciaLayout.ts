@@ -1,9 +1,9 @@
 import type { Cents } from "../../lib/money";
 import { cents } from "../../lib/money";
 import { paymentTypeLabel } from "../receipts/paymentType";
-import type { Constancia } from "./api";
+import type { ConstanciaPart } from "./api";
 
-type Payment = Constancia["payments"][number];
+type Payment = ConstanciaPart["payments"][number];
 
 /** One line of the letter's summary: every payment of one kind, together. */
 export interface PaymentSummaryLine {
@@ -59,12 +59,48 @@ export function summarizePayments(payments: readonly Payment[]): PaymentSummaryL
 export const ANNEX_ROWS_PER_PAGE = 32;
 
 /** The history cut into annex sheets, in order. Empty when there is nothing to list. */
-export function annexPages(payments: readonly Payment[]): Payment[][] {
-  const pages: Payment[][] = [];
+export function annexPages<T>(payments: readonly T[]): T[][] {
+  const pages: T[][] = [];
 
   for (let start = 0; start < payments.length; start += ANNEX_ROWS_PER_PAGE) {
     pages.push(payments.slice(start, start + ANNEX_ROWS_PER_PAGE));
   }
 
   return pages;
+}
+
+/** One line of the annex: a payment, and which lot it was for. */
+export type AnnexRow = Payment & { lotCode: string };
+
+/**
+ * Every payment of every lot on the constancia, lot by lot and in date order
+ * within each, for the annex. A combined constancia's annex reads as one
+ * ledger with a Lote column, rather than restarting per lot.
+ */
+export function annexRows(parts: readonly ConstanciaPart[]): AnnexRow[] {
+  return parts.flatMap((part) => part.payments.map((payment) => ({ ...payment, lotCode: part.lot.code })));
+}
+
+/** "B-12", "B-12 y B-13", "B-12, B-13 y C-02". */
+export function joinSpanish(items: readonly string[]): string {
+  return items.length <= 1
+    ? (items[0] ?? "")
+    : `${items.slice(0, -1).join(", ")} y ${items[items.length - 1]}`;
+}
+
+/**
+ * The lots as the letter names them: «Lotes B-12 y B-13 del Proyecto Santiago»
+ * when they share a project, «Lote B-12 del Proyecto Santiago y Lote C-02 de
+ * Valle Verde» when they do not.
+ */
+export function lotsPhrase(parts: readonly ConstanciaPart[]): string {
+  const projects = [...new Set(parts.map((part) => part.lot.projectName))];
+
+  if (projects.length === 1) {
+    const codes = parts.map((part) => part.lot.code);
+
+    return `${codes.length === 1 ? "Lote" : "Lotes"} ${joinSpanish(codes)} del ${projects[0]}`;
+  }
+
+  return joinSpanish(parts.map((part) => `Lote ${part.lot.code} del ${part.lot.projectName}`));
 }

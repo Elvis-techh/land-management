@@ -1,10 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { Dialog } from "../../components/Dialog";
 import { IconClose } from "../../components/Icons";
-import type { Constancia } from "./api";
-import { fetchContractConstancia, issueConstancia } from "./api";
+import type { CertifiableContract, Constancia } from "./api";
+import { coversExactly, fetchContractConstancias, issueConstancia } from "./api";
 import { ConstanciaPaper } from "./ConstanciaPaper";
 
 interface ConstanciaDialogProps {
@@ -16,18 +16,24 @@ interface ConstanciaDialogProps {
 
 type State =
   | { status: "loading" }
-  | { status: "ready"; constancia: Constancia | null }
+  | { status: "ready"; eligible: CertifiableContract[]; standing: Constancia[] }
   | { status: "error"; message: string };
 
 /**
- * Show the contract's constancia, issue it if there is none, and print it.
+ * Show a constancia for this contract, issue one, and print it.
+ *
+ * When the customer has other paid-off lots, they are offered as checkboxes:
+ * ticked together, they make one combined constancia for all of them. The
+ * dialog shows whichever constancia stands for exactly the lots ticked — this
+ * contract's own, or a combined one — and offers to issue one when none does.
  *
  * Issuing is a deliberate click rather than something opening the dialog does:
  * a constancia is a legal statement, and the supervisor should be the one who
- * decides the contract is ready for it, not a side effect of looking.
+ * decides the contracts are ready for it, not a side effect of looking.
  */
 export function ConstanciaDialog({ contract, canIssue, onClose }: ConstanciaDialogProps) {
   const [state, setState] = useState<State>({ status: "loading" });
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set([contract.id]));
   const [isIssuing, setIssuing] = useState(false);
   const [issueError, setIssueError] = useState<string | null>(null);
   // On by default: the notary usually wants the detail, and leaving it out is
@@ -37,8 +43,8 @@ export function ConstanciaDialog({ contract, canIssue, onClose }: ConstanciaDial
   useEffect(() => {
     let cancelled = false;
 
-    fetchContractConstancia(contract.id)
-      .then((constancia) => !cancelled && setState({ status: "ready", constancia }))
+    fetchContractConstancias(contract.id)
+      .then(({ eligible, standing }) => !cancelled && setState({ status: "ready", eligible, standing }))
       .catch(
         (caught: unknown) =>
           !cancelled &&
@@ -65,12 +71,41 @@ export function ConstanciaDialog({ contract, canIssue, onClose }: ConstanciaDial
     return () => document.body.classList.remove("has-constancia");
   }, []);
 
+  const constancia = useMemo(
+    () =>
+      state.status === "ready"
+        ? (state.standing.find((candidate) => coversExactly(candidate, selected)) ?? null)
+        : null,
+    [state, selected],
+  );
+
+  const toggle = (contractId: string) => {
+    setIssueError(null);
+    setSelected((current) => {
+      const next = new Set(current);
+
+      if (next.has(contractId)) {
+        next.delete(contractId);
+      } else {
+        next.add(contractId);
+      }
+
+      return next;
+    });
+  };
+
   const issue = async () => {
     setIssuing(true);
     setIssueError(null);
 
     try {
-      setState({ status: "ready", constancia: await issueConstancia(contract.id) });
+      const issued = await issueConstancia([...selected]);
+
+      setState((current) =>
+        current.status === "ready"
+          ? { ...current, standing: [...current.standing.filter((c) => c.id !== issued.id), issued] }
+          : current,
+      );
     } catch (caught) {
       setIssueError(caught instanceof Error ? caught.message : "No se pudo emitir la constancia.");
     } finally {
@@ -78,7 +113,8 @@ export function ConstanciaDialog({ contract, canIssue, onClose }: ConstanciaDial
     }
   };
 
-  const constancia = state.status === "ready" ? state.constancia : null;
+  const others = state.status === "ready" ? state.eligible.filter((c) => c.contractId !== contract.id) : [];
+  const isCombined = selected.size > 1;
 
   return (
     <Dialog ariaLabel={`Constancia del contrato ${contract.code}`} size="wide" onClose={onClose}>
@@ -100,14 +136,41 @@ export function ConstanciaDialog({ contract, canIssue, onClose }: ConstanciaDial
       <div className="constancia-dialog-body">
         {state.status === "loading" && <p className="modal-description">Cargando…</p>}
         {state.status === "error" && <p className="form-error">{state.message}</p>}
+
+        {state.status === "ready" && others.length > 0 && (
+          <fieldset className="constancia-lots">
+            <legend>
+              Este cliente tiene otros lotes pagados. Marca los que van en la misma constancia.
+            </legend>
+            {state.eligible.map((candidate) => (
+              <label key={candidate.contractId} className="constancia-lot-choice">
+                <input
+                  type="checkbox"
+                  checked={selected.has(candidate.contractId)}
+                  // This contract is the one the dialog was opened from, so it
+                  // is always on the constancia.
+                  disabled={candidate.contractId === contract.id}
+                  onChange={() => toggle(candidate.contractId)}
+                />
+                <span>
+                  Lote {candidate.lotCode} · {candidate.projectName} · {candidate.contractCode}
+                </span>
+              </label>
+            ))}
+          </fieldset>
+        )}
+
         {state.status === "ready" && constancia === null && (
           <p className="modal-description">
             {canIssue
-              ? "Este contrato está pagado y todavía no tiene constancia. Al emitirla recibe su número y su código de verificación; si el contrato vuelve a tener saldo, queda ANULADA."
-              : "Este contrato todavía no tiene constancia. Pide a un supervisor que la emita."}
+              ? isCombined
+                ? `Estos ${selected.size} lotes todavía no tienen una constancia en conjunto. La constancia de cada lote por separado sigue valiendo; si alguno vuelve a tener saldo, la conjunta queda ANULADA.`
+                : "Este contrato está pagado y todavía no tiene constancia. Al emitirla recibe su número y su código de verificación; si el contrato vuelve a tener saldo, queda ANULADA."
+              : "Todavía no hay constancia para estos lotes. Pide a un supervisor que la emita."}
           </p>
         )}
-        {constancia && constancia.payments.length > 0 && (
+
+        {constancia && (
           <label className="constancia-annex-toggle">
             <input
               type="checkbox"
@@ -127,7 +190,7 @@ export function ConstanciaDialog({ contract, canIssue, onClose }: ConstanciaDial
         </button>
         {state.status === "ready" && constancia === null && canIssue && (
           <button type="button" className="btn-primary" onClick={() => void issue()} disabled={isIssuing}>
-            {isIssuing ? "Emitiendo…" : "Emitir constancia"}
+            {isIssuing ? "Emitiendo…" : isCombined ? `Emitir constancia de ${selected.size} lotes` : "Emitir constancia"}
           </button>
         )}
         {constancia && (

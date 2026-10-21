@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { ANNEX_ROWS_PER_PAGE, annexPages, summarizePayments } from "../src/features/constancias/constanciaLayout";
+import type { ConstanciaPart } from "../src/features/constancias/api";
+import {
+  ANNEX_ROWS_PER_PAGE,
+  annexPages,
+  annexRows,
+  joinSpanish,
+  lotsPhrase,
+  summarizePayments,
+} from "../src/features/constancias/constanciaLayout";
 import { cents } from "../src/lib/money";
 
 const L = (amount: number) => cents(Math.round(amount * 100));
@@ -57,5 +65,58 @@ describe("annexPages", () => {
 
   it("needs no sheet for no payments", () => {
     assert.deepEqual(annexPages([]), []);
+  });
+});
+
+function part(lotCode: string, projectName: string, paidOn: string[]): ConstanciaPart {
+  return {
+    contract: { id: lotCode, code: `CT-${lotCode}`, salePrice: L(50_000), signedOn: null },
+    lot: { code: lotCode, projectName },
+    payments: paidOn.map((date) => ({ paidOn: date, type: "installment", amount: L(25_000), receiptCode: null })),
+    totalPaid: L(50_000),
+    lastPaidOn: paidOn.at(-1) ?? null,
+  };
+}
+
+describe("lotsPhrase", () => {
+  it("names one lot, or several of one project together", () => {
+    assert.equal(lotsPhrase([part("B-12", "Proyecto Santiago", [])]), "Lote B-12 del Proyecto Santiago");
+    assert.equal(
+      lotsPhrase([part("B-12", "Proyecto Santiago", []), part("B-13", "Proyecto Santiago", [])]),
+      "Lotes B-12 y B-13 del Proyecto Santiago",
+    );
+  });
+
+  it("names each lot with its own project when they differ", () => {
+    assert.equal(
+      lotsPhrase([part("B-12", "Proyecto Santiago", []), part("C-02", "Valle Verde", [])]),
+      "Lote B-12 del Proyecto Santiago y Lote C-02 del Valle Verde",
+    );
+  });
+});
+
+describe("joinSpanish", () => {
+  it("joins with commas and a final «y»", () => {
+    assert.equal(joinSpanish(["A"]), "A");
+    assert.equal(joinSpanish(["A", "B"]), "A y B");
+    assert.equal(joinSpanish(["A", "B", "C"]), "A, B y C");
+  });
+});
+
+describe("annexRows", () => {
+  it("lists the lots one after another, each payment marked with its lot", () => {
+    const rows = annexRows([
+      part("B-12", "Proyecto Santiago", ["2026-01-05", "2026-02-05"]),
+      part("B-13", "Proyecto Santiago", ["2026-01-20"]),
+    ]);
+
+    assert.deepEqual(
+      rows.map((row) => [row.lotCode, row.paidOn]),
+      [
+        ["B-12", "2026-01-05"],
+        ["B-12", "2026-02-05"],
+        ["B-13", "2026-01-20"],
+      ],
+    );
   });
 });
