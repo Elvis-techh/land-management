@@ -30,7 +30,7 @@ import {
 import { recordAudit } from "../lib/audit.js";
 import { moneyRefusal, syncContractLifecycle } from "../lib/contractLifecycle.js";
 import type { ContractTerms, SaleType } from "../lib/contracts.js";
-import { appliedInstallments, assessContract, buildSchedule } from "../lib/contracts.js";
+import { appliedInstallments, assessContract, buildSchedule, installmentsPaid } from "../lib/contracts.js";
 import { orderLedger, receiptFigures, replayContract } from "../lib/ledger.js";
 import { businessToday } from "../lib/time.js";
 import {
@@ -217,6 +217,8 @@ function nextDueAfter(detail: ContractDetail, paidAfterCents: number, asOf: stri
 
   return {
     dueOn: health.nextDueOn,
+    /** "Cuota 5"; 0 for the rest of the prima. */
+    number: health.nextDueNumber,
     /** What it still needs, after any advance. */
     amountCents: health.nextDueAmountCents,
     /** Already paid towards it by this or earlier payments. */
@@ -224,6 +226,32 @@ function nextDueAfter(detail: ContractDetail, paidAfterCents: number, asOf: stri
     isDownPayment: health.nextDueIsDownPayment,
     /** Whole cuotas paid ahead of the schedule on that date. */
     monthsAhead: health.monthsAhead,
+  };
+}
+
+/**
+ * Where the lot stands once this receipt's money is in, for the «Estado de su
+ * cuenta» box: cuotas paid before and after (the bar shows today's apart),
+ * and whether it is behind, ahead or paid off. On the receipt's own date and
+ * at its place in the ledger, like `nextDueAfter`.
+ */
+function standingAfter(
+  detail: ContractDetail,
+  paidBeforeCents: number,
+  paidAfterCents: number,
+  asOf: string,
+) {
+  const terms = termsOf(detail);
+  const health = assessContract(terms, paidAfterCents, asOf);
+
+  return {
+    installmentsPaidBefore: installmentsPaid(terms, paidBeforeCents),
+    installmentsPaid: health.installmentsPaid,
+    /** Cuotas past their grace and still unpaid on that date. */
+    monthsBehind: health.monthsBehind,
+    downPaymentLate: health.downPaymentLate,
+    monthsAhead: health.monthsAhead,
+    settled: health.settled,
   };
 }
 
@@ -391,6 +419,16 @@ function presentReceipts(db: Db, rows: readonly ReceiptRow[], includeLines: bool
                 nextDue:
                   detail && line
                     ? nextDueAfter(detail, detail.salePriceCents - line.balanceAfterCents, row.issuedOn)
+                    : null,
+                /** Where the lot stands after it: the «Estado de su cuenta» box. */
+                standing:
+                  detail && line
+                    ? standingAfter(
+                        detail,
+                        detail.salePriceCents - line.balanceBeforeCents,
+                        detail.salePriceCents - line.balanceAfterCents,
+                        row.issuedOn,
+                      )
                     : null,
               };
             }),

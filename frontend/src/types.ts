@@ -468,11 +468,29 @@ export interface ReceiptLine {
   appliedTo: AppliedInstallment[];
   /** What the lot owes next once this money is in. `null` once it is paid off. */
   nextDue: NextDue | null;
+  /** Where the lot stands once this money is in: the «Estado de su cuenta» box. */
+  standing: LotStanding | null;
+}
+
+/** A lot's standing as of a receipt, after its money. */
+export interface LotStanding {
+  /** Cuotas fully paid before this receipt, and after it: today's are the difference. */
+  installmentsPaidBefore: number;
+  installmentsPaid: number;
+  /** Cuotas past their five days' grace and unpaid on the receipt's date. */
+  monthsBehind: number;
+  /** The prima is past its grace and incomplete. */
+  downPaymentLate: boolean;
+  /** Whole cuotas paid ahead of the schedule. */
+  monthsAhead: number;
+  settled: boolean;
 }
 
 /** The next cuota (or the rest of the prima), as of a receipt. */
 export interface NextDue {
   dueOn: string;
+  /** "Cuota 5"; 0 when it is the rest of the prima. */
+  number: number;
   /** What it still needs, after any advance. */
   amount: Cents;
   /** Already paid towards it. */

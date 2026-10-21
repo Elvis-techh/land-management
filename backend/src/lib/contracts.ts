@@ -359,6 +359,15 @@ export function outstandingInstallments(
   return outstanding;
 }
 
+/**
+ * How many cuotas the money has fully covered. Everything in the schedule that
+ * `outstandingInstallments` no longer lists, the part-paid one included in the
+ * list and so not counted.
+ */
+export function installmentsPaid(terms: ContractTerms, paidToDateCents: number): number {
+  return buildSchedule(terms).length - outstandingInstallments(terms, paidToDateCents).length;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Payment health                                                              */
 /* -------------------------------------------------------------------------- */
@@ -382,8 +391,16 @@ export interface HealthReport {
   downPaymentLate: boolean;
   /** Whole months paid in advance. Customers here routinely pay two at once. */
   monthsAhead: number;
+  /**
+   * Cuotas the money has fully covered: "4 de 12" on the receipt. A part-paid
+   * cuota is not one of them, and none is while the prima is incomplete,
+   * because every payment goes to the prima first.
+   */
+  installmentsPaid: number;
   /** The next installment falling due, or null once the term is over. */
   nextDueOn: string | null;
+  /** Its number, "cuota 5"; 0 when it is the rest of the prima, or none. */
+  nextDueNumber: number;
   /** What that installment still needs: its scheduled amount less any advance. */
   nextDueAmountCents: number;
   /** That installment's scheduled amount, the cuota as the contract states it. */
@@ -497,7 +514,9 @@ export function assessContract(
     monthsBehind,
     downPaymentLate,
     monthsAhead,
+    installmentsPaid: installmentsPaid(terms, paidToDateCents),
     nextDueOn: settled ? null : (upcoming?.dueOn ?? null),
+    nextDueNumber: settled ? 0 : (upcoming?.number ?? 0),
     nextDueAmountCents: settled ? 0 : (upcoming?.amountCents ?? 0),
     nextInstallmentCents: settled ? 0 : upcomingInFull,
     nextDueCreditCents: settled || upcoming === undefined ? 0 : upcomingInFull - upcoming.amountCents,

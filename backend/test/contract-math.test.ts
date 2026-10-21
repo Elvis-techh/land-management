@@ -224,6 +224,35 @@ describe("payment health", () => {
     assert.equal(report.nextDueCreditCents, 0);
   });
 
+  it("counts the cuotas fully paid and names the next one, for the receipt's «Estado de su cuenta»", () => {
+    // Two cuotas in, and 2,700 towards the third: «2 de 24», next is cuota 3.
+    const partial = assessContract(financed, paidThrough(2) + lempiras(2_700), "2026-04-01");
+
+    assert.equal(partial.installmentsPaid, 2);
+    assert.equal(partial.nextDueNumber, 3);
+
+    // Three at once: «3 de 24», and the next one owed is cuota 4.
+    const ahead = assessContract(financed, paidThrough(3), "2026-03-05");
+
+    assert.equal(ahead.installmentsPaid, 3);
+    assert.equal(ahead.nextDueNumber, 4);
+  });
+
+  it("counts no cuota and names the prima while the prima is short", () => {
+    const report = assessContract(financed, lempiras(10_000), "2026-01-20");
+
+    assert.equal(report.installmentsPaid, 0);
+    assert.equal(report.nextDueNumber, 0);
+  });
+
+  it("counts every cuota once the contract is paid off", () => {
+    const report = assessContract(financed, financed.salePriceCents, "2027-01-20");
+
+    assert.equal(report.installmentsPaid, 24);
+    assert.equal(report.nextDueNumber, 0);
+    assert.equal(report.settled, true);
+  });
+
   it("asks for the rest of the prima, not cuota 1, while the prima is short", () => {
     // L 10,000 of the L 25,000 prima paid. The next payment fills the prima
     // before it reaches any cuota, so that is what is owed next.

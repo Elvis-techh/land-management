@@ -58,11 +58,13 @@ interface ReceiptResponse {
     }>;
     nextDue: {
       dueOn: string;
+      number: number;
       amountCents: number;
       creditCents: number;
       isDownPayment: boolean;
       monthsAhead: number;
     } | null;
+    standing: ReceiptLine["standing"];
   }>;
 }
 
@@ -83,6 +85,7 @@ function toLine(line: NonNullable<ReceiptResponse["lines"]>[number]): ReceiptLin
     })),
     nextDue: line.nextDue && {
       dueOn: line.nextDue.dueOn,
+      number: line.nextDue.number,
       amount: cents(line.nextDue.amountCents),
       credit: cents(line.nextDue.creditCents),
       isDownPayment: line.nextDue.isDownPayment,

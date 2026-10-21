@@ -8,6 +8,8 @@ import type { MoneyView } from "../../lib/money";
 import { cents, formatDocumentMoney } from "../../lib/money";
 import { formatPhone } from "../../lib/phone";
 import type { Receipt } from "../../types";
+import type { AccountStatus } from "./accountStatus";
+import { accountStatus } from "./accountStatus";
 import { appliedLabel } from "./appliedLabel";
 import { isFinalReceipt } from "./finalReceipt";
 
@@ -64,6 +66,53 @@ function clientDetail(customer: Receipt["customer"]): string | null {
   return parts.length > 0 ? parts.join(" · ") : null;
 }
 
+/** Cuotas as a bar: one segment each, today's lighter. A long term is one bar. */
+function PaidBar({ before, today, total }: AccountStatus["paid"]) {
+  if (total > 36) {
+    return (
+      <div className="receipt-status-bar is-continuous" aria-hidden="true">
+        <i className="is-paid" style={{ width: `${(100 * before) / total}%` }} />
+        <i className="is-today" style={{ width: `${(100 * today) / total}%` }} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="receipt-status-bar" aria-hidden="true">
+      {Array.from({ length: total }, (_, index) => (
+        <i
+          key={index}
+          className={index < before ? "is-paid" : index < before + today ? "is-today" : undefined}
+        />
+      ))}
+    </div>
+  );
+}
+
+function StatusRow({ row }: { row: AccountStatus }) {
+  return (
+    <div className="receipt-status-row">
+      <div className="receipt-status-cell">
+        <span className="receipt-status-key">
+          PRÓXIMA CUOTA{row.lotCode ? ` · ${row.lotCode}` : ""}
+        </span>
+        <span className="receipt-status-value">{row.next.value}</span>
+        <span className="receipt-status-note">{row.next.note}</span>
+      </div>
+      <div className="receipt-status-cell">
+        <span className="receipt-status-key">CUOTAS PAGADAS</span>
+        <span className="receipt-status-value">{row.paid.label}</span>
+        <PaidBar {...row.paid} />
+      </div>
+      <div className="receipt-status-cell">
+        <span className="receipt-status-key">ESTADO</span>
+        <span className={`receipt-status-badge is-${row.status.tone}`}>{row.status.label}</span>
+        <span className="receipt-status-note">{row.status.note}</span>
+      </div>
+    </div>
+  );
+}
+
 /**
  * The type size to print this particular receipt at, so that all of it lands on
  * one sheet of A4.
@@ -90,6 +139,9 @@ function clientDetail(customer: Receipt["customer"]): string | null {
  *                  + 36px for a note
  *                  + 62px for the ANULADO banner
  *                  + 12px for the final receipt's «Contrato pagado» line
+ *                  + 58px for the «Estado de su cuenta» box, when a lot
+ *                    on the receipt has cuotas
+ *                  + 85px per lot row in that box
  *
  * `USABLE_PX` is deliberately well short of the page, and it is the same budget
  * `.receipt-paper`'s `min-height: 264mm` uses in the print stylesheet — the two
@@ -114,11 +166,13 @@ function clientDetail(customer: Receipt["customer"]): string | null {
 const USABLE_PX = 1000;
 
 function printBaseFor(receipt: Receipt): string {
+  const statusRows = accountStatus(receipt.lines, receipt.issuedOn).length;
   const estimatedPx =
     981 +
     68 * receipt.lines.length +
     (receipt.voidedAt ? 62 : 0) +
-    (isFinalReceipt(receipt) ? 12 : 0);
+    (isFinalReceipt(receipt) ? 12 : 0) +
+    (statusRows > 0 ? 58 + 85 * statusRows : 0);
 
   const points = (10 * USABLE_PX) / estimatedPx;
 
@@ -163,6 +217,7 @@ export function ReceiptPaper({ receipt, money }: ReceiptPaperProps) {
 
   const detail = clientDetail(receipt.customer);
   const isFinal = isFinalReceipt(receipt);
+  const standing = accountStatus(receipt.lines, receipt.issuedOn);
   const barcode = code128Geometry(receipt.code);
 
   return (
@@ -312,6 +367,19 @@ export function ReceiptPaper({ receipt, money }: ReceiptPaperProps) {
           )}
         </div>
       </div>
+
+      {/* What now: the next cuota, how far along, and whether it is up to
+          date. One row per lot with cuotas; none for a cash sale. */}
+      {standing.length > 0 && (
+        <div className="receipt-status">
+          <div className="receipt-status-head">
+            <span className="receipt-label">ESTADO DE SU CUENTA AL {longDate(receipt.issuedOn).toUpperCase()}</span>
+          </div>
+          {standing.map((row) => (
+            <StatusRow key={row.paymentId} row={row} />
+          ))}
+        </div>
+      )}
 
       {/*
         The internal note is deliberately NOT on the document either.

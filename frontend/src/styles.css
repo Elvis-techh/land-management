@@ -1519,6 +1519,125 @@ tbody tr:hover {
 }
 
 /*
+ * «Estado de su cuenta»: next cuota, cuotas paid, and up to date or not.
+ * Three cells to a lot, one row per lot. See features/receipts/accountStatus.ts.
+ */
+.receipt-status {
+  margin-bottom: 1.6em;
+  border: 1px solid var(--r-border);
+  border-radius: 8px;
+}
+
+.receipt-status-head {
+  padding: 0.6em 1.1em;
+  border-bottom: 1px solid var(--r-border);
+  border-radius: 8px 8px 0 0;
+  background: var(--r-highlight);
+}
+
+.receipt-status-row {
+  display: grid;
+  grid-template-columns: 1.25fr 1fr 1fr;
+}
+
+/* Heavier than the lines between cells, so each lot reads as its own row. */
+.receipt-status-row + .receipt-status-row {
+  border-top: 2px solid var(--r-border);
+}
+
+.receipt-status-cell {
+  min-width: 0;
+  padding: 0.85em 1.1em;
+}
+
+.receipt-status-cell + .receipt-status-cell {
+  border-left: 1px solid var(--r-border);
+}
+
+.receipt-status-key {
+  display: block;
+  margin-bottom: 0.35em;
+  color: var(--r-muted);
+  font-size: 0.8125em;
+  font-weight: bold;
+  letter-spacing: 0.5px;
+}
+
+.receipt-status-value {
+  display: block;
+  color: var(--r-primary);
+  font-size: 1.15em;
+  font-weight: 700;
+}
+
+.receipt-status-note {
+  display: block;
+  margin-top: 0.15em;
+  color: var(--r-muted);
+  font-size: 0.95em;
+}
+
+.receipt-status-bar {
+  display: flex;
+  gap: 2px;
+  margin-top: 0.5em;
+}
+
+.receipt-status-bar i {
+  flex: 1;
+  height: 0.55em;
+  border-radius: 2px;
+  background: #E2E8F0;
+}
+
+/* A long term: one bar, filled in proportion, rather than sixty slivers. */
+.receipt-status-bar.is-continuous {
+  gap: 0;
+  overflow: hidden;
+  height: 0.55em;
+  border-radius: 2px;
+  background: #E2E8F0;
+}
+
+.receipt-status-bar.is-continuous i {
+  flex: none;
+  border-radius: 0;
+}
+
+.receipt-status-bar i.is-paid {
+  background: var(--r-primary);
+}
+
+/* The cuotas this receipt finished: lighter, so "today" reads at a glance. */
+.receipt-status-bar i.is-today {
+  background: #7C8AA5;
+}
+
+.receipt-status-badge {
+  display: inline-block;
+  padding: 0.15em 0.6em;
+  border-radius: 999px;
+  font-size: 1em;
+  font-weight: 700;
+}
+
+.receipt-status-badge.is-ok,
+.receipt-status-badge.is-paid {
+  background: var(--r-green-bg);
+  color: var(--r-green);
+}
+
+.receipt-status-badge.is-ahead {
+  background: #EAF1FB;
+  color: #1F4E8C;
+}
+
+.receipt-status-badge.is-late {
+  background: #FDECEC;
+  color: var(--r-red);
+}
+
+/*
  * One column instead of two when there is not room for two.
  *
  * The threshold sits well below the ~700px the document gets on A4, so the
@@ -1526,6 +1645,17 @@ tbody tr:hover {
  * fires in the on-screen preview.
  */
 @container (max-width: 600px) {
+  /* The status cells one under another: three columns of a 320px preview
+     leave a date nowhere to go. */
+  .receipt-status-row {
+    grid-template-columns: 1fr;
+  }
+
+  .receipt-status-cell + .receipt-status-cell {
+    border-left: none;
+    border-top: 1px solid var(--r-border);
+  }
+
   /*
    * A fixed table, because an automatic one cannot be made narrower than the
    * sum of its columns' min-content — and with "MONTO PAGADO" held on one line
