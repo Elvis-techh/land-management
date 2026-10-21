@@ -26,6 +26,9 @@ export const BUSINESS = {
 /** "Gracias por su pago y su confianza en Inversiones Manuel." */
 export const THANK_YOU = `Gracias por su pago y su confianza en ${BUSINESS.name}.`;
 
+/** The same line on the receipt that pays everything off. */
+export const THANK_YOU_FINAL = `Gracias por completar su compra con ${BUSINESS.name}. ¡Felicidades por su terreno!`;
+
 /**
  * The footer's one-line contact strip, composed rather than stored whole so it
  * cannot drift out of step with the fields above it.
