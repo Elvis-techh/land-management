@@ -30,6 +30,9 @@ export function ConstanciaDialog({ contract, canIssue, onClose }: ConstanciaDial
   const [state, setState] = useState<State>({ status: "loading" });
   const [isIssuing, setIssuing] = useState(false);
   const [issueError, setIssueError] = useState<string | null>(null);
+  // On by default: the notary usually wants the detail, and leaving it out is
+  // the decision somebody makes on purpose.
+  const [withAnnex, setWithAnnex] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -104,7 +107,17 @@ export function ConstanciaDialog({ contract, canIssue, onClose }: ConstanciaDial
               : "Este contrato todavía no tiene constancia. Pide a un supervisor que la emita."}
           </p>
         )}
-        {constancia && <ConstanciaPaper constancia={constancia} />}
+        {constancia && constancia.payments.length > 0 && (
+          <label className="constancia-annex-toggle">
+            <input
+              type="checkbox"
+              checked={withAnnex}
+              onChange={(event) => setWithAnnex(event.target.checked)}
+            />
+            <span>Incluir el historial completo de pagos (anexo)</span>
+          </label>
+        )}
+        {constancia && <ConstanciaPaper constancia={constancia} withAnnex={withAnnex} />}
         {issueError && <p className="form-error">{issueError}</p>}
       </div>
 
@@ -127,7 +140,7 @@ export function ConstanciaDialog({ contract, canIssue, onClose }: ConstanciaDial
       {constancia &&
         createPortal(
           <div className="constancia-print-root" aria-hidden="true">
-            <ConstanciaPaper constancia={constancia} />
+            <ConstanciaPaper constancia={constancia} withAnnex={withAnnex} />
           </div>,
           document.body,
         )}

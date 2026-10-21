@@ -78,7 +78,7 @@ export function ConstanciaVerifyDialog({ onClose }: { onClose: () => void }) {
                 ? `ANULADA — ${result.voidReason ?? ""}`
                 : `VÁLIDA — ${result.customer.fullName}, lote ${result.lot.code}, contrato ${result.contract.code}`}
             </p>
-            <ConstanciaPaper constancia={result} />
+            <ConstanciaPaper constancia={result} withAnnex />
           </>
         )}
       </div>
