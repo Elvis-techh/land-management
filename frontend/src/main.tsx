@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 
 import App from "./App";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { UpdateBanner } from "./components/UpdateBanner";
 import { registerServiceWorker } from "./lib/serviceWorker";
 import "./styles.css";
 
@@ -26,5 +27,8 @@ createRoot(rootElement).render(
     <ErrorBoundary variant="page">
       <App />
     </ErrorBoundary>
+    {/* Outside the boundary, so a crashed page can still be offered the
+        version that may have fixed it. See lib/appVersion.ts. */}
+    <UpdateBanner />
   </StrictMode>,
 );
