@@ -3617,6 +3617,19 @@ body.is-dragging-file .proof-dropzone.is-slot:not(.is-disabled) {
   cursor: pointer;
 }
 
+.constancia-send-note {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--surface-sunken, rgba(0, 0, 0, 0.04));
+  font-size: 0.875rem;
+}
+
+/* The stage lays the sheets out one under another; the PDF takes each one. */
+.constancia-share-stage .constancia-sheets {
+  display: block;
+}
+
 /* The project under a lot code in the combined constancia's table of lots. */
 .constancia-cell-note {
   display: block;

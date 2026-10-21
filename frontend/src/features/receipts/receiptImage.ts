@@ -122,6 +122,20 @@ export async function receiptToPng(stage: HTMLElement, receiptCode: string): Pro
     throw new Error("No hay un recibo que convertir en imagen.");
   }
 
+  const blob = await paperToPngBlob(node);
+
+  // The filename is what the customer sees when they save it, and what somebody
+  // in the office sees if it is forwarded back to them.
+  return new File([blob], `Recibo ${receiptCode}.png`, { type: "image/png" });
+}
+
+/**
+ * One sheet of paper — a `.receipt-paper` laid out in an offscreen stage — as
+ * a PNG. Shared by the receipt above and the constancia's PDF, which draws
+ * each of its sheets this way. See `receiptToPng` for why the node must be
+ * the paper and not the stage around it.
+ */
+export async function paperToPngBlob(node: HTMLElement): Promise<Blob> {
   await imagesLoaded(node);
 
   const blob = await toBlob(node, {
@@ -139,10 +153,8 @@ export async function receiptToPng(stage: HTMLElement, receiptCode: string): Pro
   });
 
   if (blob === null) {
-    throw new Error("No se pudo generar la imagen del recibo.");
+    throw new Error("No se pudo generar la imagen del documento.");
   }
 
-  // The filename is what the customer sees when they save it, and what somebody
-  // in the office sees if it is forwarded back to them.
-  return new File([blob], `Recibo ${receiptCode}.png`, { type: "image/png" });
+  return blob;
 }
