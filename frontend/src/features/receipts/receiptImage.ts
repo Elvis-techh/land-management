@@ -26,7 +26,7 @@
  * absent from the picture.
  */
 
-import { getFontEmbedCSS, toBlob } from "html-to-image";
+import { toBlob } from "html-to-image";
 
 /**
  * Twice the CSS pixels, so the image survives being opened and pinched.
@@ -39,43 +39,64 @@ import { getFontEmbedCSS, toBlob } from "html-to-image";
 const PIXEL_RATIO = 2;
 
 /**
- * The web fonts, base64'd, computed once for the life of the page.
+ * The signature's font, base64'd into an @font-face the clone can use.
  *
- * `getFontEmbedCSS` walks every stylesheet the document has — including the
- * Google Fonts one, which is cross-origin, so CSSOM refuses to read its rules
- * and it has to be fetched over the network and parsed — then downloads each
- * font file it finds and inlines it. That is several requests and a lot of
- * base64, and the answer is identical every time.
- *
- * Cached as the PROMISE rather than its result, so two receipts rendered at
- * once wait on one piece of work instead of starting it twice.
- *
- * Only one webfont actually shows up on the document — 'Dancing Script', the
- * signature above "Firma Autorizada"; the rest of the receipt is deliberately
+ * Only one webfont shows up on the paper — 'Dancing Script', the signature
+ * above "Firma Autorizada"; the rest of the receipt is deliberately
  * Helvetica/Arial. It is worth the trouble because the alternative is a
- * signature rendered in whatever cursive face the reader's phone happens to
- * own, on the one part of the page that is meant to look like a person signed
- * it.
+ * signature in whatever cursive face the reader's phone happens to own, on the
+ * one part of the page that is meant to look like a person signed it.
+ *
+ * The font ships with the app (@fontsource, imported in main.tsx) and this
+ * reads the same file. It used to come from `getFontEmbedCSS`, which walked
+ * every stylesheet down to the Google Fonts one and downloaded it all again
+ * while the image was drawn. On a phone's data that failed now and then, the
+ * failure was kept for the life of the page, and every image from then on was
+ * signed in the phone's own cursive while the preview still showed the real
+ * one. Our own server, one small file, no Google: the preview and the image
+ * now draw from the same copy.
+ *
+ * Latin only: it holds every letter of a Spanish name, accents and ñ included.
+ */
+const SIGNATURE_FONT_FACE = (dataUrl: string) =>
+  `@font-face{font-family:'Dancing Script';font-style:normal;font-weight:700;` +
+  `src:url(${dataUrl}) format('woff2');}`;
+
+/**
+ * Cached as the PROMISE, so two receipts drawn at once share one download. A
+ * failure is NOT kept: the next image tries again, rather than every image
+ * until a reload going out with the wrong signature.
  */
 let fontCssPromise: Promise<string> | null = null;
 
-function embeddedFontCss(node: HTMLElement): Promise<string> {
-  fontCssPromise ??= getFontEmbedCSS(node).catch(() => {
-    /*
-     * A receipt with a fallback signature beats no receipt.
-     *
-     * This reaches out to fonts.googleapis.com, so it is the one step here that
-     * can fail for reasons that have nothing to do with the document: an office
-     * with no internet, a blocked domain, a captive portal. Everything else on
-     * the page is local and renders regardless.
-     *
-     * Not cached as a failure — `??=` has already stored the promise, and it
-     * resolves to "" — which is deliberate: retrying the fetch on every receipt
-     * would mean a slow timeout on every share for as long as the network is
-     * out.
-     */
-    return "";
-  });
+function embeddedFontCss(): Promise<string> {
+  // Its address is looked up here rather than imported at the top, so the
+  // unit tests, which load this file in Node, never meet a font file.
+  fontCssPromise ??= import("@fontsource/dancing-script/files/dancing-script-latin-700-normal.woff2?url")
+    .then(({ default: url }) => fetch(url))
+    .then((response) => {
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      return response.blob();
+    })
+    .then(
+      (blob) =>
+        new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+
+          reader.onload = () => resolve(SIGNATURE_FONT_FACE(String(reader.result)));
+          reader.onerror = () => reject(reader.error ?? new Error("No se pudo leer la fuente."));
+          reader.readAsDataURL(new Blob([blob], { type: "font/woff2" }));
+        }),
+    )
+    .catch(() => {
+      // A receipt with a fallback signature beats no receipt; try again next time.
+      fontCssPromise = null;
+
+      return "";
+    });
 
   return fontCssPromise;
 }
@@ -149,7 +170,7 @@ export async function paperToPngBlob(node: HTMLElement): Promise<Blob> {
     width: node.offsetWidth,
     height: node.offsetHeight,
     skipFonts: true,
-    fontEmbedCSS: await embeddedFontCss(node),
+    fontEmbedCSS: await embeddedFontCss(),
   });
 
   if (blob === null) {
