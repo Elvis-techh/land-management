@@ -3588,6 +3588,75 @@ body.is-dragging-file .proof-dropzone.is-slot:not(.is-disabled) {
   font-weight: 700;
 }
 
+/* The letter and its annex sheets, one under another on screen. */
+.constancia-sheets {
+  display: grid;
+  gap: 16px;
+}
+
+.constancia-annex-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 14px;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+.constancia-annex-note {
+  margin: 0.7em 0 0;
+  color: var(--r-muted);
+  font-size: 0.9em;
+}
+
+.constancia-annex-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 1.5em;
+  padding-bottom: 0.7em;
+  border-bottom: 2px solid var(--r-primary);
+}
+
+.constancia-annex-head > div {
+  display: grid;
+  gap: 0.2em;
+}
+
+.constancia-annex-head strong {
+  color: var(--r-primary);
+  font-size: 1.3em;
+}
+
+.constancia-annex-who {
+  margin: 0.8em 0 1em;
+  color: var(--r-muted);
+}
+
+/* Smaller and tighter than the letter: this is a ledger, read line by line. */
+.constancia-annex .constancia-history {
+  padding: 0.6em 0.9em;
+  font-size: 0.9em;
+}
+
+.constancia-annex .constancia-history td {
+  padding-top: 0.22em;
+  padding-bottom: 0.22em;
+}
+
+.constancia-history .constancia-row-number {
+  width: 2.5em;
+  color: var(--r-muted);
+}
+
+/* At the foot of every annex sheet: which constancia it belongs to, and where. */
+.constancia-annex-footer {
+  margin-top: auto;
+  padding-top: 1em;
+  color: var(--r-muted);
+  font-size: 0.85em;
+  text-align: center;
+}
+
 .constancia-seal-row {
   margin-bottom: 0.6em;
   text-align: center;
@@ -3625,7 +3694,16 @@ body.is-dragging-file .proof-dropzone.is-slot:not(.is-disabled) {
     hyphens: auto;
   }
 
-  /* A long history may run onto a second sheet; a row is never cut in half. */
+  /* On paper the sheets are pages, not cards with a gap between them. */
+  .constancia-sheets {
+    display: block;
+  }
+
+  /* Each annex sheet starts a page of its own, so «Página 3 de 4» is true. */
+  .constancia-annex {
+    break-before: page;
+  }
+
   .constancia-history tr,
   .constancia-seal-row {
     break-inside: avoid;

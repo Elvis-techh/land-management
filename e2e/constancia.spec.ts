@@ -75,12 +75,28 @@ test("a paid-off contract gets a constancia the office can verify", async ({ pag
   const constancia = page.getByRole("dialog", { name: /Constancia del contrato/ });
   await constancia.getByRole("button", { name: "Emitir constancia" }).click();
 
-  const paper = constancia.locator(".constancia-paper");
+  // The letter; the annex sheets after it carry the same paper class.
+  const paper = constancia.locator(".constancia-paper:not(.constancia-annex)");
+  const annex = constancia.locator(".constancia-annex");
   await expect(paper).toContainText("Constancia de Cancelación Total");
   await expect(paper).toContainText(customer);
   await expect(paper).toContainText("CIENTO CINCUENTA MIL LEMPIRAS EXACTOS (L. 150,000.00)");
   await expect(paper).toContainText("SALDO CANCELADO");
+  // The letter summarises by kind; the annex lists each payment, numbered.
   await expect(paper.locator(".constancia-history tbody tr")).toHaveCount(2);
+  await expect(paper).toContainText("Prima");
+  await expect(paper).toContainText("Total pagado · 2 pagos");
+  await expect(paper).toContainText("Página 1 de 2");
+  await expect(annex).toHaveCount(1);
+  await expect(annex.locator("tbody tr")).toHaveCount(2);
+  await expect(annex).toContainText("Anexo · Historial de pagos");
+  await expect(annex).toContainText("Página 2 de 2");
+
+  // Left out, the letter stands alone.
+  await constancia.getByLabel("Incluir el historial completo de pagos (anexo)").uncheck();
+  await expect(annex).toHaveCount(0);
+  await expect(paper).not.toContainText("Página 1 de");
+  await constancia.getByLabel("Incluir el historial completo de pagos (anexo)").check();
   await expect(constancia.getByRole("button", { name: "Imprimir" })).toBeVisible();
 
   await expect
