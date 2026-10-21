@@ -21,4 +21,5 @@ test("the receipt opens as soon as a payment is saved", async ({ page }) => {
   await expect(paper).toContainText("RECIBO DE PAGO");
   await expect(paper).toContainText("José Rodríguez");
   await expect(paper).toContainText("1,000.00");
+  await expect(paper).toContainText("Recibí la cantidad de MIL LEMPIRAS EXACTOS (L. 1,000.00)");
 });

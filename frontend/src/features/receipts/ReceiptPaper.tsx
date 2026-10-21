@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
 
 import logoUrl from "../../assets/mr-investments.png";
+import { amountInWords } from "../../lib/amountInWords";
 import { BUSINESS, CONTACT_LINE, THANK_YOU } from "../../lib/business";
 import { code128Geometry } from "../../lib/code128";
 import type { MoneyView } from "../../lib/money";
@@ -13,6 +14,9 @@ interface ReceiptPaperProps {
   receipt: Receipt;
   money: MoneyView;
 }
+
+/** The "Recibí la cantidad de" line is in lempiras whatever the screen shows; the rate is unused. */
+const LEMPIRAS: MoneyView = { currency: "HNL", usdRate: 1 };
 
 const METHOD_LABELS: Record<string, string> = {
   cash: "Efectivo",
@@ -78,8 +82,9 @@ function clientDetail(customer: Receipt["customer"]): string | null {
  * document, so a change to the vertical rhythm in the stylesheet moves them.
  * Re-measure rather than adjust.
  *
- *     content@10pt ≈ 940px fixed  (letterhead, cliente box, table head,
- *                                  summary, signature, barcode, padding)
+ *     content@10pt ≈ 981px fixed  (letterhead, cliente box, amount in
+ *                                  words, table head, summary, signature,
+ *                                  barcode, padding)
  *                  + 68px per lot row
  *                  + 36px for a note
  *                  + 62px for the ANULADO banner
@@ -102,12 +107,12 @@ function clientDetail(customer: Receipt["customer"]): string | null {
  * failure than print nobody can read.
  *
  * The 10pt ceiling is now only a guard. Even a one-lot receipt fills about
- * 1008px at 10pt, so the budget binds first and this rarely comes into play.
+ * 1049px at 10pt, so the budget binds first and this rarely comes into play.
  */
 const USABLE_PX = 1000;
 
 function printBaseFor(receipt: Receipt): string {
-  const estimatedPx = 940 + 68 * receipt.lines.length + (receipt.voidedAt ? 62 : 0);
+  const estimatedPx = 981 + 68 * receipt.lines.length + (receipt.voidedAt ? 62 : 0);
 
   const points = (10 * USABLE_PX) / estimatedPx;
 
@@ -200,6 +205,17 @@ export function ReceiptPaper({ receipt, money }: ReceiptPaperProps) {
             is nothing to put in it — see `clientDetail`. */}
         {detail && <div className="receipt-client-detail">{detail}</div>}
       </div>
+
+      {/* The amount in words, as a receipt states it: digits can be misread or
+          altered with a pen, words cannot. Always lempiras, the money that was
+          handed over — so the figure beside it is too, whatever currency the
+          screen is showing. */}
+      <p className="receipt-words">
+        Recibí la cantidad de <strong>{amountInWords(receipt.totalPaid)}</strong>{" "}
+        <span className="receipt-words-figure">
+          ({formatDocumentMoney(receipt.totalPaid, LEMPIRAS)})
+        </span>
+      </p>
 
       {/* One row per lot. A customer who bought three lots hands over one
           amount, and each lot keeps its own balance — a merged total would
