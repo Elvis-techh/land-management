@@ -134,6 +134,8 @@ export function ContractCreateDialog({
   const [monthlyOverride, setMonthlyOverride] = useState<string | null>(null);
   const [expiresOverride, setExpiresOverride] = useState<string | null>(null);
   const [signedOnOverride, setSignedOnOverride] = useState<string | null>(null);
+  /** The price on screen before the last «Cambiar», so the next one returns to it. */
+  const [priceBeforeSwitch, setPriceBeforeSwitch] = useState<string | null>(null);
 
   const [downPayment, setDownPayment] = useState("");
   const [termMonths, setTermMonths] = useState("");
@@ -393,6 +395,30 @@ export function ContractCreateDialog({
   const downCents = Number.isFinite(downNumber) ? Math.round(downNumber * 100) : 0;
   const financed = financedCents(priceCents, downCents);
 
+  /*
+   * «Cambiar» under the price: one press flips between the lot's list price
+   * (its Precio base in Lotes) and the other price in play — the one on screen
+   * before the last switch, or else the joined purchase's price. Lots in one
+   * deal can be priced differently, so both stay a press away rather than
+   * either one being retyped.
+   */
+  const onListPrice = lot !== null && priceCents === lot.basePrice;
+  const priceFromJoin = joinContract !== null && priceCents === joinContract.terms.salePrice;
+  const otherPrice = onListPrice
+    ? (priceBeforeSwitch ?? (joinContract === null ? null : toMoneyInput(joinContract.terms.salePrice)))
+    : lot === null
+      ? null
+      : toMoneyInput(lot.basePrice);
+  const otherNumber = otherPrice === null ? Number.NaN : parseMoneyInput(otherPrice);
+  const otherCents = Number.isFinite(otherNumber) ? Math.round(otherNumber * 100) : null;
+  const canSwitchPrice = otherCents !== null && otherCents !== priceCents;
+
+  const switchPrice = () => {
+    setPriceBeforeSwitch(salePrice);
+    // Back on the list price is "follow the lot" again, not a typed copy of it.
+    setPriceOverride(onListPrice ? otherPrice : null);
+  };
+
   const months = parseIntOrNull(termMonths);
   const day = parseIntOrNull(dueDay);
   const hasTerm = months !== null && Number.isFinite(months) && months >= 1;
@@ -434,6 +460,43 @@ export function ContractCreateDialog({
     // cannot survive them being swapped out.
     setJoinContractId("");
     setError(null);
+  };
+
+  /*
+   * Joining a purchase starts this contract from that purchase's terms.
+   *
+   * Lots bought in one deal are nearly always bought on one set of terms, and
+   * retyping them off the first contract is where a plazo of 48 becomes 84.
+   * Copied once, at the moment of choosing, into the same fields a person
+   * types into: everything stays editable, and an edit is never overwritten by
+   * a later render. Choosing "No, es una compra aparte" leaves the fields as
+   * they are rather than wiping what may since have been typed over them.
+   *
+   * The cuota is NOT copied. It follows from price, prima and plazo here as on
+   * any new contract, so a lot priced differently from its partner gets a cuota
+   * that matches its own price instead of the other lot's.
+   */
+  const chooseJoin = (contractId: string) => {
+    setJoinContractId(contractId);
+
+    const source = groupCandidates.find((candidate) => candidate.id === contractId);
+
+    if (source === undefined) {
+      return;
+    }
+
+    const { terms } = source;
+
+    setSaleType(source.saleType);
+    setPriceOverride(toMoneyInput(terms.salePrice));
+    setPriceBeforeSwitch(null);
+    setDownPayment(terms.downPayment > 0 ? toMoneyInput(terms.downPayment) : "");
+    setTermMonths(terms.termMonths === null ? "" : String(terms.termMonths));
+    setDueDay(terms.dueDay === null ? "" : String(terms.dueDay));
+    // The NEGOTIATED date only. A derived one follows from the signing date,
+    // which is inherited anyway; copying it would pin it.
+    setFirstDueOn(terms.firstDueOnAgreed ?? "");
+    setMonthlyOverride(null);
   };
 
   const chooseLot = (next: Lot | null) => {
@@ -834,7 +897,7 @@ export function ContractCreateDialog({
                 <select
                   id="new-contract-group"
                   value={joinContractId}
-                  onChange={(event) => setJoinContractId(event.target.value)}
+                  onChange={(event) => chooseJoin(event.target.value)}
                 >
                   <option value="">No, es una compra aparte</option>
                   {purchaseOptions.map((option) => (
@@ -914,19 +977,29 @@ export function ContractCreateDialog({
                   placeholder="0.00"
                 />
                 <span className="field-hint">
-                  {priceCents === lot.basePrice ? (
-                    <>Precio de lista del lote. Es negociable: escribe lo que se acordó.</>
+                  {onListPrice ? (
+                    priceFromJoin ? (
+                      <>Tomado de {joinContract!.code}; es también el precio de lista del lote.</>
+                    ) : canSwitchPrice ? (
+                      <>
+                        Precio de lista del lote.{" "}
+                        {joinContract !== null && otherCents === joinContract.terms.salePrice
+                          ? `En ${joinContract.code} se acordó ${formatMoney(cents(otherCents), money)}.`
+                          : `Antes estaba en ${formatMoney(cents(otherCents!), money)}.`}{" "}
+                      </>
+                    ) : (
+                      <>Precio de lista del lote. Es negociable: escribe lo que se acordó.</>
+                    )
                   ) : (
                     <>
+                      {priceFromJoin && <>Tomado de {joinContract!.code}. </>}
                       El lote está en lista a {formatMoney(lot.basePrice, money)}.{" "}
-                      <button
-                        type="button"
-                        className="link-btn"
-                        onClick={() => setPriceOverride(null)}
-                      >
-                        Volver al precio de lista
-                      </button>
                     </>
+                  )}
+                  {canSwitchPrice && (
+                    <button type="button" className="link-btn" onClick={switchPrice}>
+                      Cambiar
+                    </button>
                   )}
                 </span>
               </div>
