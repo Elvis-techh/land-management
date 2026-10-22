@@ -65,9 +65,23 @@ test("a contract joined to a purchase starts from that purchase's terms", async 
     // The cuota follows from the copied numbers: 120,000 over 48 months.
     await expect(dialog.getByLabel("Cuota mensual")).toHaveValue(/^2,?500\.00$/);
 
-    // Still editable: the second lot was negotiated at its own price.
-    await dialog.getByLabel("Precio de venta").fill("145000");
+    // «Cambiar» flips between the lot's list price and the purchase's price.
+    const price = dialog.getByLabel("Precio de venta");
+    const switchPrice = dialog.getByRole("button", { name: "Cambiar" });
+    await switchPrice.click();
+    await expect(price).toHaveValue(/^160,?000\.00$/);
+    await expect(dialog).toContainText(/Precio de lista del lote\. En CT-\S+ se acordó L\.? ?140,000/);
+    await switchPrice.click();
+    await expect(price).toHaveValue(/^140,?000\.00$/);
+
+    // Still editable, and a typed price is the one «Cambiar» comes back to.
+    await price.fill("145000");
     await expect(dialog).not.toContainText("Tomado de");
+    await switchPrice.click();
+    await expect(price).toHaveValue(/^160,?000\.00$/);
+    await expect(dialog).toContainText(/Antes estaba en L\.? ?145,000/);
+    await switchPrice.click();
+    await expect(price).toHaveValue(/^145,?000(\.00)?$/);
     await dialog.getByRole("button", { name: "Crear contrato" }).click();
     await expect(dialog).toHaveCount(0);
   });

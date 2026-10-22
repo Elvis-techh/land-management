@@ -134,6 +134,8 @@ export function ContractCreateDialog({
   const [monthlyOverride, setMonthlyOverride] = useState<string | null>(null);
   const [expiresOverride, setExpiresOverride] = useState<string | null>(null);
   const [signedOnOverride, setSignedOnOverride] = useState<string | null>(null);
+  /** The price on screen before the last «Cambiar», so the next one returns to it. */
+  const [priceBeforeSwitch, setPriceBeforeSwitch] = useState<string | null>(null);
 
   const [downPayment, setDownPayment] = useState("");
   const [termMonths, setTermMonths] = useState("");
@@ -383,12 +385,6 @@ export function ContractCreateDialog({
 
   const salePrice = priceOverride ?? (lot === null ? "" : toMoneyInput(lot.basePrice));
 
-  /* The price on screen is still the one copied from the joined purchase — see
-     `chooseJoin`. Lots in one deal can be priced differently, so the hint says
-     where the number came from, and the lot's own list price beside it. */
-  const priceFromJoin =
-    joinContract !== null && priceOverride === toMoneyInput(joinContract.terms.salePrice);
-
   const priceNumber = isDonation ? 0 : parseMoneyInput(salePrice);
   // A prima is a piece of the price held back from what gets financed, so it
   // only means anything on a credit sale. Contado is settled in full at
@@ -398,6 +394,30 @@ export function ContractCreateDialog({
   const priceCents = Number.isFinite(priceNumber) ? Math.round(priceNumber * 100) : 0;
   const downCents = Number.isFinite(downNumber) ? Math.round(downNumber * 100) : 0;
   const financed = financedCents(priceCents, downCents);
+
+  /*
+   * «Cambiar» under the price: one press flips between the lot's list price
+   * (its Precio base in Lotes) and the other price in play — the one on screen
+   * before the last switch, or else the joined purchase's price. Lots in one
+   * deal can be priced differently, so both stay a press away rather than
+   * either one being retyped.
+   */
+  const onListPrice = lot !== null && priceCents === lot.basePrice;
+  const priceFromJoin = joinContract !== null && priceCents === joinContract.terms.salePrice;
+  const otherPrice = onListPrice
+    ? (priceBeforeSwitch ?? (joinContract === null ? null : toMoneyInput(joinContract.terms.salePrice)))
+    : lot === null
+      ? null
+      : toMoneyInput(lot.basePrice);
+  const otherNumber = otherPrice === null ? Number.NaN : parseMoneyInput(otherPrice);
+  const otherCents = Number.isFinite(otherNumber) ? Math.round(otherNumber * 100) : null;
+  const canSwitchPrice = otherCents !== null && otherCents !== priceCents;
+
+  const switchPrice = () => {
+    setPriceBeforeSwitch(salePrice);
+    // Back on the list price is "follow the lot" again, not a typed copy of it.
+    setPriceOverride(onListPrice ? otherPrice : null);
+  };
 
   const months = parseIntOrNull(termMonths);
   const day = parseIntOrNull(dueDay);
@@ -469,6 +489,7 @@ export function ContractCreateDialog({
 
     setSaleType(source.saleType);
     setPriceOverride(toMoneyInput(terms.salePrice));
+    setPriceBeforeSwitch(null);
     setDownPayment(terms.downPayment > 0 ? toMoneyInput(terms.downPayment) : "");
     setTermMonths(terms.termMonths === null ? "" : String(terms.termMonths));
     setDueDay(terms.dueDay === null ? "" : String(terms.dueDay));
@@ -956,9 +977,16 @@ export function ContractCreateDialog({
                   placeholder="0.00"
                 />
                 <span className="field-hint">
-                  {priceCents === lot.basePrice ? (
+                  {onListPrice ? (
                     priceFromJoin ? (
                       <>Tomado de {joinContract!.code}; es también el precio de lista del lote.</>
+                    ) : canSwitchPrice ? (
+                      <>
+                        Precio de lista del lote.{" "}
+                        {joinContract !== null && otherCents === joinContract.terms.salePrice
+                          ? `En ${joinContract.code} se acordó ${formatMoney(cents(otherCents), money)}.`
+                          : `Antes estaba en ${formatMoney(cents(otherCents!), money)}.`}{" "}
+                      </>
                     ) : (
                       <>Precio de lista del lote. Es negociable: escribe lo que se acordó.</>
                     )
@@ -966,14 +994,12 @@ export function ContractCreateDialog({
                     <>
                       {priceFromJoin && <>Tomado de {joinContract!.code}. </>}
                       El lote está en lista a {formatMoney(lot.basePrice, money)}.{" "}
-                      <button
-                        type="button"
-                        className="link-btn"
-                        onClick={() => setPriceOverride(null)}
-                      >
-                        Volver al precio de lista
-                      </button>
                     </>
+                  )}
+                  {canSwitchPrice && (
+                    <button type="button" className="link-btn" onClick={switchPrice}>
+                      Cambiar
+                    </button>
                   )}
                 </span>
               </div>
