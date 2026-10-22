@@ -383,6 +383,12 @@ export function ContractCreateDialog({
 
   const salePrice = priceOverride ?? (lot === null ? "" : toMoneyInput(lot.basePrice));
 
+  /* The price on screen is still the one copied from the joined purchase — see
+     `chooseJoin`. Lots in one deal can be priced differently, so the hint says
+     where the number came from, and the lot's own list price beside it. */
+  const priceFromJoin =
+    joinContract !== null && priceOverride === toMoneyInput(joinContract.terms.salePrice);
+
   const priceNumber = isDonation ? 0 : parseMoneyInput(salePrice);
   // A prima is a piece of the price held back from what gets financed, so it
   // only means anything on a credit sale. Contado is settled in full at
@@ -434,6 +440,42 @@ export function ContractCreateDialog({
     // cannot survive them being swapped out.
     setJoinContractId("");
     setError(null);
+  };
+
+  /*
+   * Joining a purchase starts this contract from that purchase's terms.
+   *
+   * Lots bought in one deal are nearly always bought on one set of terms, and
+   * retyping them off the first contract is where a plazo of 48 becomes 84.
+   * Copied once, at the moment of choosing, into the same fields a person
+   * types into: everything stays editable, and an edit is never overwritten by
+   * a later render. Choosing "No, es una compra aparte" leaves the fields as
+   * they are rather than wiping what may since have been typed over them.
+   *
+   * The cuota is NOT copied. It follows from price, prima and plazo here as on
+   * any new contract, so a lot priced differently from its partner gets a cuota
+   * that matches its own price instead of the other lot's.
+   */
+  const chooseJoin = (contractId: string) => {
+    setJoinContractId(contractId);
+
+    const source = groupCandidates.find((candidate) => candidate.id === contractId);
+
+    if (source === undefined) {
+      return;
+    }
+
+    const { terms } = source;
+
+    setSaleType(source.saleType);
+    setPriceOverride(toMoneyInput(terms.salePrice));
+    setDownPayment(terms.downPayment > 0 ? toMoneyInput(terms.downPayment) : "");
+    setTermMonths(terms.termMonths === null ? "" : String(terms.termMonths));
+    setDueDay(terms.dueDay === null ? "" : String(terms.dueDay));
+    // The NEGOTIATED date only. A derived one follows from the signing date,
+    // which is inherited anyway; copying it would pin it.
+    setFirstDueOn(terms.firstDueOnAgreed ?? "");
+    setMonthlyOverride(null);
   };
 
   const chooseLot = (next: Lot | null) => {
@@ -834,7 +876,7 @@ export function ContractCreateDialog({
                 <select
                   id="new-contract-group"
                   value={joinContractId}
-                  onChange={(event) => setJoinContractId(event.target.value)}
+                  onChange={(event) => chooseJoin(event.target.value)}
                 >
                   <option value="">No, es una compra aparte</option>
                   {purchaseOptions.map((option) => (
@@ -915,9 +957,14 @@ export function ContractCreateDialog({
                 />
                 <span className="field-hint">
                   {priceCents === lot.basePrice ? (
-                    <>Precio de lista del lote. Es negociable: escribe lo que se acordó.</>
+                    priceFromJoin ? (
+                      <>Tomado de {joinContract!.code}; es también el precio de lista del lote.</>
+                    ) : (
+                      <>Precio de lista del lote. Es negociable: escribe lo que se acordó.</>
+                    )
                   ) : (
                     <>
+                      {priceFromJoin && <>Tomado de {joinContract!.code}. </>}
                       El lote está en lista a {formatMoney(lot.basePrice, money)}.{" "}
                       <button
                         type="button"
