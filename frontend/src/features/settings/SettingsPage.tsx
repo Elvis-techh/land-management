@@ -565,8 +565,8 @@ export function SettingsPage({ user, settings, onSaved }: SettingsPageProps) {
           </div>
 
           <p className="cfg-foot">
-            Todavía no se cobra: el cobro llega en la próxima actualización. Una mora pendiente
-            nunca pone un contrato «Atrasado».{" "}
+            Un cambio a la mora vale desde mañana: la mora ya cobrada, incluida la de hoy, no
+            cambia. Una mora pendiente nunca pone un contrato «Atrasado».{" "}
             {moraLocked
               ? "Solo el supervisor puede cambiarla o apagarla."
               : "Solo el supervisor la cambia; no se puede ceder al asociado."}

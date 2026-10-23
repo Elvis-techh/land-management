@@ -100,10 +100,11 @@ export function orderLedger<T extends LedgerOrderable>(entries: readonly T[]): T
 /**
  * Something the customer OWES, beyond the agreed sale price.
  *
- * There are none today, and this list is empty everywhere in the current app —
- * so read this as a seam rather than as a feature.
+ * The first of these is the mora, worked out in src/lib/mora.ts and passed in
+ * here by the routes; while mora has never been switched on, the list is empty
+ * everywhere.
  *
- * The seam is deliberate. Every balance in Lindero is currently
+ * The seam was deliberate, and laid before anything used it. Every balance in Lindero is currently
  * `salePrice − payments`, and that formula has exactly one more day of life in
  * it: the first late fee, the first legal fee for a repossession, the first
  * L 500 charged for a re-issued document, and it is wrong. Not slightly wrong —
@@ -163,6 +164,8 @@ export interface LedgerLine<T extends LedgerCredit> {
   paidToDateCents: number;
   /** Charges that fell due between the previous transaction and this one. */
   chargesAppliedCents: number;
+  /** The sale price plus every charge up to and including this transaction's date. */
+  chargedToDateCents: number;
 }
 
 export interface ContractLedger<T extends LedgerCredit> {
@@ -192,7 +195,7 @@ export interface ReplayInput<T extends LedgerCredit> {
    * nothing on the customer's very first receipt.
    */
   salePriceCents: number;
-  /** Empty in the current app. See `LedgerCharge`. */
+  /** The mora, when there is any. See `LedgerCharge`. */
   charges?: readonly LedgerCharge[];
   /** Every payment on the contract. Reversed ones are filtered out here. */
   credits: readonly T[];
@@ -243,6 +246,7 @@ export function replayContract<T extends LedgerCredit>(input: ReplayInput<T>): C
       balanceAfterCents: Math.max(0, chargedSoFar - creditedSoFar),
       paidToDateCents: creditedSoFar,
       chargesAppliedCents: chargesApplied,
+      chargedToDateCents: chargedSoFar,
     });
   }
 
@@ -301,6 +305,12 @@ export interface ReceiptFigures {
    * for the new one.
    */
   cumulativePaidCents: number;
+  /**
+   * The mora (and any other charge) on the same contracts, up to this receipt.
+   * The receipt prints it beside the contract's value whenever it is not zero,
+   * so valor + mora − total pagado = nuevo balance still adds up on the page.
+   */
+  chargesToDateCents: number;
 }
 
 export interface ReceiptFiguresInput<T extends LedgerCredit & { contractId: string }> {
@@ -310,7 +320,7 @@ export interface ReceiptFiguresInput<T extends LedgerCredit & { contractId: stri
   customerCredits: readonly T[];
   /** Sale price per contract id. Contracts with no payment here may be omitted. */
   salePriceByContract: ReadonlyMap<string, number>;
-  /** Empty today. Keyed by contract id. See `LedgerCharge`. */
+  /** The mora, keyed by contract id. See `LedgerCharge`. */
   chargesByContract?: ReadonlyMap<string, readonly LedgerCharge[]>;
 }
 
@@ -343,6 +353,7 @@ export function receiptFigures<T extends LedgerCredit & { contractId: string }>(
   let previousBalanceCents = 0;
   let newBalanceCents = 0;
   let totalPaidCents = 0;
+  let chargesToDateCents = 0;
 
   for (const [contractId, credits] of byContract) {
     const charges = input.chargesByContract?.get(contractId);
@@ -353,10 +364,16 @@ export function receiptFigures<T extends LedgerCredit & { contractId: string }>(
       ...(charges ? { charges } : {}),
     });
 
+    let chargedHere: number | null = null;
+
     for (const line of ledger.lines) {
       if (!onThisReceipt.has(line.entry.id)) {
         continue;
       }
+
+      // The last of this receipt's lines on the contract: everything charged
+      // up to the receipt, beyond the price.
+      chargedHere = line.chargedToDateCents - (input.salePriceByContract.get(contractId) ?? 0);
 
       lines.push({
         contractId,
@@ -370,6 +387,8 @@ export function receiptFigures<T extends LedgerCredit & { contractId: string }>(
       newBalanceCents += line.balanceAfterCents;
       totalPaidCents += line.entry.amountCents;
     }
+
+    chargesToDateCents += chargedHere ?? 0;
   }
 
   // Stable output regardless of Map iteration order, so two calls with the same
@@ -387,6 +406,7 @@ export function receiptFigures<T extends LedgerCredit & { contractId: string }>(
     previousBalanceCents,
     newBalanceCents,
     cumulativePaidCents: cumulativePaidThrough(cumulativeCredits, onThisReceipt),
+    chargesToDateCents,
   };
 }
 

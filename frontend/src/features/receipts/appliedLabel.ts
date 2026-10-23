@@ -1,6 +1,6 @@
-import type { MoneyView } from "../../lib/money";
-import { formatDocumentMoney } from "../../lib/money";
-import type { AppliedInstallment, ReceiptLine } from "../../types";
+import type { Cents, MoneyView } from "../../lib/money";
+import { cents, formatDocumentMoney } from "../../lib/money";
+import type { AppliedInstallment, MoraPaid, ReceiptLine } from "../../types";
 
 /** Everything the label below reads. A whole `ReceiptLine` is more than it needs. */
 export type AppliedLabelLine = Pick<ReceiptLine, "appliedTo" | "installmentCount" | "newBalance">;
@@ -110,4 +110,49 @@ export function appliedLabel(line: AppliedLabelLine, money: MoneyView): string |
   const range = count === 2 ? `${first} y ${last}` : `${first} a ${last}`;
 
   return `Cuotas ${range}${total} · completas`;
+}
+
+/**
+ * Which cuotas a mora was for, as said out loud: "cuota 4", "cuotas 4 y 5",
+ * "cuotas 4, 5 y 6", "la prima", "la prima y la cuota 1". 0 is the prima.
+ */
+export function moraCuotas(paid: readonly MoraPaid[]): string {
+  const numbers = [...new Set(paid.map((entry) => entry.installment))];
+  const prima = numbers.includes(0);
+  const cuotas = numbers.filter((number) => number > 0);
+
+  const list = (items: number[]) =>
+    items.length === 1
+      ? String(items[0])
+      : `${items.slice(0, -1).join(", ")} y ${items[items.length - 1]}`;
+
+  const named = cuotas.length === 0 ? "" : `${cuotas.length === 1 ? "cuota" : "cuotas"} ${list(cuotas)}`;
+
+  if (!prima) {
+    return named;
+  }
+
+  return named === "" ? "la prima" : `la prima y ${cuotas.length === 1 ? "la " : "las "}${named}`;
+}
+
+/** The total a payment put towards mora. */
+export function moraTotal(paid: readonly MoraPaid[]): Cents {
+  return cents(paid.reduce((total, entry) => total + entry.amount, 0));
+}
+
+/**
+ * The part of a lot's money that paid mora, as its own line under the lot:
+ *
+ *   Recargo por mora · cuota 4 · L. 500.00
+ *   Recargo por mora · cuotas 4 y 5 · L. 1,000.00
+ *
+ * Kept apart from the cuotas line above it, so a customer can always tell a
+ * cuota from a fee. `null` when none of the money was mora.
+ */
+export function moraLabel(line: Pick<ReceiptLine, "moraPaid">, money: MoneyView): string | null {
+  if (line.moraPaid.length === 0) {
+    return null;
+  }
+
+  return `Recargo por mora · ${moraCuotas(line.moraPaid)} · ${formatDocumentMoney(moraTotal(line.moraPaid), money)}`;
 }

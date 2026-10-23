@@ -31,7 +31,9 @@ import { recordAudit } from "../lib/audit.js";
 import { moneyRefusal, syncContractLifecycle } from "../lib/contractLifecycle.js";
 import type { ContractTerms, SaleType } from "../lib/contracts.js";
 import { appliedInstallments, assessContract, buildSchedule } from "../lib/contracts.js";
+import type { LedgerCharge } from "../lib/ledger.js";
 import { orderLedger, receiptFigures, replayContract } from "../lib/ledger.js";
+import { ledgerChargesOf, loadMoraAccount, loadMoraAccounts } from "../lib/moraAccounts.js";
 import { businessToday } from "../lib/time.js";
 import {
   allocateReceiptCode,
@@ -96,16 +98,26 @@ function salePricesFor(db: Db, contractIds: readonly string[]): Map<string, numb
   return new Map(rows.map((row) => [row.id, row.salePriceCents]));
 }
 
+/** Today, and the zone the day a contract closed is read in. See lib/moraAccounts.ts. */
+interface MoraAt {
+  asOf: string;
+  timeZone: string;
+}
+
 /**
  * The current balance of one contract, replayed rather than read.
  *
- * Used by the write path to decide whether an amount would overpay. It agrees
- * with the `salePrice − SUM(payments)` that routes/contracts.ts computes in SQL
- * because, with no additional charges in the system yet, they are the same
- * arithmetic — see the note on `LedgerCharge`. Going through the ledger here
- * means the day charges DO exist, this check moves with them.
+ * Used by the write path to decide whether an amount would overpay. Through
+ * the ledger, with the contract's mora as its charges, so a customer who owes
+ * L 500 of mora on top of the cuotas may pay those L 500 without being asked
+ * to confirm an overpayment — see the note on `LedgerCharge`.
  */
-function contractBalanceCents(db: Db, contractId: string, salePriceCents: number): number {
+function contractBalanceCents(
+  db: Db,
+  contractId: string,
+  salePriceCents: number,
+  at: MoraAt,
+): number {
   const credits = db
     .select({
       id: payments.id,
@@ -118,7 +130,11 @@ function contractBalanceCents(db: Db, contractId: string, salePriceCents: number
     .where(eq(payments.contractId, contractId))
     .all();
 
-  return replayContract({ salePriceCents, credits }).balanceCents;
+  return replayContract({
+    salePriceCents,
+    credits,
+    charges: ledgerChargesOf(loadMoraAccount(db, contractId, at)),
+  }).balanceCents;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -248,8 +264,18 @@ function termsOf(detail: ContractDetail): ContractTerms {
  * and the detail screen share exactly one implementation. Two code paths
  * computing "saldo anterior" is precisely how a receipt list ends up disagreeing
  * with the receipt it links to.
+ *
+ * The mora is part of the ledger: charged before the payments of its own day,
+ * and paid by each payment as lib/mora.ts divided it. A receipt therefore says
+ * how much of the money was mora, and on which cuota, and the cuotas it names
+ * are the ones the REST of the money reached.
  */
-function presentReceipts(db: Db, rows: readonly ReceiptRow[], includeLines: boolean) {
+function presentReceipts(
+  db: Db,
+  rows: readonly ReceiptRow[],
+  includeLines: boolean,
+  at: MoraAt,
+) {
   if (rows.length === 0) {
     return [];
   }
@@ -296,9 +322,11 @@ function presentReceipts(db: Db, rows: readonly ReceiptRow[], includeLines: bool
   const details = includeLines
     ? contractDetailsFor(db, touchedContractIds)
     : new Map<string, ContractDetail>();
-  const salePriceByContract = salePricesFor(
-    db,
-    [...new Set(allCredits.map((credit) => credit.contractId))],
+  const customerContractIds = [...new Set(allCredits.map((credit) => credit.contractId))];
+  const salePriceByContract = salePricesFor(db, customerContractIds);
+  const mora = loadMoraAccounts(db, { ...at, contractIds: customerContractIds });
+  const chargesByContract = new Map<string, LedgerCharge[]>(
+    [...mora].map(([contractId, account]) => [contractId, ledgerChargesOf(account)]),
   );
 
   return rows.map((row) => {
@@ -307,6 +335,7 @@ function presentReceipts(db: Db, rows: readonly ReceiptRow[], includeLines: bool
       paymentIds: own.map((credit) => credit.id),
       customerCredits: creditsByCustomer.get(row.customerId) ?? [],
       salePriceByContract,
+      chargesByContract,
     });
 
     // A voided receipt's payments are reversed, so the ledger no longer counts
@@ -336,6 +365,8 @@ function presentReceipts(db: Db, rows: readonly ReceiptRow[], includeLines: bool
       previousBalance: figures.previousBalanceCents,
       newBalance: figures.newBalanceCents,
       cumulativePaid: figures.cumulativePaidCents,
+      /** Mora charged on these lots up to this receipt. Zero when there is none. */
+      moraCharged: figures.chargesToDateCents,
       transactionCount: own.length,
       method: own[0]?.method ?? null,
       ...(includeLines
@@ -345,6 +376,21 @@ function presentReceipts(db: Db, rows: readonly ReceiptRow[], includeLines: bool
             lines: own.map((credit) => {
               const line = figures.lines.find((entry) => entry.paymentId === credit.id);
               const detail = details.get(credit.contractId);
+              const split = mora
+                .get(credit.contractId)
+                ?.splits.find((entry) => entry.creditId === credit.id);
+              // What had been paid towards the price either side of this
+              // payment: the mora it paid is not cuota money. Without an
+              // account (no mora, ever) it is the old arithmetic, unchanged.
+              const pricePaid =
+                detail && line
+                  ? split
+                    ? { before: split.pricePaidBeforeCents, after: split.pricePaidAfterCents }
+                    : {
+                        before: detail.salePriceCents - line.balanceBeforeCents,
+                        after: detail.salePriceCents - line.balanceAfterCents,
+                      }
+                  : null;
 
               return {
                 paymentId: credit.id,
@@ -380,18 +426,22 @@ function presentReceipts(db: Db, rows: readonly ReceiptRow[], includeLines: bool
                  */
                 installmentCount: detail ? buildSchedule(termsOf(detail)).length : 0,
                 appliedTo:
-                  detail && line
-                    ? appliedInstallments(
-                        termsOf(detail),
-                        detail.salePriceCents - line.balanceBeforeCents,
-                        detail.salePriceCents - line.balanceAfterCents,
-                      )
+                  detail && pricePaid
+                    ? appliedInstallments(termsOf(detail), pricePaid.before, pricePaid.after)
                     : [],
+                /**
+                 * The part of this money that paid mora, by cuota (0 is the
+                 * prima), oldest first. Empty when none of it did.
+                 */
+                moraPaid: (split?.moraPaid ?? []).map((entry) => ({
+                  installment: entry.installment,
+                  amount: entry.amountCents,
+                })),
+                /** Mora this lot still owed right after this payment. */
+                moraPending: split?.moraPendingAfterCents ?? 0,
                 /** What this lot owes next, for the message sent with the receipt. */
                 nextDue:
-                  detail && line
-                    ? nextDueAfter(detail, detail.salePriceCents - line.balanceAfterCents, row.issuedOn)
-                    : null,
+                  detail && pricePaid ? nextDueAfter(detail, pricePaid.after, row.issuedOn) : null,
               };
             }),
           }
@@ -537,6 +587,7 @@ export interface ReceiptRoutesOptions {
 
 export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (app, options) => {
   const today = () => businessToday(options.timeZone);
+  const moraAt = (): MoraAt => ({ asOf: today(), timeZone: options.timeZone });
 
   // Registered inside this plugin rather than app-wide, so the only routes that
   // can accept a file upload are the ones below. The limits are the real guard:
@@ -558,7 +609,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
   app.get("/receipts", { onRequest: app.requireUser }, async () => {
     const rows = receiptsListQuery(app.db).orderBy(desc(receipts.number)).all();
 
-    return { receipts: presentReceipts(app.db, rows, false) };
+    return { receipts: presentReceipts(app.db, rows, false, moraAt()) };
   });
 
   /**
@@ -589,7 +640,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
           .send({ error: "not_found", message: "No existe un recibo con ese código." });
       }
 
-      return { receipt: presentReceipts(app.db, [row], true)[0] };
+      return { receipt: presentReceipts(app.db, [row], true, moraAt())[0] };
     },
   );
 
@@ -780,7 +831,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
         return reply.code(404).send({ error: "not_found", message: "Ese recibo no existe." });
       }
 
-      return { receipt: presentReceipts(app.db, [row], true)[0] };
+      return { receipt: presentReceipts(app.db, [row], true, moraAt())[0] };
     },
   );
 
@@ -815,7 +866,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
         if (existing) {
           return reply
             .code(200)
-            .send({ receipt: presentReceipts(app.db, [existing], true)[0], duplicate: true });
+            .send({ receipt: presentReceipts(app.db, [existing], true, moraAt())[0], duplicate: true });
         }
       }
 
@@ -906,7 +957,12 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
         }
 
         if (!body.allowOverpayment) {
-          const balance = contractBalanceCents(app.db, contract.id, contract.salePriceCents);
+          const balance = contractBalanceCents(
+            app.db,
+            contract.id,
+            contract.salePriceCents,
+            moraAt(),
+          );
 
           if (line.amountCents > balance) {
             return reply.code(409).send({
@@ -1003,7 +1059,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
           // A payment that clears a contract's balance settles it — active
           // becomes paid_off, once, here.
           for (const contractId of seen) {
-            syncContractLifecycle(tx, contractId);
+            syncContractLifecycle(tx, contractId, { asOf: today(), timeZone: options.timeZone });
           }
         });
       } catch (error) {
@@ -1019,7 +1075,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
           if (existing) {
             return reply
               .code(200)
-              .send({ receipt: presentReceipts(app.db, [existing], true)[0], duplicate: true });
+              .send({ receipt: presentReceipts(app.db, [existing], true, moraAt())[0], duplicate: true });
           }
         }
 
@@ -1028,7 +1084,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
 
       const row = receiptsListQuery(app.db).where(eq(receipts.id, receiptId)).get()!;
 
-      return reply.code(201).send({ receipt: presentReceipts(app.db, [row], true)[0] });
+      return reply.code(201).send({ receipt: presentReceipts(app.db, [row], true, moraAt())[0] });
     },
   );
 
@@ -1080,7 +1136,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
 
       const row = receiptsListQuery(app.db).where(eq(receipts.id, existing.id)).get()!;
 
-      return { receipt: presentReceipts(app.db, [row], true)[0] };
+      return { receipt: presentReceipts(app.db, [row], true, moraAt())[0] };
     },
   );
 
@@ -1228,13 +1284,13 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
         // Reversing these payments can push a paid-off contract's balance back
         // above zero — it returns to active.
         for (const contractId of new Set(affected.map((payment) => payment.contractId))) {
-          syncContractLifecycle(tx, contractId);
+          syncContractLifecycle(tx, contractId, { asOf: today(), timeZone: options.timeZone });
         }
       });
 
       const row = receiptsListQuery(app.db).where(eq(receipts.id, existing.id)).get()!;
 
-      return { receipt: presentReceipts(app.db, [row], true)[0] };
+      return { receipt: presentReceipts(app.db, [row], true, moraAt())[0] };
     },
   );
 
@@ -1454,9 +1510,14 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
             .all()
             .filter((row) => !liveIds.has(row.id));
 
+          // The mora too is worked out without those rows: money that moves
+          // off a lot can leave it late, and owing mora it did not owe before.
           const room = replayContract({
             salePriceCents: contract.salePriceCents,
             credits: others,
+            charges: ledgerChargesOf(
+              loadMoraAccount(app.db, contract.id, { ...moraAt(), leaveOut: liveIds }),
+            ),
           }).balanceCents;
 
           if (line.amountCents > room) {
@@ -1671,13 +1732,13 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
          * status until something unrelated happens to touch it.
          */
         for (const contractId of touched) {
-          syncContractLifecycle(tx, contractId);
+          syncContractLifecycle(tx, contractId, { asOf: today(), timeZone: options.timeZone });
         }
       });
 
       const row = receiptsListQuery(app.db).where(eq(receipts.id, receipt.id)).get()!;
 
-      return { receipt: presentReceipts(app.db, [row], true)[0] };
+      return { receipt: presentReceipts(app.db, [row], true, moraAt())[0] };
     },
   );
 

@@ -4,7 +4,7 @@ import { hasIdentification, identificationLabel } from "../../lib/identification
 import { getInitials } from "../../lib/initials";
 import { formatPhone } from "../../lib/phone";
 import type { MoneyView } from "../../lib/money";
-import { formatMoney, subtractMoney } from "../../lib/money";
+import { cents, formatMoney, subtractMoney } from "../../lib/money";
 import type { Customer, Lot } from "../../types";
 
 interface CustomerPanelProps {
@@ -25,7 +25,11 @@ export function CustomerPanel({
   onViewFullRecord,
 }: CustomerPanelProps) {
   const holding = lot.holding;
-  const balance = holding ? subtractMoney(holding.salePrice, holding.paidToDate) : null;
+  // Any mora charged is owed on top of the price; what was paid of it is
+  // already inside `paidToDate`.
+  const balance = holding
+    ? subtractMoney(cents(holding.salePrice + holding.moraCharged), holding.paidToDate)
+    : null;
 
   return (
     <Dialog ariaLabel={customer.fullName} onClose={onClose}>
@@ -102,6 +106,12 @@ export function CustomerPanel({
                 <span>Precio de venta</span>
                 <span className="cell-money">{formatMoney(holding.salePrice, money)}</span>
               </div>
+              {holding.moraCharged > 0 && (
+                <div className="cp-row">
+                  <span>Mora cobrada</span>
+                  <span className="cell-money">{formatMoney(holding.moraCharged, money)}</span>
+                </div>
+              )}
               <div className="cp-row">
                 <span>Pagado</span>
                 <span className="cell-money">{formatMoney(holding.paidToDate, money)}</span>

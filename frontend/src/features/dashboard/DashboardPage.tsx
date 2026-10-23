@@ -356,6 +356,25 @@ export function DashboardPage({
               }
             />
 
+            {/* Its own tile, never folded into «Por cobrar»: that one is cuotas,
+                this one is fees, and an unpaid mora alone does not make anybody
+                «Atrasado». Absent until mora has ever been switched on. */}
+            {income.mora && (
+              <StatTile
+                label="Mora pendiente"
+                value={formatMoney(income.mora.pendingCents, money)}
+                detail={
+                  income.mora.contracts === 0
+                    ? `${formatMoney(income.mora.collectedCents, money)} cobrada en el mes`
+                    : `${pluralise(income.mora.contracts, "contrato", "contratos")} · ${formatMoney(
+                        income.mora.collectedCents,
+                        money,
+                      )} cobrada en el mes`
+                }
+                tone={income.mora.pendingCents > 0 ? "warn" : "good"}
+              />
+            )}
+
             <StatTile
               label="Clientes que pagaron"
               value={String(income.payingCustomers)}
