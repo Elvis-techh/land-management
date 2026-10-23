@@ -14,7 +14,7 @@ const screens: [tab: string, shows: RegExp][] = [
   ["Historial", /Historial de cambios/],
   ["Permisos", /Qué puede hacer el asociado/],
   ["Usuarios", /Quién puede entrar/],
-  ["Configuración", /Configuración del negocio/],
+  ["Configuración", /Las reglas de tu negocio/],
 ];
 
 test("every screen opens", async ({ page }) => {
