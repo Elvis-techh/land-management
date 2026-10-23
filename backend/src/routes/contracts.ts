@@ -29,7 +29,7 @@ import {
 } from "../lib/storedFiles.js";
 import { splitEvenly } from "../lib/allocation.js";
 import { recordAudit } from "../lib/audit.js";
-import type { ContractTerms, SaleType } from "../lib/contracts.js";
+import type { ContractTerms, HealthRules, SaleType } from "../lib/contracts.js";
 import {
   assessContract,
   buildSchedule,
@@ -42,6 +42,7 @@ import { roleCan } from "../lib/capabilities.js";
 import { voidConstancias } from "../lib/constancias.js";
 import { syncContractLifecycle } from "../lib/contractLifecycle.js";
 import { holdsLot, openContract } from "../lib/holding.js";
+import { healthRulesOf, readSettings } from "../lib/settings.js";
 import { businessToday } from "../lib/time.js";
 
 /**
@@ -294,6 +295,7 @@ function documentsFor(db: Db, contractId: string) {
 function present(
   row: ContractRow,
   asOf: string,
+  rules: HealthRules,
   documentCount = 0,
   links: AmendmentLinks = NO_LINKS,
 ) {
@@ -308,7 +310,7 @@ function present(
     firstDueOn: row.firstDueOn,
   };
 
-  const health = assessContract(terms, row.paidToDateCents, asOf);
+  const health = assessContract(terms, row.paidToDateCents, asOf, rules);
 
   return {
     id: row.id,
@@ -699,9 +701,12 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
     // One grouped count for the whole screen rather than one query per row.
     const documentCounts = documentCountsFor(app.db);
     const links = amendmentLinksFor(app.db);
+    const rules = healthRulesOf(readSettings(app.db));
 
     return reply.send({
-      contracts: rows.map((row) => present(row, asOf, documentCounts.get(row.id) ?? 0, links)),
+      contracts: rows.map((row) =>
+        present(row, asOf, rules, documentCounts.get(row.id) ?? 0, links),
+      ),
     });
   });
 
@@ -730,7 +735,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
       const members = contractsListQuery(app.db)
         .where(and(eq(contracts.saleGroupId, request.params.groupId), openContract(asOf)))
         .all()
-        .map((row) => present(row, asOf));
+        .map((row) => present(row, asOf, healthRulesOf(readSettings(app.db))));
 
       if (members.length === 0) {
         return reply.code(404).send({

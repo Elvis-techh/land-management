@@ -179,6 +179,20 @@ describe("payment health", () => {
     assert.equal(report.arrearsCents, lempiras(13_400));
   });
 
+  it("follows the grace days and the «En riesgo» count set on Configuración", () => {
+    // 9 April, the cuota of the 5th unpaid. Five days of grace: not late yet.
+    // Three: late since the 8th.
+    const shortGrace = { graceDays: 3, atRiskPayments: 2 };
+    assert.equal(assessContract(financed, paidThrough(2), "2026-04-09", shortGrace).status, "overdue");
+
+    // Two cuotas behind is «En riesgo» by default, and only «Atrasado» when the
+    // owner has said it takes three.
+    const patient = { graceDays: 5, atRiskPayments: 3 };
+    const report = assessContract(financed, paidThrough(2), "2026-05-11", patient);
+    assert.equal(report.monthsBehind, 2);
+    assert.equal(report.status, "overdue");
+  });
+
   it("warns that an installment is coming before it is missed", () => {
     // 1 April, everything due so far is paid, and the 5th is a week away.
     const report = assessContract(financed, paidThrough(2), "2026-04-01");

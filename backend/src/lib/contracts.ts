@@ -9,19 +9,32 @@
  *
  * The business rules, agreed with the owner:
  *
- * - An installment is not late until FIVE days after its due date.
- * - Two months behind is no longer merely late; it needs attention.
+ * - An installment is not late until a few days after its due date (five,
+ *   unless changed on the Configuración screen).
+ * - Two missed payments is no longer merely late; it needs attention (also a
+ *   setting). Both numbers reach this file as `HealthRules`, read by the
+ *   routes from lib/settings.ts, so nothing here touches the database.
  * - Everything is denominated in lempiras. A customer who pays in dollars has
  *   the bank's actual rate for that day recorded on the payment itself, so the
  *   accounts are built from what was really received rather than from today's
  *   display rate applied backwards.
  */
 
-/** Days after the due date before an installment counts as late. */
-export const GRACE_DAYS = 5;
+/**
+ * The two numbers that decide «Atrasado» and «En riesgo». The owner sets them
+ * on the Configuración screen; these are the values in force until they do.
+ */
+export interface HealthRules {
+  /** Days after the due date before an installment counts as late. */
+  graceDays: number;
+  /** Missed payments at which a contract stops being merely late. */
+  atRiskPayments: number;
+}
 
-/** Months behind at which a contract stops being merely late. */
-export const AT_RISK_MONTHS = 2;
+export const DEFAULT_HEALTH_RULES: HealthRules = {
+  graceDays: 5,
+  atRiskPayments: 2,
+};
 
 /** How early an upcoming installment starts showing as "por vencer". */
 export const DUE_SOON_DAYS = 7;
@@ -414,9 +427,9 @@ export interface HealthReport {
  *
  * Note the two different expectations, which is the part worth reading twice:
  *
- * - Arrears are measured against what was due AFTER the five-day grace, so a
- *   customer who pays on the 8th for a due date of the 5th is never called
- *   late.
+ * - Arrears are measured against what was due AFTER the grace days, so with
+ *   five of them a customer who pays on the 8th for a due date of the 5th is
+ *   never called late.
  * - Being ahead is measured against the plain schedule, with no grace. Using
  *   the graced figure for both would announce that somebody who paid exactly on
  *   their due date is a month ahead, every month, for the life of the contract.
@@ -425,12 +438,13 @@ export function assessContract(
   terms: ContractTerms,
   paidToDateCents: number,
   asOf: string,
+  rules: HealthRules = DEFAULT_HEALTH_RULES,
 ): HealthReport {
   const schedule = buildSchedule(terms);
   const balanceCents = Math.max(0, terms.salePriceCents - paidToDateCents);
   const settled = terms.salePriceCents - paidToDateCents <= 0;
 
-  const graceDate = shiftDays(asOf, -GRACE_DAYS);
+  const graceDate = shiftDays(asOf, -rules.graceDays);
   const dueBySchedule = expectedByCents(terms, schedule, asOf);
   const dueAfterGrace = expectedByCents(terms, schedule, graceDate);
 
@@ -478,7 +492,7 @@ export function assessContract(
 
   let status: PaymentHealth = "current";
 
-  if (missedPayments >= AT_RISK_MONTHS) {
+  if (missedPayments >= rules.atRiskPayments) {
     status = "at_risk";
   } else if (missedPayments >= 1) {
     status = "overdue";

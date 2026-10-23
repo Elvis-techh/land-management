@@ -12,6 +12,7 @@ a person would, on a desktop-sized screen and again on a phone-sized one.
 | `e2e/login.spec.ts` | A wrong password is refused; the supervisor logs in, stays in after a reload, and logs out; an associate does not see Permisos or Usuarios. |
 | `e2e/screens.spec.ts` | Every screen in the menu opens and shows its content. |
 | `e2e/receipt-image.spec.ts` | The receipt image that «Ver» shows and WhatsApp sends has the logo, even when the logo file is slow to arrive. |
+| `e2e/settings.spec.ts` | Configuración: the supervisor changes a business detail, it stays after a reload and shows in Historial; the supervisor sets the mora with the switch, the tiles and the − / + buttons, and the sentence under the switch follows; the associate can read the mora rules but not change them. |
 | `e2e/sale.spec.ts` | A whole sale: new customer → new lot → credit contract → the lot shows *Financiado* with the customer → the prima is paid and appears in Recibos. |
 
 Every test also fails if the page crashes or the server answers any request

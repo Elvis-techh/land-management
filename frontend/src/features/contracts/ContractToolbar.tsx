@@ -6,6 +6,7 @@ import { SortMenu } from "../../components/SortMenu";
 import { useDismiss } from "../../lib/useDismiss";
 import { useIsMobile } from "../../lib/viewport";
 import type { Contract, ContractStatus, PaymentHealth, SaleType } from "../../types";
+import { useSettings } from "../settings/SettingsContext";
 import type { ContractFilters } from "./contractFilters";
 import { NO_CONTRACT_FILTERS, countActiveFilters } from "./contractFilters";
 import {
@@ -72,6 +73,8 @@ export function ContractToolbar({
   const sortRef = useRef<HTMLDivElement>(null);
   const filterRef = useRef<HTMLDivElement>(null);
   const isMobile = useIsMobile();
+  const { graceDays } = useSettings().mora;
+  const { atRiskPayments } = useSettings().contracts;
 
   // On a phone these open as sheets, which bring their own backdrop and Escape
   // handling; a second outside-click listener would only fight with them.
@@ -162,7 +165,14 @@ export function ContractToolbar({
           </label>
         ))}
         <span className="field-hint">
-          Se calcula con los pagos registrados, cinco días de gracia y dos meses para el riesgo.
+          Se calcula con los pagos registrados,{" "}
+          {graceDays === 0
+            ? "sin días de gracia"
+            : graceDays === 1
+              ? "un día de gracia"
+              : `${graceDays} días de gracia`}{" "}
+          y {atRiskPayments === 1 ? "un pago atrasado" : `${atRiskPayments} pagos atrasados`} para
+          el riesgo.
         </span>
       </div>
 

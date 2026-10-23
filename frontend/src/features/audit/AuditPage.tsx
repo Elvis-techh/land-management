@@ -85,6 +85,28 @@ const fieldLabels: Record<string, string> = {
   // A file taken off a contract or a receipt. Putting one there is not filed.
   removedDocument: "Documento quitado",
   removedFile: "Comprobante quitado",
+  // The Configuración screen: the mora, the contract defaults, the business.
+  enabled: "Cobrar mora",
+  startsOn: "Mora desde",
+  calculation: "Cómo se calcula la mora",
+  percent: "Porcentaje de mora",
+  fixedCents: "Mora fija",
+  graceDays: "Días de gracia",
+  capCents: "Máximo de mora por cuota",
+  frequency: "Cuándo se cobra la mora",
+  chargeDownPayment: "La prima lleva mora",
+  paymentOrder: "Un pago cubre primero",
+  reservationMonths: "Una reserva dura (meses)",
+  atRiskPayments: "«En riesgo» desde (pagos atrasados)",
+  signatory: "Firma",
+  location: "Ubicación",
+};
+
+/** The Configuración screen's choices, as the screen words them. */
+const settingChoiceLabels: Record<string, Record<string, string>> = {
+  calculation: { percent: "% de lo que falta de la cuota", fixed: "Monto fijo" },
+  frequency: { once: "Una vez por cuota atrasada", monthly: "Cada mes que siga atrasada" },
+  paymentOrder: { mora: "La mora", cuota: "La cuota" },
 };
 
 /** Money fields are stored in centavos and must not be printed raw. */
@@ -96,11 +118,25 @@ const moneyFields = new Set([
   "monthlyPaymentCents",
   "paidToDateCents",
   "totalCents",
+  "fixedCents",
+  "capCents",
 ]);
 
 function formatValue(field: string, value: unknown, money: MoneyView): string {
+  if (field === "capCents" && value === null) {
+    return "Sin máximo";
+  }
   if (value === null || value === undefined) {
     return "—";
+  }
+  if (typeof value === "boolean") {
+    return value ? "Sí" : "No";
+  }
+  if (field === "percent" && typeof value === "number") {
+    return `${value} %`;
+  }
+  if (typeof value === "string" && settingChoiceLabels[field]?.[value]) {
+    return settingChoiceLabels[field][value];
   }
   if (moneyFields.has(field) && typeof value === "number") {
     return formatMoney(cents(value), money);

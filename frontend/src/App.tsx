@@ -76,6 +76,8 @@ import { ReceiptsPage } from "./features/receipts/ReceiptsPage";
 import { TransactionEditDialog } from "./features/receipts/TransactionEditDialog";
 import { useTransactions } from "./features/receipts/useTransactions";
 import { useExchangeRate } from "./features/rate/useExchangeRate";
+import { SettingsPage } from "./features/settings/SettingsPage";
+import { SettingsProvider, useAppSettings } from "./features/settings/SettingsContext";
 import { archiveLot, createLot, restoreLot, updateLot } from "./features/lots/api";
 import { useLots } from "./features/lots/useLots";
 import { ApiError } from "./lib/api";
@@ -106,6 +108,7 @@ const pageTitles: Record<TabId, string> = {
   audit: "Historial",
   permissions: "Permisos",
   users: "Usuarios",
+  settings: "Configuración",
 };
 
 const primaryActionLabels: Record<TabId, string> = {
@@ -118,6 +121,7 @@ const primaryActionLabels: Record<TabId, string> = {
   audit: "Nuevo lote",
   permissions: "Nuevo lote",
   users: "Nueva cuenta",
+  settings: "Nuevo lote",
 };
 
 /**
@@ -265,6 +269,11 @@ export default function App() {
     setMonth: setDashboardMonth,
   } = useDashboard(isSignedIn);
   const { rate, setRate, reload: reloadRate } = useExchangeRate(isSignedIn, handleSessionExpired);
+  const {
+    settings,
+    setSettings,
+    reload: reloadSettings,
+  } = useAppSettings(isSignedIn, handleSessionExpired);
   /*
    * Only fetched for somebody who can manage accounts.
    *
@@ -298,6 +307,7 @@ export default function App() {
     void reloadTransactions();
     void reloadDashboard();
     void reloadRate().catch(() => undefined);
+    void reloadSettings().catch(() => undefined);
     // Guarded, unlike the rest: GET /api/users is a 403 for an associate, and
     // firing one on every write anybody makes would be a stream of refusals in
     // the log for a screen that account cannot open.
@@ -312,6 +322,7 @@ export default function App() {
     reloadTransactions,
     reloadDashboard,
     reloadRate,
+    reloadSettings,
     canManageUsers,
     reloadUsers,
   ]);
@@ -991,7 +1002,7 @@ export default function App() {
       ? lotsState.data.customersById.get(customerSelection.customerId)
       : undefined;
 
-  return (
+  const page = (
     <div className={isSidebarOpen ? "app" : "app sidebar-collapsed"}>
       <Sidebar
         ref={sidebarRef}
@@ -1073,6 +1084,10 @@ export default function App() {
                   .catch(() => undefined);
               }}
             />
+          )}
+
+          {activeTab === "settings" && (
+            <SettingsPage user={user} settings={settings} onSaved={setSettings} />
           )}
 
           {activeTab === "users" && usersState.status === "loading" && (
@@ -1657,4 +1672,8 @@ export default function App() {
       )}
     </div>
   );
+
+  // Every screen below can read the settings (the receipt's business details,
+  // the reservation length) without them being passed down by hand.
+  return <SettingsProvider value={settings}>{page}</SettingsProvider>;
 }

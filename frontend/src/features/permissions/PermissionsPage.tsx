@@ -128,6 +128,19 @@ const GROUPS: Array<{
     ],
   },
   {
+    title: "Configuración",
+    description: "Los ajustes del negocio. La mora no está aquí: es siempre del supervisor.",
+    items: [
+      {
+        capability: "settings:edit",
+        label: "Cambiar la configuración de contratos y los datos del negocio",
+        hint:
+          "Cuánto dura una reserva, desde cuántos pagos atrasados un contrato está «En riesgo», " +
+          "y el nombre, la firma y los contactos que salen en recibos y constancias.",
+      },
+    ],
+  },
+  {
     title: "Control",
     description: "Ver lo que ha pasado en el sistema.",
     items: [
@@ -341,7 +354,8 @@ export function PermissionsPage({ onSaved }: PermissionsPageProps) {
         <p className="field-hint">
           Gestionar usuarios y editar estos permisos no se pueden ceder. Si el asociado pudiera
           editar permisos, podría concederse todo lo demás a sí mismo — incluida la cuenta que
-          tendría que quitárselo.
+          tendría que quitárselo. Tampoco se cede cambiar la mora ni apagarla, ni en la
+          configuración general ni en un contrato.
         </p>
       </div>
 

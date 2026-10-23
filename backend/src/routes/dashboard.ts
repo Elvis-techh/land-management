@@ -15,8 +15,9 @@ import {
 } from "../db/schema.js";
 import { roleCan } from "../lib/capabilities.js";
 import { DASHBOARD_LAYOUT, clearPreference, readPreference, writePreference } from "../lib/preferences.js";
+import { healthRulesOf, readSettings } from "../lib/settings.js";
 import { businessToday } from "../lib/time.js";
-import type { ContractTerms, PaymentHealth, SaleType } from "../lib/contracts.js";
+import type { ContractTerms, HealthRules, PaymentHealth, SaleType } from "../lib/contracts.js";
 import { assessContract, outstandingInstallments, shiftDays } from "../lib/contracts.js";
 import {
   HEALTH_ORDER,
@@ -211,6 +212,7 @@ function assess(
   asOf: string,
   previousAsOf: string,
   isCurrentMonth: boolean,
+  rules: HealthRules,
 ): Assessed {
   const terms: ContractTerms = {
     saleType: row.saleType as SaleType,
@@ -226,7 +228,7 @@ function assess(
   };
 
   const paidCents = isCurrentMonth ? row.paidToDateCents : row.paidThroughAsOfCents;
-  const health = assessContract(terms, paidCents, asOf);
+  const health = assessContract(terms, paidCents, asOf, rules);
   const expected = expectedByMonth(terms);
 
   let expectedThroughMonthCents = 0;
@@ -249,7 +251,8 @@ function assess(
     monthsBehind: health.monthsBehind,
     downPaymentLate: health.downPaymentLate,
     settled: health.settled,
-    previousStatus: assessContract(terms, row.paidThroughPreviousCents, previousAsOf).status,
+    previousStatus: assessContract(terms, row.paidThroughPreviousCents, previousAsOf, rules)
+      .status,
     expected,
     expectedThroughMonthCents,
     paidCents,
@@ -381,7 +384,10 @@ export const dashboardRoutes: FastifyPluginAsync<DashboardRoutesOptions> = async
     const windowStart = `${history[0]}-01`;
 
     const rows = contractRows(app.db, asOf, previousAsOf);
-    const assessed = rows.map((row) => assess(row, month, asOf, previousAsOf, isCurrentMonth));
+    const rules = healthRulesOf(readSettings(app.db));
+    const assessed = rows.map((row) =>
+      assess(row, month, asOf, previousAsOf, isCurrentMonth, rules),
+    );
 
     /*
      * The payments behind the chart and the month's breakdowns.

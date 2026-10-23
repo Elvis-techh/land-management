@@ -43,7 +43,9 @@ export interface AuditEntry {
     | "payment"
     | "user"
     | "role"
-    | "exchange_rate";
+    | "exchange_rate"
+    /** A section of the Configuración screen; `entityId` is "mora", "contracts" or "business". */
+    | "settings";
   entityId: string;
   action:
     | "create"

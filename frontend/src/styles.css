@@ -5062,6 +5062,710 @@ body.modal-open {
   padding-bottom: 8px;
 }
 
+/* ---------- configuración ---------- */
+
+/*
+ * The first screen in the new look, «Lindero renovado»: the same warm palette,
+ * Fraunces for titles, Plus Jakarta Sans for the rest, soft cards without a
+ * border, and a control shaped like each answer — a switch for yes/no, tiles
+ * for a choice worth explaining, − and + for a small number.
+ *
+ * Its colours live on `.cfg` rather than `:root` while it is the only screen
+ * using them. When the next screen moves over, they move up to `:root`.
+ */
+.cfg {
+  --cfg-ink: #2E241E;
+  --cfg-ink-soft: #4F4037;
+  --cfg-soft: #7A695C;
+  --cfg-line: #EDE5DA;
+  --cfg-line-soft: #F1EBE3;
+  --cfg-field: #F7F2EB;
+  --cfg-off: #DED4C7;
+  --cfg-accent: #B4532F;
+  --cfg-accent-ink: #7F3420;
+  --cfg-accent-bg: #FDF4F1;
+  --cfg-shadow: 0 1px 2px rgba(61, 49, 42, 0.05), 0 8px 24px rgba(61, 49, 42, 0.06);
+  --cfg-font: 'Plus Jakarta Sans', var(--font-body);
+  --cfg-display: 'Fraunces', Georgia, serif;
+
+  max-width: 1160px;
+  margin: 0 auto;
+  color: var(--cfg-ink);
+  font-family: var(--cfg-font);
+  /* Queried below: how much room the screen has, not how wide the window is.
+     The sidebar takes its share on a computer and none on a phone. */
+  container: cfg / inline-size;
+}
+
+.cfg-intro {
+  margin-bottom: 24px;
+}
+
+.cfg-intro h2 {
+  margin: 0;
+  font-family: var(--cfg-display);
+  font-size: 1.875rem;
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+
+.cfg-intro p {
+  max-width: 62ch;
+  margin: 8px 0 0;
+  color: var(--cfg-soft);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+/* One column, until there is room for Mora on the left and the two short
+   cards stacked on the right. */
+.cfg-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.cfg-side {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+@container cfg (min-width: 880px) {
+  .cfg-layout {
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+    gap: 24px;
+  }
+
+  .cfg-side {
+    gap: 24px;
+  }
+}
+
+.cfg-card {
+  min-width: 0;
+  padding: 20px;
+  border-radius: 20px;
+  background: var(--card);
+  box-shadow: var(--cfg-shadow);
+  container: cfg-card / inline-size;
+}
+
+.cfg-card-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.cfg-card-head h3 {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-family: var(--cfg-display);
+  font-size: 1.25rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.cfg-kicker {
+  display: block;
+  margin-top: 1px;
+  color: var(--cfg-soft);
+  font-family: var(--cfg-font);
+  font-size: 0.7812rem;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.cfg-card-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+}
+
+.cfg-card-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.cfg-card-icon.clay {
+  background: var(--clay-bg);
+  color: var(--cfg-accent);
+}
+
+.cfg-card-icon.green {
+  background: var(--green-bg);
+  color: #3E6F57;
+}
+
+.cfg-card-icon.sand {
+  background: #F3EFE6;
+  color: #6B5A2E;
+}
+
+/* The rules read back as a sentence; warm while the mora is on. */
+.cfg-summary {
+  display: flex;
+  gap: 10px;
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: #F4F0EA;
+  color: #5E4E42;
+  font-size: 0.8438rem;
+  line-height: 1.5;
+}
+
+.cfg-summary.on {
+  background: var(--cfg-accent-bg);
+  color: var(--cfg-accent-ink);
+}
+
+.cfg-summary svg {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+}
+
+/* ---- switch ---- */
+
+.cfg-switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 52px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 16px;
+  background: var(--cfg-off);
+  cursor: pointer;
+  transition: background .2s ease;
+}
+
+.cfg-switch[aria-checked="true"] {
+  background: var(--cfg-accent);
+}
+
+.cfg-switch-knob {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #FFFFFF;
+  box-shadow: 0 1px 3px rgba(61, 49, 42, 0.3);
+  transition: transform .2s ease;
+}
+
+.cfg-switch[aria-checked="true"] .cfg-switch-knob {
+  transform: translateX(20px);
+}
+
+.cfg-switch:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* ---- choices: tiles and the pill ---- */
+
+.cfg-question {
+  min-width: 0;
+  margin: 18px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.cfg-question legend {
+  margin-bottom: 8px;
+  padding: 0;
+  color: var(--cfg-ink-soft);
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.cfg-tiles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+/* The radio itself is out of sight, not out of reach: still focusable and
+   still announced, the tile around it shows its state. */
+.cfg-tile input,
+.cfg-pill-option input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.cfg-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 72px;
+  padding: 12px 14px;
+  border: 1.5px solid var(--cfg-line);
+  border-radius: 14px;
+  background: var(--card);
+  cursor: pointer;
+  transition: border-color .15s ease, background .15s ease;
+}
+
+.cfg-tile b {
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.cfg-tile small {
+  color: var(--cfg-soft);
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+
+.cfg-tile:hover {
+  border-color: var(--line-strong);
+}
+
+.cfg-tile:has(input:checked) {
+  border-color: var(--cfg-accent);
+  background: var(--cfg-accent-bg);
+}
+
+.cfg-tile:has(input:checked) small {
+  color: var(--cfg-accent-ink);
+}
+
+.cfg-tile:has(input:focus-visible),
+.cfg-pill-option:has(input:focus-visible) {
+  outline: 2px solid var(--cfg-accent);
+  outline-offset: 2px;
+}
+
+.cfg-pill {
+  flex-shrink: 0;
+  display: flex;
+  gap: 3px;
+  padding: 3px;
+  border-radius: 999px;
+  background: var(--cfg-field);
+}
+
+.cfg-pill-option {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 14px;
+  border-radius: 999px;
+  color: var(--cfg-soft);
+  font-size: 0.8125rem;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.cfg-pill-option b {
+  font-weight: 600;
+}
+
+.cfg-pill-option:has(input:checked) {
+  background: var(--card);
+  color: var(--cfg-ink);
+  box-shadow: 0 1px 3px rgba(61, 49, 42, 0.15);
+}
+
+/* Locked: the chosen answer stays plain to read, the others step back. */
+.cfg-tile:has(input:disabled),
+.cfg-pill-option:has(input:disabled) {
+  cursor: not-allowed;
+}
+
+.cfg-tile:has(input:disabled):not(:has(input:checked)) {
+  opacity: 0.55;
+}
+
+.cfg-tile:has(input:disabled):hover:not(:has(input:checked)) {
+  border-color: var(--cfg-line);
+}
+
+/* ---- fields ---- */
+
+/*
+ * Two to a row in a phone-sized card. `cfg-wide` always takes the whole row;
+ * `cfg-wide-narrow` only while the card is narrow, the e-mail address and the
+ * date being too long for half of a phone.
+ */
+.cfg-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 10px;
+  align-items: start;
+}
+
+.cfg-fields-three {
+  margin-top: 14px;
+}
+
+.cfg-wide,
+.cfg-wide-narrow {
+  grid-column: 1 / -1;
+}
+
+@container cfg-card (min-width: 520px) {
+  .cfg-fields:not(.cfg-fields-three) .cfg-wide-narrow {
+    grid-column: auto;
+  }
+}
+
+@container cfg-card (min-width: 540px) {
+  .cfg-fields-three {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  /* «Desde» keeps a row to itself until there are three to a row. */
+  .cfg-fields-three .cfg-wide-narrow {
+    grid-column: auto;
+  }
+}
+
+.cfg-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.cfg-field label {
+  color: var(--cfg-ink-soft);
+  font-size: 0.7812rem;
+  font-weight: 600;
+}
+
+.cfg-field input {
+  width: 100%;
+  min-width: 0;
+  min-height: 48px;
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: var(--cfg-field);
+  color: var(--cfg-ink);
+  /* 1rem and not less: a phone zooms the page in on a smaller field. */
+  font-family: var(--cfg-font);
+  font-size: 1rem;
+  font-weight: 500;
+  outline: none;
+  transition: border-color .15s ease, box-shadow .15s ease, background .15s ease;
+}
+
+.cfg-field input:hover {
+  border-color: var(--cfg-line);
+}
+
+.cfg-field input:focus {
+  border-color: var(--clay-dark);
+  background: var(--card);
+  box-shadow: 0 0 0 4px rgba(198, 98, 71, 0.12);
+}
+
+.cfg-field input::placeholder {
+  color: var(--text-muted);
+}
+
+/* Read, not changed: no fill, a dashed edge, and no focus glow. */
+.cfg-field input[readonly],
+.cfg-field input[readonly]:focus,
+.cfg-field input[readonly]:hover {
+  border: 1px dashed var(--line-strong);
+  background: transparent;
+  box-shadow: none;
+  color: var(--cfg-soft);
+  cursor: not-allowed;
+}
+
+.cfg-field .input-with-prefix input {
+  padding-left: 40px;
+}
+
+.cfg-field .currency-prefix {
+  left: 14px;
+  font-family: var(--cfg-font);
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+
+.cfg-suffixed {
+  position: relative;
+}
+
+.cfg-suffixed input {
+  padding-right: 36px;
+}
+
+.cfg-suffixed span {
+  position: absolute;
+  top: 50%;
+  right: 14px;
+  color: var(--cfg-soft);
+  font-weight: 600;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.cfg-hint {
+  color: var(--cfg-soft);
+  font-size: 0.7188rem;
+  line-height: 1.4;
+}
+
+/* ---- rows and steppers ---- */
+
+.cfg-rows {
+  margin-top: 8px;
+}
+
+.cfg-rows-ruled {
+  margin-top: 4px;
+  border-top: 1px solid var(--cfg-line-soft);
+}
+
+/* The name gives way, the control never does: a stepper or a pill that
+   wrapped under its name read as belonging to the next setting. */
+.cfg-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 0;
+}
+
+.cfg-row + .cfg-row {
+  border-top: 1px solid var(--cfg-line-soft);
+}
+
+.cfg-row-name {
+  flex: 1;
+  min-width: 0;
+  color: var(--cfg-ink);
+  font-size: 0.9375rem;
+  font-weight: 500;
+}
+
+.cfg-row-hint {
+  display: block;
+  margin-top: 2px;
+  color: var(--cfg-soft);
+  font-size: 0.7812rem;
+  font-weight: 400;
+}
+
+.cfg-stepper {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cfg-stepper button {
+  width: 40px;
+  height: 40px;
+  border: 1px solid #E6DCCF;
+  border-radius: 50%;
+  background: var(--card);
+  color: var(--cfg-ink);
+  font-family: var(--cfg-font);
+  font-size: 1.125rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.cfg-stepper button:hover:not(:disabled) {
+  background: var(--paper);
+}
+
+.cfg-stepper button:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.cfg-stepper-value {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 4px;
+  /* Wide enough for «2 pagos», so the − buttons line up row under row. */
+  min-width: 92px;
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+
+/* The number is a field, for whoever would rather type it, that looks like
+   plain text until it is touched. */
+.cfg-stepper-value input {
+  width: 2.4em;
+  padding: 2px 0;
+  border: 0;
+  border-bottom: 1px dashed transparent;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  outline: none;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.cfg-stepper-value input::-webkit-inner-spin-button,
+.cfg-stepper-value input::-webkit-outer-spin-button {
+  margin: 0;
+  -webkit-appearance: none;
+}
+
+.cfg-stepper-value input:not([readonly]):focus {
+  border-bottom-color: var(--cfg-accent);
+}
+
+.cfg-foot {
+  margin: 8px 0 0;
+  color: var(--cfg-soft);
+  font-size: 0.7812rem;
+  line-height: 1.45;
+}
+
+/* ---- the receipt's footer, as it will print ---- */
+
+.settings-footer-preview {
+  margin: 16px 0 0;
+  padding: 14px;
+  border-radius: 14px;
+  background: var(--paper);
+  color: var(--cfg-soft);
+  font-size: 0.75rem;
+  line-height: 1.5;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.settings-footer-preview span {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.settings-footer-preview strong {
+  display: block;
+  color: var(--cfg-ink);
+  font-weight: 600;
+}
+
+/* ---- save bar ---- */
+
+/* Floats over the bottom of the screen, so Guardar is never a scroll away. */
+.cfg-savebar {
+  position: sticky;
+  bottom: max(16px, env(safe-area-inset-bottom, 0px));
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 24px;
+  padding: 10px 10px 10px 18px;
+  border-radius: 18px;
+  background: var(--card);
+  box-shadow: 0 2px 4px rgba(61, 49, 42, 0.06), 0 12px 32px rgba(61, 49, 42, 0.12);
+}
+
+.cfg-status {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  color: var(--cfg-soft);
+  font-size: 0.8438rem;
+  font-weight: 500;
+}
+
+.cfg-status.dirty {
+  color: var(--cfg-accent-ink);
+}
+
+.cfg-status.saved {
+  color: #3E6F57;
+}
+
+.cfg-status.error {
+  color: var(--red-dark);
+}
+
+.cfg-btn-primary,
+.cfg-btn-secondary {
+  flex-shrink: 0;
+  min-height: 44px;
+  padding: 0 18px;
+  border-radius: 12px;
+  font-family: var(--cfg-font);
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.cfg-btn-primary {
+  border: 0;
+  background: var(--cfg-accent);
+  color: #FFFFFF;
+}
+
+.cfg-btn-primary:disabled {
+  background: #CFC3B5;
+  cursor: not-allowed;
+}
+
+.cfg-btn-secondary {
+  border: 1px solid #E6DCCF;
+  background: var(--card);
+  color: var(--cfg-ink-soft);
+}
+
+/* A phone has room for «Guardar», not «Guardar cambios», beside Descartar.
+   The rest of the label stays for screen readers. */
+@container cfg (max-width: 520px) {
+  .cfg-savebar {
+    gap: 8px;
+    padding-left: 14px;
+  }
+
+  .cfg-status {
+    font-size: 0.7812rem;
+    line-height: 1.3;
+  }
+
+  .cfg-btn-primary,
+  .cfg-btn-secondary {
+    padding: 0 14px;
+  }
+
+  .cfg-btn-more {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
 /* ---------- area input ---------- */
 
 /*

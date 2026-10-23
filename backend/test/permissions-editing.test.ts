@@ -75,6 +75,7 @@ describe("editing what the associate role may do", async () => {
     assert.equal(offered.includes("contract:default"), false);
     assert.deepEqual(body.locked.sort(), [
       "contract:default",
+      "mora:edit",
       "permission:manage",
       "user:manage",
     ]);

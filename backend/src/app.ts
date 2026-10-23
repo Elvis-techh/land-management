@@ -21,6 +21,7 @@ import { lotRoutes } from "./routes/lots.js";
 import { permissionRoutes } from "./routes/permissions.js";
 import { projectRoutes } from "./routes/projects.js";
 import { receiptRoutes } from "./routes/receipts.js";
+import { settingsRoutes } from "./routes/settings.js";
 import { transactionRoutes } from "./routes/transactions.js";
 import { userRoutes } from "./routes/users.js";
 
@@ -169,6 +170,7 @@ export async function buildApp(config: AppConfig, db: Db) {
       await api.register(permissionRoutes);
       await api.register(userRoutes);
       await api.register(exchangeRateRoutes);
+      await api.register(settingsRoutes, { timeZone: config.timeZone });
       await api.register(dashboardRoutes, { timeZone: config.timeZone });
       await api.register(auditRoutes);
       await api.register(eventRoutes);
