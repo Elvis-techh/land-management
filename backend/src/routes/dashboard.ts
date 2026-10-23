@@ -15,7 +15,10 @@ import {
 } from "../db/schema.js";
 import { roleCan } from "../lib/capabilities.js";
 import { DASHBOARD_LAYOUT, clearPreference, readPreference, writePreference } from "../lib/preferences.js";
-import { healthRulesOf, readSettings } from "../lib/settings.js";
+import type { MoraAccount } from "../lib/mora.js";
+import { moraEverOn, moraPaidThrough, moraPendingThrough } from "../lib/mora.js";
+import { loadMoraAccounts } from "../lib/moraAccounts.js";
+import { healthRulesOf, readMoraHistory, readSettings } from "../lib/settings.js";
 import { businessToday } from "../lib/time.js";
 import type { ContractTerms, HealthRules, PaymentHealth, SaleType } from "../lib/contracts.js";
 import { assessContract, outstandingInstallments, shiftDays } from "../lib/contracts.js";
@@ -175,7 +178,10 @@ interface Assessed {
   terms: ContractTerms;
   /** Health at the reported month's end — or right now, for the current month. */
   status: PaymentHealth;
+  /** What is left of the price, plus mora charged and not paid. */
   balanceCents: number;
+  /** Mora charged and not paid, at the position this screen is read from. */
+  moraPendingCents: number;
   arrearsCents: number;
   monthsBehind: number;
   downPaymentLate: boolean;
@@ -186,7 +192,7 @@ interface Assessed {
   expected: Map<string, number>;
   /** What should have arrived by the end of the reported month. */
   expectedThroughMonthCents: number;
-  /** Paid-to-date at the position this screen is being read from. */
+  /** Paid towards the price at the position this screen is being read from: mora left out. */
   paidCents: number;
   /** Installments still owing money. Empty for a cash sale or a donation. */
   outstandingCount: number;
@@ -205,6 +211,9 @@ interface Assessed {
  * here would make this screen call a customer overdue while the contract row
  * two clicks away calls them al día, and two screens disagreeing about one
  * person is worse than either being a few days early.
+ *
+ * The part of those payments that went to mora (see lib/mora.ts) is taken off
+ * before the cuotas are counted, at the same position: mora is not a cuota.
  */
 function assess(
   row: ContractRow,
@@ -213,6 +222,7 @@ function assess(
   previousAsOf: string,
   isCurrentMonth: boolean,
   rules: HealthRules,
+  mora: MoraAccount | undefined,
 ): Assessed {
   const terms: ContractTerms = {
     saleType: row.saleType as SaleType,
@@ -227,7 +237,14 @@ function assess(
     firstDueOn: row.firstDueOn,
   };
 
-  const paidCents = isCurrentMonth ? row.paidToDateCents : row.paidThroughAsOfCents;
+  const moraPaidCents = mora ? (isCurrentMonth ? mora.paidCents : moraPaidThrough(mora, asOf)) : 0;
+  const moraPendingCents = mora
+    ? isCurrentMonth
+      ? mora.pendingCents
+      : moraPendingThrough(mora, asOf)
+    : 0;
+  const paidCents =
+    (isCurrentMonth ? row.paidToDateCents : row.paidThroughAsOfCents) - moraPaidCents;
   const health = assessContract(terms, paidCents, asOf, rules);
   const expected = expectedByMonth(terms);
 
@@ -246,13 +263,18 @@ function assess(
     row,
     terms,
     status: health.status,
-    balanceCents: health.balanceCents,
+    balanceCents: health.balanceCents + moraPendingCents,
+    moraPendingCents,
     arrearsCents: health.arrearsCents,
     monthsBehind: health.monthsBehind,
     downPaymentLate: health.downPaymentLate,
     settled: health.settled,
-    previousStatus: assessContract(terms, row.paidThroughPreviousCents, previousAsOf, rules)
-      .status,
+    previousStatus: assessContract(
+      terms,
+      row.paidThroughPreviousCents - (mora ? moraPaidThrough(mora, previousAsOf) : 0),
+      previousAsOf,
+      rules,
+    ).status,
     expected,
     expectedThroughMonthCents,
     paidCents,
@@ -385,8 +407,16 @@ export const dashboardRoutes: FastifyPluginAsync<DashboardRoutesOptions> = async
 
     const rows = contractRows(app.db, asOf, previousAsOf);
     const rules = healthRulesOf(readSettings(app.db));
+    const moraHistory = readMoraHistory(app.db);
+    // Up to today whatever month is shown: a past month reads its own position
+    // out of the same accounts, see `moraPaidThrough`.
+    const moraAccounts = loadMoraAccounts(app.db, {
+      asOf: asOfToday,
+      timeZone: options.timeZone,
+      history: moraHistory,
+    });
     const assessed = rows.map((row) =>
-      assess(row, month, asOf, previousAsOf, isCurrentMonth, rules),
+      assess(row, month, asOf, previousAsOf, isCurrentMonth, rules, moraAccounts.get(row.id)),
     );
 
     /*
@@ -571,6 +601,23 @@ export const dashboardRoutes: FastifyPluginAsync<DashboardRoutesOptions> = async
     const stillDueContracts = live.filter(
       (entry) => entry.expectedThroughMonthCents > entry.paidCents,
     ).length;
+
+    // Its own line, beside what is due, never mixed into it: «Mora pendiente»
+    // is fees, «Por cobrar» is cuotas. Over every open contract, including one
+    // whose cuotas are complete and whose mora is not.
+    const owingMora = assessed.filter(
+      (entry) => entry.row.status === "active" && entry.moraPendingCents > 0,
+    );
+    const moraCollectedCents = [...moraAccounts.values()].reduce(
+      (total, account) =>
+        total +
+        account.splits.reduce(
+          (sum, split) =>
+            monthOf(split.paidOn) === month ? sum + split.toMoraCents : sum,
+          0,
+        ),
+      0,
+    );
 
     /* ---------------------------------------------------------------------- */
     /* Band 2 — collections                                                    */
@@ -834,6 +881,15 @@ export const dashboardRoutes: FastifyPluginAsync<DashboardRoutesOptions> = async
         expectedCents: expectedIn(month),
         stillDueCents,
         stillDueContracts,
+        /** `null` while mora has never been switched on: the Panel shows no tile for it. */
+        mora: moraEverOn(moraHistory)
+          ? {
+              pendingCents: owingMora.reduce((total, entry) => total + entry.moraPendingCents, 0),
+              contracts: owingMora.length,
+              /** Mora paid in the month shown. Already inside «Cobrado». */
+              collectedCents: moraCollectedCents,
+            }
+          : null,
         payingCustomers: payingCustomers.size,
         previousPayingCustomers: previousPayingCustomers.size,
         signedCount: signedThisMonth.length,

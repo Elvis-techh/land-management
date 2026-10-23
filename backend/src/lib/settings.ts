@@ -1,10 +1,13 @@
-import { eq } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
+
+import { asc, eq } from "drizzle-orm";
 import { z } from "zod";
 
 import type { Db } from "../db/client.js";
-import { appSettings } from "../db/schema.js";
+import { appSettings, moraRules } from "../db/schema.js";
 import type { HealthRules } from "./contracts.js";
-import { DEFAULT_HEALTH_RULES } from "./contracts.js";
+import { DEFAULT_HEALTH_RULES, shiftDays } from "./contracts.js";
+import type { MoraRuleVersion } from "./mora.js";
 import type { Capability } from "./permissions.js";
 
 /**
@@ -220,6 +223,55 @@ export function writeSection<K extends SettingsSection>(
 /** Forget a section, so it follows the defaults again. Used by the tests. */
 export function clearSection(db: Pick<Db, "delete">, key: SettingsSection): void {
   db.delete(appSettings).where(eq(appSettings.key, key)).run();
+}
+
+/* -------------------------------------------------------------------------- */
+/* The mora rules over time                                                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Every version of the mora rules, oldest first. Empty while mora has never been
+ * saved, which lib/mora.ts reads as "never charged". See `moraRules`.
+ */
+export function readMoraHistory(db: Pick<Db, "select">): MoraRuleVersion[] {
+  return db
+    .select({ effectiveFrom: moraRules.effectiveFrom, value: moraRules.value })
+    .from(moraRules)
+    .orderBy(asc(moraRules.effectiveFrom))
+    .all()
+    .map((row) => ({ effectiveFrom: row.effectiveFrom, rules: readSection("mora", row.value) }));
+}
+
+/**
+ * File a save of the mora section as the version in force from tomorrow.
+ * Call inside the same transaction as `writeSection`.
+ *
+ * Tomorrow, not today: today's charges were made this morning, under the rules
+ * of this morning, and «una mora ya cobrada no cambia». A second save on the
+ * same day replaces the first, which never got to decide anything.
+ */
+export function writeMoraVersion(
+  db: Pick<Db, "insert">,
+  rules: MoraSettings,
+  today: string,
+  actorId: string,
+): void {
+  const value = JSON.stringify(rules);
+  const now = new Date().toISOString();
+
+  db.insert(moraRules)
+    .values({
+      id: randomUUID(),
+      effectiveFrom: shiftDays(today, 1),
+      value,
+      recordedBy: actorId,
+      recordedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: moraRules.effectiveFrom,
+      set: { value, recordedBy: actorId, recordedAt: now },
+    })
+    .run();
 }
 
 /** The two numbers `assessContract` needs, from wherever they are kept. */

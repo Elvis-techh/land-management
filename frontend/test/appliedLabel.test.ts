@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { appliedLabel } from "../src/features/receipts/appliedLabel";
+import { appliedLabel, moraCuotas, moraLabel } from "../src/features/receipts/appliedLabel";
 import type { AppliedLabelLine } from "../src/features/receipts/appliedLabel";
 import type { MoneyView } from "../src/lib/money";
 import { cents } from "../src/lib/money";
@@ -140,5 +140,31 @@ describe("appliedLabel", () => {
   it("says nothing when the money went to no cuota at all", () => {
     // A prima, or a payment on a contract with no schedule to place it in.
     assert.equal(label(line([])), null);
+  });
+});
+
+describe("moraLabel", () => {
+  const paid = (...entries: Array<[number, number]>) =>
+    entries.map(([installment, amount]) => ({ installment, amount: cents(Math.round(amount * 100)) }));
+
+  it("prints the mora on a line of its own, with its cuotas and total", () => {
+    assert.equal(
+      moraLabel({ moraPaid: paid([4, 500]) }, HNL)?.replace(/\u00a0/g, " "),
+      "Recargo por mora · cuota 4 · L. 500.00",
+    );
+    assert.equal(
+      moraLabel({ moraPaid: paid([4, 500], [5, 250]) }, HNL)?.replace(/\u00a0/g, " "),
+      "Recargo por mora · cuotas 4 y 5 · L. 750.00",
+    );
+  });
+
+  it("says nothing when none of the money was mora", () => {
+    assert.equal(moraLabel({ moraPaid: [] }, HNL), null);
+  });
+
+  it("names the prima as the prima", () => {
+    assert.equal(moraCuotas(paid([0, 100])), "la prima");
+    assert.equal(moraCuotas(paid([0, 100], [1, 50])), "la prima y la cuota 1");
+    assert.equal(moraCuotas(paid([4, 1], [5, 1], [6, 1])), "cuotas 4, 5 y 6");
   });
 });

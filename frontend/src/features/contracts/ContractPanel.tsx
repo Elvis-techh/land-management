@@ -18,6 +18,7 @@ import {
   formatDate,
   healthDetail,
   paidPercent,
+  pricePaid,
   primaryStamp,
 } from "./contractPresentation";
 
@@ -240,7 +241,7 @@ export function ContractPanel({
           </div>
 
           <p className="contract-progress-foot">
-            {formatMoney(contract.paidToDate, money)} pagados de{" "}
+            {formatMoney(pricePaid(contract), money)} pagados de{" "}
             {formatMoney(contract.terms.salePrice, money)} · {percent}%
           </p>
 
@@ -344,6 +345,22 @@ export function ContractPanel({
               </span>
             </div>
           )}
+          {/* The late fees, each on its own line and never inside «Vencido sin
+              pagar», which is cuotas only: a mora pendiente does not make a
+              contract «Atrasado». Shown whenever there has been any, closed
+              contracts included, so the saldo below is accounted for. */}
+          {contract.mora.pending > 0 && (
+            <div className="cp-row">
+              <span>Mora pendiente</span>
+              <span className="cell-money warn">{formatMoney(contract.mora.pending, money)}</span>
+            </div>
+          )}
+          {contract.mora.paid > 0 && (
+            <div className="cp-row">
+              <span>Mora pagada</span>
+              <span className="cell-money">{formatMoney(contract.mora.paid, money)}</span>
+            </div>
+          )}
           {/* Only while the contract is open. A closed one has no next cuota,
               whatever its schedule would still say. */}
           {isOpen && (
@@ -378,6 +395,8 @@ export function ContractPanel({
           <p className="cp-note">
             El saldo, el atraso y la próxima cuota se calculan con los pagos registrados cada vez
             que se abre esta pantalla. No son valores editables.
+            {contract.mora.charged > 0 &&
+              " El saldo incluye la mora pendiente; lo pagado incluye la mora pagada."}
           </p>
         </section>
 

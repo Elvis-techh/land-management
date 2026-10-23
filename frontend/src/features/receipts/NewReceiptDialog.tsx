@@ -1168,11 +1168,11 @@ export function NewReceiptDialog({
             the issued receipt, as `newBalance`, which means the answer to "y
             cuánto me queda" arrives after the money has been taken.
 
-            Plain subtraction, and it agrees with the server for the same
-            reason routes/receipts.ts says its own check does: with no charges
-            in the system yet, a balance IS sale price minus payments. The
-            receipt remains the authority — this is the same arithmetic run
-            early, not a second source of truth.
+            Plain subtraction from each contract's `balance`, which the server
+            already gives with any pending mora in it, so it agrees with the
+            receipt's own check in routes/receipts.ts. The receipt remains the
+            authority — this is the same arithmetic run early, not a second
+            source of truth.
           */}
           {total > 0 && (
             <>

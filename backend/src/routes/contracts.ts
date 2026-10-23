@@ -42,6 +42,8 @@ import { roleCan } from "../lib/capabilities.js";
 import { voidConstancias } from "../lib/constancias.js";
 import { syncContractLifecycle } from "../lib/contractLifecycle.js";
 import { holdsLot, openContract } from "../lib/holding.js";
+import type { MoraAccount } from "../lib/mora.js";
+import { loadMoraAccounts } from "../lib/moraAccounts.js";
 import { healthRulesOf, readSettings } from "../lib/settings.js";
 import { businessToday } from "../lib/time.js";
 
@@ -291,6 +293,11 @@ function documentsFor(db: Db, contractId: string) {
  * their metadata down on a screen that only needs to mark which contracts have
  * their paperwork on file would be a page of JSON nobody reads. The panel asks
  * for the actual list when a contract is opened.
+ *
+ * `mora` is the contract's account from lib/moraAccounts.ts, absent when it
+ * owes no mora and never did. The part of the payments that went to mora is
+ * taken off before the cuotas are counted, so a customer who paid L 25,500 of
+ * which L 500 was mora has paid L 25,000 of cuotas, not L 25,500.
  */
 function present(
   row: ContractRow,
@@ -298,6 +305,7 @@ function present(
   rules: HealthRules,
   documentCount = 0,
   links: AmendmentLinks = NO_LINKS,
+  mora?: MoraAccount,
 ) {
   const terms: ContractTerms = {
     saleType: row.saleType as SaleType,
@@ -310,7 +318,9 @@ function present(
     firstDueOn: row.firstDueOn,
   };
 
-  const health = assessContract(terms, row.paidToDateCents, asOf, rules);
+  const moraPaidCents = mora?.paidCents ?? 0;
+  const moraPendingCents = mora?.pendingCents ?? 0;
+  const health = assessContract(terms, row.paidToDateCents - moraPaidCents, asOf, rules);
 
   return {
     id: row.id,
@@ -370,8 +380,16 @@ function present(
     },
     /** Every figure below is computed on this request. */
     downPaymentPaid: row.downPaymentPaidCents,
+    /** Everything received, mora included. `mora.paid` is the part that was mora. */
     paidToDate: row.paidToDateCents,
-    balance: health.balanceCents,
+    /** What is left of the price, plus any mora charged and not paid. */
+    balance: health.balanceCents + moraPendingCents,
+    /** The late fees, all zero while mora has never been charged. See lib/mora.ts. */
+    mora: {
+      charged: mora?.chargedCents ?? 0,
+      paid: moraPaidCents,
+      pending: moraPendingCents,
+    },
     health: {
       status: health.status,
       arrears: health.arrearsCents,
@@ -702,10 +720,11 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
     const documentCounts = documentCountsFor(app.db);
     const links = amendmentLinksFor(app.db);
     const rules = healthRulesOf(readSettings(app.db));
+    const mora = loadMoraAccounts(app.db, { asOf, timeZone: options.timeZone });
 
     return reply.send({
       contracts: rows.map((row) =>
-        present(row, asOf, rules, documentCounts.get(row.id) ?? 0, links),
+        present(row, asOf, rules, documentCounts.get(row.id) ?? 0, links, mora.get(row.id)),
       ),
     });
   });
@@ -732,10 +751,18 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
 
       const asOf = today();
 
-      const members = contractsListQuery(app.db)
+      const rows = contractsListQuery(app.db)
         .where(and(eq(contracts.saleGroupId, request.params.groupId), openContract(asOf)))
-        .all()
-        .map((row) => present(row, asOf, healthRulesOf(readSettings(app.db))));
+        .all();
+      const mora = loadMoraAccounts(app.db, {
+        asOf,
+        timeZone: options.timeZone,
+        contractIds: rows.map((row) => row.id),
+      });
+      const rules = healthRulesOf(readSettings(app.db));
+      const members = rows.map((row) =>
+        present(row, asOf, rules, 0, NO_LINKS, mora.get(row.id)),
+      );
 
       if (members.length === 0) {
         return reply.code(404).send({
@@ -752,8 +779,9 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
           balanceCents: member.balance,
           // The next installment this lot still needs, so a plain even split
           // cannot round it below what it owes RIGHT NOW while another lot
-          // that merely owes more overall takes the surplus.
-          minimumDueCents: member.health.nextDueAmount,
+          // that merely owes more overall takes the surplus. Its pending mora
+          // too: without it, the cuota is not what the money would complete.
+          minimumDueCents: member.health.nextDueAmount + member.mora.pending,
         })),
       );
       const shortOfMinimum = new Set(split.shortOfMinimumContractIds);
@@ -1101,7 +1129,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
 
         // A new price can push the balance to zero (settling the contract) or,
         // on a paid-off contract repriced upward, reopen it.
-        syncContractLifecycle(tx, existing.id);
+        syncContractLifecycle(tx, existing.id, { asOf: today(), timeZone: options.timeZone });
 
         return next;
       });
@@ -1498,7 +1526,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
 
               // Nothing is paid on it yet, but a price of zero is settled from
               // the start — the same rule every other write follows.
-              syncContractLifecycle(tx, next.id);
+              syncContractLifecycle(tx, next.id, { asOf: today(), timeZone: options.timeZone });
 
               return { id: next.id, code: next.code, replacesContractId: previous.id };
             });

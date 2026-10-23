@@ -174,6 +174,34 @@ export const appSettings = sqliteTable("app_settings", {
 });
 
 /**
+ * Every version of the mora rules, each with the day it took effect.
+ *
+ * `app_settings` holds the rules as they stand NOW, which is what the screen
+ * shows. A mora charged in March has to be worked out with the rules of March,
+ * though, or raising the percentage in October would quietly raise every mora
+ * ever charged — and the screen promises «una mora ya cobrada no cambia». So
+ * each save of the mora section also lands here, in force from the next
+ * business day: today's charges were made under today's rules, this morning,
+ * whatever is saved this afternoon. See src/lib/mora.ts.
+ *
+ * Unique by day. Two saves on one day are one version, the later one: none of
+ * the earlier one's rules ever decided anything, because it had not started.
+ */
+export const moraRules = sqliteTable(
+  "mora_rules",
+  {
+    id: text("id").primaryKey(),
+    /** YYYY-MM-DD, the first day these rules decide a charge or a payment. */
+    effectiveFrom: text("effective_from").notNull(),
+    /** The mora section as JSON, the same shape as in `app_settings`. */
+    value: text("value").notNull(),
+    recordedBy: text("recorded_by").references(() => users.id),
+    recordedAt: timestamp("recorded_at"),
+  },
+  (table) => [uniqueIndex("mora_rules_effective_from_unique").on(table.effectiveFrom)],
+);
+
+/**
  * The lempira-per-dollar rate, as a HISTORY rather than a single value.
  *
  * Append-only, like payments: a new reading is a new row, never an overwrite.

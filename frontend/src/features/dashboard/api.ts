@@ -138,6 +138,17 @@ export interface Dashboard {
     /** Scheduled through this month's end and not yet received. */
     stillDueCents: Cents;
     stillDueContracts: number;
+    /**
+     * The late fees, apart from the cuotas in `stillDueCents`. `null` while
+     * mora has never been switched on, and the Panel then shows no tile.
+     */
+    mora: {
+      /** Charged on open contracts and not paid yet. */
+      pendingCents: Cents;
+      contracts: number;
+      /** Paid in the month shown. Already counted inside `collectedCents`. */
+      collectedCents: Cents;
+    } | null;
     payingCustomers: number;
     previousPayingCustomers: number;
     signedCount: number;
@@ -255,6 +266,11 @@ export async function fetchDashboard(month?: string): Promise<Dashboard> {
       previousToDateCents: c(raw.income.previousToDateCents),
       expectedCents: c(raw.income.expectedCents),
       stillDueCents: c(raw.income.stillDueCents),
+      mora: raw.income.mora && {
+        ...raw.income.mora,
+        pendingCents: c(raw.income.mora.pendingCents),
+        collectedCents: c(raw.income.mora.collectedCents),
+      },
       signedValueCents: c(raw.income.signedValueCents),
       byType: {
         downPayment: c(raw.income.byType.downPayment),

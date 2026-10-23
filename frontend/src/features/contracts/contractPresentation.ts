@@ -1,3 +1,5 @@
+import type { Cents } from "../../lib/money";
+import { subtractMoney } from "../../lib/money";
 import type { Contract, ContractStatus, PaymentHealth, SaleType } from "../../types";
 
 /**
@@ -172,11 +174,19 @@ export function formatSchedule(contract: Contract, formatted: string | null): st
   return `${formatted ?? ""} · día ${contract.terms.dueDay}`;
 }
 
+/**
+ * What has been paid towards the price: everything received, less the part
+ * that paid mora. Mora is a fee on top of the price, not progress through it.
+ */
+export function pricePaid(contract: Contract): Cents {
+  return subtractMoney(contract.paidToDate, contract.mora.paid);
+}
+
 /** How far through the price this contract is, 0–100, for the progress bar. */
 export function paidPercent(contract: Contract): number {
   if (contract.terms.salePrice <= 0) {
     return 100;
   }
 
-  return Math.min(100, Math.round((contract.paidToDate / contract.terms.salePrice) * 100));
+  return Math.min(100, Math.round((pricePaid(contract) / contract.terms.salePrice) * 100));
 }

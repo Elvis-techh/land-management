@@ -9,7 +9,7 @@ import { cents, formatDocumentMoney } from "../../lib/money";
 import { formatPhone } from "../../lib/phone";
 import type { Receipt } from "../../types";
 import { useSettings } from "../settings/SettingsContext";
-import { appliedLabel } from "./appliedLabel";
+import { appliedLabel, moraLabel } from "./appliedLabel";
 import { isFinalReceipt } from "./finalReceipt";
 
 interface ReceiptPaperProps {
@@ -91,6 +91,14 @@ function clientDetail(customer: Receipt["customer"]): string | null {
  *                  + 36px for a note
  *                  + 62px for the ANULADO banner
  *                  + 12px for the final receipt's «Contrato pagado» line
+ *                  + 22px per lot row with a «Recargo por mora» line
+ *
+ * The mora figure is NOT measured like the others: it is one more
+ * `.receipt-item-detail` line (0.7895em of the enlarged cell, plus its 0.2em
+ * margin) worked out at 10pt. The «Mora cobrada» row it brings to the summary
+ * goes in the left column, which stays shorter than the right one with its
+ * boxed balance, so it adds nothing. Measure it properly the first time a
+ * receipt with mora on many lots is printed.
  *
  * `USABLE_PX` is deliberately well short of the page, and it is the same budget
  * `.receipt-paper`'s `min-height: 264mm` uses in the print stylesheet — the two
@@ -118,6 +126,7 @@ function printBaseFor(receipt: Receipt): string {
   const estimatedPx =
     981 +
     68 * receipt.lines.length +
+    22 * receipt.lines.filter((line) => line.moraPaid.length > 0).length +
     (receipt.voidedAt ? 62 : 0) +
     (isFinalReceipt(receipt) ? 12 : 0);
 
@@ -241,6 +250,7 @@ export function ReceiptPaper({ receipt, money }: ReceiptPaperProps) {
         <tbody>
           {receipt.lines.map((line) => {
             const applied = appliedLabel(line, money);
+            const mora = moraLabel(line, money);
 
             return (
               <tr key={line.paymentId}>
@@ -255,6 +265,10 @@ export function ReceiptPaper({ receipt, money }: ReceiptPaperProps) {
                       off — see `appliedLabel`. A cash sale has no schedule,
                       so the line is dropped entirely rather than left empty. */}
                   {applied && <span className="receipt-item-detail">{applied}</span>}
+
+                  {/* The part of the money that was a late fee, on a line of
+                      its own so a fee is never read as a cuota. */}
+                  {mora && <span className="receipt-item-detail">{mora}</span>}
                 </td>
                 <td className="receipt-right">{formatDocumentMoney(line.amount, money)}</td>
               </tr>
@@ -269,6 +283,16 @@ export function ReceiptPaper({ receipt, money }: ReceiptPaperProps) {
             <span>Valor Total del Contrato</span>
             <span className="receipt-summary-value">{formatDocumentMoney(contractTotal, money)}</span>
           </div>
+          {/* Only once there is mora: with it, valor + mora − total pagado
+              is the new balance, and the page has to show all three. */}
+          {receipt.moraCharged > 0 && (
+            <div className="receipt-summary-row">
+              <span>Mora Cobrada</span>
+              <span className="receipt-summary-value">
+                {formatDocumentMoney(receipt.moraCharged, money)}
+              </span>
+            </div>
+          )}
           <div className="receipt-summary-row">
             <span>Total Pagado Acumulado</span>
             <span className="receipt-summary-value">
