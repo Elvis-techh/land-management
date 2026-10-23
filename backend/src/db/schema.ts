@@ -149,6 +149,31 @@ export const userPreferences = sqliteTable(
 );
 
 /**
+ * The business's own settings, edited on the Configuración screen: the mora
+ * rules, the contract defaults, and the details printed on receipts.
+ *
+ * One row per SECTION ("mora", "contracts", "business"), holding that section
+ * as JSON, rather than a column per setting. The sections are saved, permitted
+ * and filed in Historial separately, and a new setting inside one of them then
+ * costs no migration. A missing row means "never configured": the defaults in
+ * src/lib/settings.ts apply, and they are the values that were hardcoded
+ * before this table existed, so a fresh database behaves exactly as before.
+ *
+ * What a setting MEANS, and what values it may hold, is checked in
+ * src/lib/settings.ts on the way in and again on the way out. This table only
+ * stores it.
+ */
+export const appSettings = sqliteTable("app_settings", {
+  /** "mora" | "contracts" | "business". */
+  key: text("key").primaryKey(),
+  /** The section as JSON. */
+  value: text("value").notNull(),
+  /** Who saved it last. The full history of changes is in `audit_events`. */
+  updatedBy: text("updated_by").references(() => users.id),
+  updatedAt: timestamp("updated_at"),
+});
+
+/**
  * The lempira-per-dollar rate, as a HISTORY rather than a single value.
  *
  * Append-only, like payments: a new reading is a new row, never an overwrite.
@@ -987,7 +1012,7 @@ export const auditEvents = sqliteTable("audit_events", {
   actorId: text("actor_id")
     .notNull()
     .references(() => users.id),
-  /** "lot" | "project" | "customer" | "contract" | "payment" | "user" | "role" | "exchange_rate" */
+  /** "lot" | "project" | "customer" | "contract" | "payment" | "user" | "role" | "exchange_rate" | "settings" */
   entityType: text("entity_type").notNull(),
   entityId: text("entity_id").notNull(),
   /** "update" | "reprice" | "archive" | "restore" | "delete" | "cancel" | "reverse" … */

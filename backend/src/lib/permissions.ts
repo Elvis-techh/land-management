@@ -40,6 +40,8 @@ export const CAPABILITIES = [
   "payment:edit",
   "price:change",
   "rate:edit",
+  "settings:edit",
+  "mora:edit",
   "audit:view",
   "permission:manage",
   "user:manage",
@@ -60,11 +62,17 @@ export type Capability = (typeof CAPABILITIES)[number];
  * uncollectable writes off the customer's remaining balance and frees the lot
  * for resale. That is a decision about money the business is giving up on, and
  * it is not one to delegate.
+ *
+ * `mora:edit` is the same kind of decision, the other way round: the mora rules
+ * (whether it is charged, how much, the grace days, the start date) decide what
+ * every late customer owes on top of their cuota. The owner asked that an
+ * associate never be able to change them or switch them off.
  */
 export const LOCKED_CAPABILITIES: ReadonlySet<Capability> = new Set<Capability>([
   "permission:manage",
   "user:manage",
   "contract:default",
+  "mora:edit",
 ]);
 
 /** The capabilities a supervisor is allowed to turn on and off for a role. */

@@ -4211,6 +4211,16 @@ body.modal-open {
   cursor: not-allowed;
 }
 
+/* A select cannot be read-only, only disabled; it gets the same dashed,
+   readable look, for the Configuración sections a user may read but not change. */
+.form-field select:disabled {
+  background: var(--paper);
+  border-style: dashed;
+  color: var(--text-secondary);
+  cursor: not-allowed;
+  opacity: 1;
+}
+
 .form-field input[readonly]:focus,
 .form-field textarea[readonly]:focus {
   border-color: var(--line-strong);
@@ -5060,6 +5070,48 @@ body.modal-open {
   justify-content: flex-end;
   gap: 12px;
   padding-bottom: 8px;
+}
+
+/* ---------- configuración ---------- */
+
+/* The dialogs' form grid, without the dialog's own padding: the card already
+   has its own. Two classes so it also wins over the phone rule that sets the
+   grid's side padding. */
+.modal-form-grid.settings-grid {
+  padding: 0;
+}
+
+.settings-notice {
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--text-secondary);
+  font-size: 0.7812rem;
+  line-height: 1.5;
+}
+
+/* «pagos atrasados» is longer than the usual unit after a number. */
+.settings-wide-suffix input {
+  padding-right: 128px;
+}
+
+.settings-footer-preview {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  line-height: 1.5;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.settings-footer-preview strong {
+  display: block;
+  color: var(--text-primary);
+  font-weight: 600;
 }
 
 /* ---------- area input ---------- */

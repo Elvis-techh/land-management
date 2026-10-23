@@ -2,12 +2,13 @@ import type { CSSProperties } from "react";
 
 import logoUrl from "../../assets/mr-investments.png";
 import { amountInWords } from "../../lib/amountInWords";
-import { BUSINESS, CONTACT_LINE, THANK_YOU, THANK_YOU_FINAL } from "../../lib/business";
+import { contactLine, thankYou, thankYouFinal } from "../../lib/business";
 import { code128Geometry } from "../../lib/code128";
 import type { MoneyView } from "../../lib/money";
 import { cents, formatDocumentMoney } from "../../lib/money";
 import { formatPhone } from "../../lib/phone";
 import type { Receipt } from "../../types";
+import { useSettings } from "../settings/SettingsContext";
 import { appliedLabel } from "./appliedLabel";
 import { isFinalReceipt } from "./finalReceipt";
 
@@ -148,6 +149,7 @@ function printBaseFor(receipt: Receipt): string {
  * this is rendered from.
  */
 export function ReceiptPaper({ receipt, money }: ReceiptPaperProps) {
+  const { business } = useSettings();
   /*
    * "Valor Total del Contrato" — summed across the lots ON THIS RECEIPT.
    *
@@ -182,8 +184,8 @@ export function ReceiptPaper({ receipt, money }: ReceiptPaperProps) {
 
       <header className="receipt-header">
         <div className="receipt-logo">
-          <img src={logoUrl} alt={BUSINESS.name} />
-          <h2>{BUSINESS.name}</h2>
+          <img src={logoUrl} alt={business.name} />
+          <h2>{business.name}</h2>
         </div>
 
         <div className="receipt-meta">
@@ -342,13 +344,13 @@ export function ReceiptPaper({ receipt, money }: ReceiptPaperProps) {
 
       <footer className="receipt-footer">
         <div className="receipt-signature">
-          <p className="receipt-signature-name">{BUSINESS.signatory}</p>
+          <p className="receipt-signature-name">{business.signatory}</p>
           <hr />
           <p className="receipt-signature-label">Firma Autorizada</p>
         </div>
 
-        <p className="receipt-thanks">{isFinal ? THANK_YOU_FINAL : THANK_YOU}</p>
-        <p className="receipt-contact">{CONTACT_LINE}</p>
+        <p className="receipt-thanks">{isFinal ? thankYouFinal(business) : thankYou(business)}</p>
+        <p className="receipt-contact">{contactLine(business)}</p>
 
         {/*
          * The receipt number, scannable. Encoded from `code` rather than

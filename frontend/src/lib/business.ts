@@ -1,3 +1,5 @@
+import type { BusinessSettings } from "../features/settings/api";
+
 /**
  * Who the receipt is FROM.
  *
@@ -6,36 +8,30 @@
  * headed "Lindero", which named the wrong one of the two — the customer has
  * never heard of the app and is not paying it.
  *
- * These are the strings from the official receipt template (`server.js` in
- * inversion_pdf_service), collected here rather than scattered through the
- * markup so that a changed phone number is one edit in one file. They are
- * constants rather than settings because there is exactly one business in this
- * database; the day there are two, this becomes a table and the receipt reads
- * it instead.
+ * The details themselves (name, signature, location, phone, email) are set on
+ * the Configuración screen and read with `useSettings()`. They started as the
+ * strings from the official receipt template (`server.js` in
+ * inversion_pdf_service), which are still the defaults. This file only builds
+ * the lines that are made from them, so the receipt and the constancia compose
+ * them the same way.
  */
-export const BUSINESS = {
-  /** The trading name, printed under the logo. */
-  name: "Inversiones Manuel",
-  /** Whose signature appears above "Firma Autorizada". */
-  signatory: "Manuel Rivera",
-  location: "Tela, Atlántida",
-  phone: "+504 9315-4685",
-  email: "edrosfamily@gmail.com",
-} as const;
 
 /** "Gracias por su pago y su confianza en Inversiones Manuel." */
-export const THANK_YOU = `Gracias por su pago y su confianza en ${BUSINESS.name}.`;
+export function thankYou(business: BusinessSettings): string {
+  return `Gracias por su pago y su confianza en ${business.name}.`;
+}
 
 /** The same line on the receipt that pays everything off. */
-export const THANK_YOU_FINAL = `Gracias por completar su compra con ${BUSINESS.name}. ¡Felicidades por su terreno!`;
+export function thankYouFinal(business: BusinessSettings): string {
+  return `Gracias por completar su compra con ${business.name}. ¡Felicidades por su terreno!`;
+}
 
 /**
  * The footer's one-line contact strip, composed rather than stored whole so it
- * cannot drift out of step with the fields above it.
+ * cannot drift out of step with the fields it is made from.
  */
-export const CONTACT_LINE = [
-  BUSINESS.name,
-  BUSINESS.location,
-  `Tel: ${BUSINESS.phone}`,
-  `Correo: ${BUSINESS.email}`,
-].join(" | ");
+export function contactLine(business: BusinessSettings): string {
+  return [business.name, business.location, `Tel: ${business.phone}`, `Correo: ${business.email}`].join(
+    " | ",
+  );
+}

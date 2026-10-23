@@ -16,6 +16,7 @@ import {
   IconPermissions,
   IconProjects,
   IconReceipts,
+  IconSettings,
   IconUsers,
 } from "./Icons";
 
@@ -70,9 +71,12 @@ function buildNavGroups(user: User): Array<{ label: string; items: NavItem[] }> 
     control.push({ id: "users" as const, label: "Usuarios", icon: IconUsers });
   }
 
-  if (control.length > 0) {
-    groups.push({ label: "Control", items: control });
-  }
+  // For everyone: an associate can read the rules the app applies (the grace
+  // days, the mora) even where they cannot change them. The screen itself
+  // decides which sections are editable.
+  control.push({ id: "settings" as const, label: "Configuración", icon: IconSettings });
+
+  groups.push({ label: "Control", items: control });
 
   return groups;
 }

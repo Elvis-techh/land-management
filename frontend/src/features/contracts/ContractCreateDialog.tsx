@@ -18,6 +18,7 @@ import { ContractDocumentDropzone, holdContractFiles } from "./ContractDocumentD
 import { screenContractFiles } from "./contractFiles";
 import { CustomerPicker, LotPicker } from "./ContractPartyPickers";
 import { KIND_LABELS, SALE_TYPE_LABELS, formatDate } from "./contractPresentation";
+import { useSettings } from "../settings/SettingsContext";
 import {
   addMonthsOnDay,
   clampDueDayInput,
@@ -116,6 +117,7 @@ export function ContractCreateDialog({
   onCreate,
   onCreated,
 }: ContractCreateDialogProps) {
+  const { reservationMonths } = useSettings().contracts;
   const [step, setStep] = useState<Step>("parties");
 
   const [customer, setCustomer] = useState<CustomerRecord | null>(null);
@@ -446,12 +448,12 @@ export function ContractCreateDialog({
       : null;
 
   // A hold with no end date keeps a lot off the market forever and nobody ever
-  // notices, so the field is required — starting a month out, which is what
-  // these are in practice.
+  // notices, so the field is required — starting as far out as a reservation
+  // usually lasts, which is set on Configuración (a month unless changed).
   const expiresOn =
     expiresOverride ??
     (isReservation && signedOn !== ""
-      ? addMonthsOnDay(signedOn, 1, Number(signedOn.slice(8, 10)))
+      ? addMonthsOnDay(signedOn, reservationMonths, Number(signedOn.slice(8, 10)))
       : "");
 
   const chooseCustomer = (next: CustomerRecord | null) => {

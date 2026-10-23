@@ -15,7 +15,17 @@ const auditQuery = z.object({
    * so events that are recorded could never be filtered for.
    */
   entityType: z
-    .enum(["lot", "project", "customer", "contract", "payment", "user", "role", "exchange_rate"])
+    .enum([
+      "lot",
+      "project",
+      "customer",
+      "contract",
+      "payment",
+      "user",
+      "role",
+      "exchange_rate",
+      "settings",
+    ])
     .optional(),
 });
 
@@ -36,6 +46,17 @@ function snapshotLabel(snapshot: Record<string, unknown> | null): string | null 
 
   return typeof name === "string" ? name : null;
 }
+
+/**
+ * What a settings row is about. Its id is the section, not a UUID, so there is
+ * nothing to join to; and without this the business section would be labelled
+ * with the business's own name from its snapshot.
+ */
+const SETTINGS_LABELS: Record<string, string> = {
+  mora: "Mora",
+  contracts: "Contratos",
+  business: "Datos del negocio",
+};
 
 /**
  * Read the total two ways and they disagree the moment a filter is applied:
@@ -127,6 +148,7 @@ export const auditRoutes: FastifyPluginAsync = async (app) => {
           entityType: row.entityType,
           entityId: row.entityId,
           entityLabel:
+            (row.entityType === "settings" ? SETTINGS_LABELS[row.entityId] : undefined) ??
             row.lotCode ??
             row.customerName ??
             row.projectName ??

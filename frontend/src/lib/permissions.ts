@@ -39,6 +39,8 @@ export type Capability =
   | "payment:edit"
   | "price:change"
   | "rate:edit"
+  | "settings:edit"
+  | "mora:edit"
   | "audit:view"
   | "permission:manage"
   | "user:manage";
@@ -79,6 +81,8 @@ const DEFAULT_CAPABILITIES_BY_ROLE: Record<Role, ReadonlySet<Capability>> = {
     "payment:edit",
     "price:change",
     "rate:edit",
+    "settings:edit",
+    "mora:edit",
     "audit:view",
     "permission:manage",
     "user:manage",

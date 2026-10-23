@@ -1,6 +1,7 @@
 import logoUrl from "../../assets/mr-investments.png";
 import { amountInWords, dateInWords } from "../../lib/amountInWords";
-import { BUSINESS, CONTACT_LINE } from "../../lib/business";
+import { contactLine } from "../../lib/business";
+import { useSettings } from "../settings/SettingsContext";
 import type { MoneyView } from "../../lib/money";
 import { formatDocumentMoney } from "../../lib/money";
 import { paymentTypeLabel } from "../receipts/paymentType";
@@ -47,13 +48,14 @@ function payments(count: number): string {
 
 /** The letterhead every sheet carries, so a loose annex page still says whose it is. */
 function Letterhead({ constancia }: { constancia: Constancia }) {
+  const { business } = useSettings();
   const codes = constancia.parts.map((part) => part.contract.code);
 
   return (
     <header className="receipt-header">
       <div className="receipt-logo">
-        <img src={logoUrl} alt={BUSINESS.name} />
-        <h2>{BUSINESS.name}</h2>
+        <img src={logoUrl} alt={business.name} />
+        <h2>{business.name}</h2>
       </div>
 
       <div className="receipt-meta">
@@ -107,6 +109,7 @@ interface ConstanciaPaperProps {
  * that is no longer true.
  */
 export function ConstanciaPaper({ constancia, withAnnex }: ConstanciaPaperProps) {
+  const { business } = useSettings();
   const { customer, parts } = constancia;
   const isCombined = parts.length > 1;
   const isVoid = constancia.voidedAt !== null;
@@ -139,7 +142,7 @@ export function ConstanciaPaper({ constancia, withAnnex }: ConstanciaPaperProps)
 
         {isCombined ? (
           <p className="constancia-body">
-            Por medio de la presente, <strong>{BUSINESS.name}</strong> hace constar que{" "}
+            Por medio de la presente, <strong>{business.name}</strong> hace constar que{" "}
             <strong>{customer.fullName}</strong>
             {identification ? `, con identidad ${identification},` : ""} ha cancelado en su
             totalidad el valor de los <strong>{lotsPhrase(parts).replace(/^Lotes? /, "lotes ")}</strong>,
@@ -149,7 +152,7 @@ export function ConstanciaPaper({ constancia, withAnnex }: ConstanciaPaperProps)
           </p>
         ) : (
           <p className="constancia-body">
-            Por medio de la presente, <strong>{BUSINESS.name}</strong> hace constar que{" "}
+            Por medio de la presente, <strong>{business.name}</strong> hace constar que{" "}
             <strong>{customer.fullName}</strong>
             {identification ? `, con identidad ${identification},` : ""} ha cancelado en su
             totalidad el valor de {valueInWords} correspondiente al{" "}
@@ -243,7 +246,7 @@ export function ConstanciaPaper({ constancia, withAnnex }: ConstanciaPaperProps)
         </div>
 
         <p className="constancia-body">
-          Se extiende la presente a solicitud del interesado en {BUSINESS.location},{" "}
+          Se extiende la presente a solicitud del interesado en {business.location},{" "}
           {dateInWords(constancia.issuedOn)}.
         </p>
 
@@ -255,15 +258,15 @@ export function ConstanciaPaper({ constancia, withAnnex }: ConstanciaPaperProps)
 
         <footer className="receipt-footer">
           <div className="receipt-signature">
-            <p className="receipt-signature-name">{BUSINESS.signatory}</p>
+            <p className="receipt-signature-name">{business.signatory}</p>
             <hr />
             <p className="receipt-signature-label">Firma Autorizada</p>
           </div>
 
-          <p className="receipt-contact">{CONTACT_LINE}</p>
+          <p className="receipt-contact">{contactLine(business)}</p>
 
           <p className="receipt-stamp">
-            Para verificar esta constancia, comuníquese con {BUSINESS.name} y dé el código{" "}
+            Para verificar esta constancia, comuníquese con {business.name} y dé el código{" "}
             <strong>{constancia.lookupCode}</strong>.
             {sheetCount > 1 && ` Página 1 de ${sheetCount}.`}
           </p>
@@ -284,7 +287,7 @@ export function ConstanciaPaper({ constancia, withAnnex }: ConstanciaPaperProps)
                 would take the room of a dozen payments on every sheet. */}
             <header className="constancia-annex-head">
               <div>
-                <strong>{BUSINESS.name}</strong>
+                <strong>{business.name}</strong>
                 <span>Anexo · Historial de pagos</span>
               </div>
               <div className="receipt-right">

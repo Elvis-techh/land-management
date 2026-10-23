@@ -11,7 +11,8 @@ export type TabId =
   | "receipts"
   | "audit"
   | "permissions"
-  | "users";
+  | "users"
+  | "settings";
 
 /**
  * A project, with the counts the Proyectos screen shows.
