@@ -13,7 +13,8 @@
  * - Only cuotas falling due on or after «Desde» carry mora. Never backwards.
  * - A cuota is charged the day after its grace days end, on what is STILL
  *   UNPAID of it at that moment: 2 % of a half-paid L 25,000 cuota is 2 % of
- *   L 12,500. A fixed amount is that amount, whatever is unpaid.
+ *   L 12,500. A fixed amount is that amount, whatever is unpaid, unless what
+ *   is unpaid is under the minimum, when there is one: then nothing.
  * - Once per late cuota, or again every month it stays late, each time on what
  *   is unpaid then. The maximum, when there is one, is per cuota.
  * - The prima carries mora only when the setting says so.
@@ -334,7 +335,11 @@ export function moraAccount(
 
     const rules = rulesOn(history, date);
 
-    if (applies(rules, item) && (rules.frequency === "monthly" || item.charges === 0)) {
+    if (
+      applies(rules, item) &&
+      (rules.frequency === "monthly" || item.charges === 0) &&
+      (rules.minUnpaidCents === null || unpaid >= rules.minUnpaidCents)
+    ) {
       let amount =
         rules.calculation === "fixed"
           ? rules.fixedCents

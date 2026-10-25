@@ -58,6 +58,11 @@ const moraSchema = z.object({
   graceDays: z.number().int().min(0).max(31),
   /** The most mora one cuota can collect, however long it stays late. Null: no maximum. */
   capCents: z.number().int().min(1).max(100_000_000_00).nullable(),
+  /**
+   * No mora while less than this is still unpaid of the cuota, so a few
+   * centavos short never cost a whole fixed mora. Null: no minimum.
+   */
+  minUnpaidCents: z.number().int().min(1).max(100_000_000_00).nullable(),
   /** Charged once per late cuota, or again every month it stays late. */
   frequency: z.enum(["once", "monthly"]),
   /** Whether a late prima carries mora too. */
@@ -139,6 +144,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     fixedCents: 0,
     graceDays: DEFAULT_HEALTH_RULES.graceDays,
     capCents: null,
+    minUnpaidCents: null,
     frequency: "once",
     chargeDownPayment: false,
     paymentOrder: "mora",

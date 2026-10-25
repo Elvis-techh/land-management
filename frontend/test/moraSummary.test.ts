@@ -17,6 +17,7 @@ const form = (patch: Partial<MoraForm> = {}): MoraForm => ({
   fixed: "",
   graceDays: "5",
   cap: "",
+  minimum: "",
   frequency: "once",
   chargeDownPayment: false,
   paymentOrder: "mora",
@@ -48,6 +49,13 @@ describe("the mora summary", () => {
         }),
       ),
       "Se cobrará L. 500.00 fijos (hasta L. 1,500.00 por cuota), cada mes que siga atrasada, después de 1 día de gracia, desde el 01 nov 2026. La prima también lleva mora.",
+    );
+  });
+
+  it("says below what nothing is charged, when there is a minimum", () => {
+    assert.match(
+      moraSummary(form({ minimum: "100.00" })),
+      /desde el 01 nov 2026\. No se cobra si de la cuota falta menos de L\. 100\.00\.$/,
     );
   });
 

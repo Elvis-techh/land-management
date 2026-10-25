@@ -34,6 +34,7 @@ const RULES: MoraSettings = {
   fixedCents: 0,
   graceDays: 5,
   capCents: null,
+  minUnpaidCents: null,
   frequency: "once",
   chargeDownPayment: false,
   paymentOrder: "mora",
@@ -101,6 +102,44 @@ describe("mora charges", () => {
     );
 
     assert.deepEqual(chargesOf(account), [[4, "2026-10-11", 500]]);
+  });
+
+  it("charges a fixed amount on centavos short while there is no minimum", () => {
+    // All of cuota 4 on time but 49 centavos.
+    const credits = [...onTimeThroughCuota3(), pay("2026-10-03", 24_999.51)];
+    const account = moraAccount(
+      CONTRACT,
+      credits,
+      [since({ calculation: "fixed", fixedCents: lempiras(500) })],
+      "2026-10-20",
+    );
+
+    assert.deepEqual(chargesOf(account), [[4, "2026-10-11", 500]]);
+  });
+
+  it("charges nothing while less than the minimum is unpaid of the cuota", () => {
+    const shortBy = (amount: number) => [...onTimeThroughCuota3(), pay("2026-10-03", 25_000 - amount)];
+    const rules = [since({ calculation: "fixed", fixedCents: lempiras(500), minUnpaidCents: lempiras(100) })];
+
+    // 49 centavos short: nothing. Exactly the minimum short: charged.
+    assert.deepEqual(moraAccount(CONTRACT, shortBy(0.49), rules, "2026-10-20").charges, []);
+    assert.deepEqual(chargesOf(moraAccount(CONTRACT, shortBy(100), rules, "2026-10-20")), [
+      [4, "2026-10-11", 500],
+    ]);
+  });
+
+  it("asks the minimum again every month with «Cada mes»", () => {
+    // L 50 short of cuota 4 stays under the minimum every month, while cuota 5,
+    // wholly unpaid, is over it.
+    const credits = [...onTimeThroughCuota3(), pay("2026-10-03", 24_950)];
+    const account = moraAccount(
+      CONTRACT,
+      credits,
+      [since({ calculation: "fixed", fixedCents: lempiras(500), frequency: "monthly", minUnpaidCents: lempiras(100) })],
+      "2026-11-20",
+    );
+
+    assert.deepEqual(chargesOf(account), [[5, "2026-11-11", 500]]);
   });
 
   it("charges once per cuota with «Una vez», however long it stays late", () => {

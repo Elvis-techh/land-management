@@ -49,12 +49,13 @@ test("the supervisor sets the mora with the switch, the tiles and the steppers",
   await page.getByLabel("Desde", { exact: true }).fill("2030-01-01");
   await screen(page).locator(".cfg-tile", { hasText: "Cada mes" }).click();
   await expect(page.getByRole("radio", { name: /Cada mes/ })).toBeChecked();
+  await page.getByLabel(/Sin mora si falta menos de/).fill("100");
 
   const grace = page.getByRole("spinbutton", { name: /Días de gracia/ });
   await page.getByRole("button", { name: "Un día más" }).click();
   await expect(grace).toHaveValue("6");
   await expect(summary).toContainText(
-    "2 % de lo que falta de la cuota, cada mes que siga atrasada, después de 6 días de gracia, desde el 01 ene 2030.",
+    "2 % de lo que falta de la cuota, cada mes que siga atrasada, después de 6 días de gracia, desde el 01 ene 2030. No se cobra si de la cuota falta menos de L. 100",
   );
 
   await page.screenshot({ path: testInfo.outputPath("configuracion-mora.png"), fullPage: true });
@@ -72,6 +73,7 @@ test("the supervisor sets the mora with the switch, the tiles and the steppers",
   await expect(mora).toHaveAttribute("aria-checked", "true");
   await expect(page.getByRole("radio", { name: /Cada mes/ })).toBeChecked();
   await expect(summary).toContainText("cada mes que siga atrasada, después de 5 días de gracia");
+  await expect(page.getByLabel(/Sin mora si falta menos de/)).toHaveValue("100.00");
 
   await mora.click();
   await page.getByRole("button", { name: "Guardar cambios" }).click();

@@ -93,6 +93,7 @@ const fieldLabels: Record<string, string> = {
   fixedCents: "Mora fija",
   graceDays: "Días de gracia",
   capCents: "Máximo de mora por cuota",
+  minUnpaidCents: "Sin mora si falta menos de",
   frequency: "Cuándo se cobra la mora",
   chargeDownPayment: "La prima lleva mora",
   paymentOrder: "Un pago cubre primero",
@@ -120,11 +121,15 @@ const moneyFields = new Set([
   "totalCents",
   "fixedCents",
   "capCents",
+  "minUnpaidCents",
 ]);
 
 function formatValue(field: string, value: unknown, money: MoneyView): string {
   if (field === "capCents" && value === null) {
     return "Sin máximo";
+  }
+  if (field === "minUnpaidCents" && value === null) {
+    return "Sin mínimo";
   }
   if (value === null || value === undefined) {
     return "—";
