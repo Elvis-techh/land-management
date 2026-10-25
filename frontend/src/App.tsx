@@ -792,6 +792,7 @@ export default function App() {
     await reloadLots();
     await reloadCustomers();
     await reloadTransactions();
+    await reloadDashboard();
     setContractBeingViewed(null);
   };
 
@@ -1263,6 +1264,7 @@ export default function App() {
                 void reloadContracts();
                 void reloadCustomers();
                 void reloadLots();
+                void reloadDashboard();
               }}
               openReceiptId={issuedReceiptId}
               onReceiptOpened={clearIssuedReceipt}
@@ -1351,12 +1353,13 @@ export default function App() {
             setActiveTab("receipts");
             // Everything that counts money has to be re-read, not just the
             // receipts: a payment moves the contract's balance, the lot's
-            // paid-to-date and the customer's totals, all of which are
-            // derived server-side.
+            // paid-to-date, the customer's totals and the Panel, all of which
+            // are derived server-side.
             void reloadTransactions();
             void reloadContracts();
             void reloadCustomers();
             void reloadLots();
+            void reloadDashboard();
           }}
         />
       )}
@@ -1382,6 +1385,7 @@ export default function App() {
             void reloadContracts();
             void reloadCustomers();
             void reloadLots();
+            void reloadDashboard();
           }}
         />
       )}
@@ -1397,6 +1401,7 @@ export default function App() {
             void reloadContracts();
             void reloadCustomers();
             void reloadLots();
+            void reloadDashboard();
           }}
         />
       )}
