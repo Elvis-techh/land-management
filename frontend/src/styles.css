@@ -5568,6 +5568,11 @@ body.modal-open {
   font-weight: 400;
 }
 
+.cfg-row-amount {
+  flex-shrink: 0;
+  width: 150px;
+}
+
 .cfg-stepper {
   flex-shrink: 0;
   display: flex;

@@ -5,6 +5,7 @@ import { contracts, payments } from "../db/schema.js";
 import { voidConstancias } from "./constancias.js";
 import { isReservationExpired } from "./contracts.js";
 import { replayContract } from "./ledger.js";
+import { ledgerChargesOf, loadMoraAccount } from "./moraAccounts.js";
 
 /** A database or transaction handle — enough of one to read and settle a contract. */
 type LifecycleWriter = Pick<Db, "select" | "update">;
@@ -26,10 +27,15 @@ type LifecycleWriter = Pick<Db, "select" | "update">;
  * consequence of a payment change, and that change is already in the history
  * under the person who made it — a second row saying the status followed would
  * be the same fact twice.
+ *
+ * The balance includes any mora charged and not paid, as of `at.asOf`: a
+ * contract whose cuotas are complete but whose mora is not still owes money,
+ * and its constancia would say otherwise.
  */
 export function syncContractLifecycle(
   db: LifecycleWriter,
   contractId: string,
+  at: { asOf: string; timeZone: string },
 ): "settled" | "reopened" | "unchanged" {
   const contract = db
     .select({
@@ -59,6 +65,7 @@ export function syncContractLifecycle(
   const balanceCents = replayContract({
     salePriceCents: contract.salePriceCents,
     credits,
+    charges: ledgerChargesOf(loadMoraAccount(db, contractId, at)),
   }).balanceCents;
 
   const target = balanceCents <= 0 ? "paid_off" : "active";

@@ -22,6 +22,7 @@ interface LotsResponse {
       status: ContractStatus;
       salePrice: number;
       paidToDate: number;
+      moraCharged: number;
     } | null;
   }>;
   customers: Customer[];
@@ -74,6 +75,7 @@ export async function fetchLots(): Promise<LotsData> {
             status: lot.holding.status,
             salePrice: cents(lot.holding.salePrice),
             paidToDate: cents(lot.holding.paidToDate),
+            moraCharged: cents(lot.holding.moraCharged),
           }
         : null,
     })),

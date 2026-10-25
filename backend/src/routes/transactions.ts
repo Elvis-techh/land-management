@@ -16,6 +16,7 @@ import { syncContractLifecycle } from "../lib/contractLifecycle.js";
 import { roleCan } from "../lib/capabilities.js";
 import { openContract } from "../lib/holding.js";
 import { replayContract } from "../lib/ledger.js";
+import { ledgerChargesOf, loadMoraAccount, loadMoraAccounts } from "../lib/moraAccounts.js";
 import { businessToday } from "../lib/time.js";
 
 const PAYMENT_METHODS = ["cash", "transfer", "card"] as const;
@@ -281,6 +282,18 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
         .where(and(eq(contracts.customerId, request.params.id), openContract(asOf)))
         .all();
 
+      const mora = loadMoraAccounts(app.db, {
+        asOf,
+        timeZone: options.timeZone,
+        contractIds: open.map((contract) => contract.id),
+      });
+      // What each lot owes now: the rest of its price, plus its pending mora.
+      const owedNow = (contract: (typeof open)[number]) => {
+        const account = mora.get(contract.id);
+        const pricePaid = contract.paidToDateCents - (account?.paidCents ?? 0);
+        return Math.max(0, contract.salePriceCents - pricePaid) + (account?.pendingCents ?? 0);
+      };
+
       const targets: AllocationTarget[] = open.map((contract) => {
         const terms: ContractTerms = {
           saleType: contract.saleType as SaleType,
@@ -293,14 +306,19 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
           firstDueOn: contract.firstDueOn,
         };
 
+        const account = mora.get(contract.id);
+
         return {
           contractId: contract.id,
           code: contract.code,
-          balanceCents: Math.max(0, contract.salePriceCents - contract.paidToDateCents),
+          balanceCents: owedNow(contract),
           // The next installment this lot still needs, so a plain even split
           // cannot round it below what it owes RIGHT NOW while another lot
-          // that merely owes more overall takes the surplus.
-          minimumDueCents: assessContract(terms, contract.paidToDateCents, asOf).nextDueAmountCents,
+          // that merely owes more overall takes the surplus. Its pending mora
+          // too: without it, the cuota is not what the money would complete.
+          minimumDueCents:
+            assessContract(terms, contract.paidToDateCents - (account?.paidCents ?? 0), asOf)
+              .nextDueAmountCents + (account?.pendingCents ?? 0),
         };
       });
 
@@ -314,7 +332,7 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
         lines: open
           .map((contract) => {
             const amount = byContract.get(contract.id) ?? 0;
-            const balanceBefore = Math.max(0, contract.salePriceCents - contract.paidToDateCents);
+            const balanceBefore = owedNow(contract);
 
             return {
               contractId: contract.id,
@@ -352,6 +370,10 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
    *
    * Counted from everything paid so far. A payment dated before later ones is
    * placed in its own spot when it is saved; this preview does not reorder.
+   *
+   * With mora owed, the preview divides the money as lib/mora.ts will once it
+   * is saved: `mora` is the part that pays mora, and the cuotas named are the
+   * ones the rest of it reaches.
    */
   app.get<{ Params: { id: string }; Querystring: { amountCents?: string } }>(
     "/contracts/:id/after-payment",
@@ -405,9 +427,17 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
         signedOn: contract.signedOn ?? contract.createdAt.slice(0, 10),
         firstDueOn: contract.firstDueOn,
       };
-      const before = paid?.total ?? 0;
-      const after = before + amountCents;
-      const health = assessContract(terms, after, today());
+      const asOf = today();
+      const preview = loadMoraAccount(app.db, request.params.id, {
+        asOf,
+        timeZone: options.timeZone,
+        adding: { id: "preview", contractId: request.params.id, amountCents, paidOn: asOf },
+      })?.splits.find((split) => split.creditId === "preview");
+
+      const before = preview ? preview.pricePaidBeforeCents : (paid?.total ?? 0);
+      const after = preview ? preview.pricePaidAfterCents : before + amountCents;
+      const moraPendingAfter = preview?.moraPendingAfterCents ?? 0;
+      const health = assessContract(terms, after, asOf);
 
       return {
         appliedTo: appliedInstallments(terms, before, after).map((installment) => ({
@@ -419,8 +449,12 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
           remaining: installment.remainingCents,
         })),
         installmentCount: buildSchedule(terms).length,
-        newBalance: Math.max(0, terms.salePriceCents - after),
-        settled: health.settled,
+        /** The part of the payment that would pay mora. */
+        mora: preview?.toMoraCents ?? 0,
+        /** Mora still owed after it. */
+        moraPending: moraPendingAfter,
+        newBalance: Math.max(0, terms.salePriceCents - after) + moraPendingAfter,
+        settled: health.settled && moraPendingAfter === 0,
         nextDueAmount: health.nextDueAmountCents,
         nextInstallment: health.nextInstallmentCents,
         nextDueCredit: health.nextDueCreditCents,
@@ -612,9 +646,18 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
           .where(sql`${payments.contractId} = ${contract.id} AND ${payments.id} <> ${existing.id}`)
           .all();
 
+        // The mora too is worked out without it: the old amount or date may be
+        // the reason the cuota was never late.
         const room = replayContract({
           salePriceCents: contract.salePriceCents,
           credits: others,
+          charges: ledgerChargesOf(
+            loadMoraAccount(app.db, contract.id, {
+              asOf: today(),
+              timeZone: options.timeZone,
+              leaveOut: new Set([existing.id]),
+            }),
+          ),
         }).balanceCents;
 
         if (body.amountCents > room) {
@@ -779,7 +822,7 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
           existing.contractId,
           ...siblings.map((sibling) => sibling.contractId),
         ])) {
-          syncContractLifecycle(tx, contractId);
+          syncContractLifecycle(tx, contractId, { asOf: today(), timeZone: options.timeZone });
         }
       });
 

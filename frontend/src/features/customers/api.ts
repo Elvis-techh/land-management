@@ -21,6 +21,7 @@ interface CustomersResponse {
       projectName: string;
       salePrice: number;
       paidToDate: number;
+      moraCharged: number;
     }>;
   }>;
 }
@@ -41,6 +42,7 @@ export async function fetchCustomers(): Promise<CustomerRecord[]> {
       ...contract,
       salePrice: cents(contract.salePrice),
       paidToDate: cents(contract.paidToDate),
+      moraCharged: cents(contract.moraCharged),
     })),
   }));
 }

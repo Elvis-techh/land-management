@@ -38,6 +38,8 @@ function line(fields: Partial<ReceiptLine>): ReceiptLine {
     previousBalance: L(225_000),
     newBalance: L(200_000),
     appliedTo: [],
+    moraPaid: [],
+    moraPending: L(0),
     nextDue: null,
     ...fields,
   };
@@ -59,6 +61,7 @@ function receipt(paid: number, newBalance: number, lines: ReceiptLine[]): Receip
     previousBalance: L(225_000),
     newBalance: L(newBalance),
     cumulativePaid: L(0),
+    moraCharged: L(0),
     transactionCount: lines.length,
     method: "transfer",
     lines,
@@ -215,6 +218,74 @@ describe("receiptMessage", () => {
         "Gracias por su pago de *L. 31,000.00*.",
         "• B-12: cuota 4 de 12 · próxima cuota el 5 de noviembre por L. 25,000.00",
         "• B-13: abono a la cuota 4 · le quedan L. 4,000.00, vence el 5 de octubre",
+        "",
+        "Cualquier duda me deja saber.",
+      ].join("\n"),
+    );
+  });
+
+  it("says how much of the payment was mora, and on which cuota", () => {
+    const message = receiptMessage(
+      receipt(25_500, 200_000, [
+        line({
+          amount: L(25_500),
+          appliedTo: [cuota(4, 25_000)],
+          moraPaid: [{ installment: 4, amount: L(500) }],
+          nextDue: next("2026-11-05", 25_000),
+        }),
+      ]),
+    );
+
+    assert.equal(
+      message,
+      "Gracias por su pago de *L. 25,500.00* (cuota 4 de 12). Su próxima cuota es el *5 de noviembre* por *L. 25,000.00*. De este pago, *L. 500.00* fueron recargo por mora de la cuota 4. Cualquier duda me deja saber.",
+    );
+  });
+
+  it("thanks for a payment that only covered mora, and says what mora is left", () => {
+    const message = receiptMessage(
+      receipt(500, 225_500, [
+        line({
+          amount: L(500),
+          moraPaid: [{ installment: 4, amount: L(300) }, { installment: 5, amount: L(200) }],
+          moraPending: L(500),
+          nextDue: next("2026-10-05", 25_000),
+        }),
+      ]),
+    );
+
+    assert.equal(
+      message,
+      "Gracias por su pago de *L. 500.00* de recargo por mora de las cuotas 4 y 5. Tiene pendiente *L. 500.00* de recargo por mora. Cualquier duda me deja saber.",
+    );
+  });
+
+  it("names the mora on each lot of a receipt for several", () => {
+    const message = receiptMessage(
+      receipt(50_500, 400_000, [
+        line({
+          amount: L(25_500),
+          appliedTo: [cuota(4, 25_000)],
+          moraPaid: [{ installment: 4, amount: L(500) }],
+          nextDue: next("2026-11-05", 25_000),
+        }),
+        line({
+          paymentId: "p2",
+          lotCode: "B-13",
+          amount: L(25_000),
+          appliedTo: [cuota(4, 25_000)],
+          moraPending: L(500),
+          nextDue: next("2026-11-05", 25_000),
+        }),
+      ]),
+    );
+
+    assert.equal(
+      message,
+      [
+        "Gracias por su pago de *L. 50,500.00*.",
+        "• B-12: cuota 4 de 12 · próxima cuota el 5 de noviembre por L. 25,000.00 · mora L. 500.00",
+        "• B-13: cuota 4 de 12 · próxima cuota el 5 de noviembre por L. 25,000.00 · mora pendiente L. 500.00",
         "",
         "Cualquier duda me deja saber.",
       ].join("\n"),

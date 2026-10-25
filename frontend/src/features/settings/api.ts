@@ -17,6 +17,8 @@ export interface MoraSettings {
   graceDays: number;
   /** The most mora one cuota can collect. Null: no maximum. */
   capCents: number | null;
+  /** No mora while less than this is unpaid of the cuota. Null: no minimum. */
+  minUnpaidCents: number | null;
   frequency: "once" | "monthly";
   chargeDownPayment: boolean;
   paymentOrder: "mora" | "cuota";
@@ -55,6 +57,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     fixedCents: 0,
     graceDays: 5,
     capCents: null,
+    minUnpaidCents: null,
     frequency: "once",
     chargeDownPayment: false,
     paymentOrder: "mora",

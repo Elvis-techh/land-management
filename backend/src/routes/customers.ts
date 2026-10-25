@@ -7,6 +7,7 @@ import { z } from "zod";
 import { contracts, customers, lots, payments, projects } from "../db/schema.js";
 import { recordAudit } from "../lib/audit.js";
 import { openContract } from "../lib/holding.js";
+import { loadMoraAccounts } from "../lib/moraAccounts.js";
 import { normalizePhone } from "../lib/phone.js";
 import { businessToday } from "../lib/time.js";
 
@@ -170,8 +171,15 @@ export const customerRoutes: FastifyPluginAsync<CustomerRoutesOptions> = async (
     // One query for the contracts, grouped in memory, rather than one query per
     // customer. The list is small, but the shape of the mistake is not.
     const byCustomer = new Map<string, Array<Record<string, unknown>>>();
+    const asOf = today();
+    const held = activeContractsQuery(app.db, asOf).all();
+    const mora = loadMoraAccounts(app.db, {
+      asOf,
+      timeZone: options.timeZone,
+      contractIds: held.map((row) => row.contractId),
+    });
 
-    for (const row of activeContractsQuery(app.db, today()).all()) {
+    for (const row of held) {
       const list = byCustomer.get(row.customerId) ?? [];
 
       list.push({
@@ -182,6 +190,8 @@ export const customerRoutes: FastifyPluginAsync<CustomerRoutesOptions> = async (
         projectName: row.projectName,
         salePrice: row.salePriceCents,
         paidToDate: row.paidToDateCents,
+        // So price + mora charged − paid is what the contract owes.
+        moraCharged: mora.get(row.contractId)?.chargedCents ?? 0,
       });
 
       byCustomer.set(row.customerId, list);

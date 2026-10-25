@@ -1,7 +1,7 @@
 import type { Cents, MoneyView } from "../../lib/money";
 import { formatDocumentMoney } from "../../lib/money";
 import type { NextDue, Receipt, ReceiptLine } from "../../types";
-import { appliedSummary } from "./appliedLabel";
+import { appliedSummary, moraCuotas, moraTotal } from "./appliedLabel";
 import { isFinalReceipt } from "./finalReceipt";
 
 /*
@@ -16,6 +16,9 @@ import { isFinalReceipt } from "./finalReceipt";
  *
  *   ¡Felicidades! Con su pago de *L. 225,000.00* el lote B-12 queda *pagado en
  *   su totalidad*. …
+ *
+ *   Gracias por su pago de *L. 25,500.00* (cuota 4 de 12). … De este pago,
+ *   *L. 500.00* fueron recargo por mora de la cuota 4. …
  *
  * The image is the document; this is what a person would type beside it, so
  * it answers the one question a customer has after paying: what now? Every
@@ -90,10 +93,53 @@ function nextSentence(next: NextDue | null, issuedOn: string): string {
   return ` ${lead} próxima cuota es el ${date} por *${money(next.amount)}*${credit}.`;
 }
 
+/**
+ * What the message says about mora, after everything else: how much of the
+ * payment was mora, and how much is still owed. Empty when there is none.
+ */
+function moraSentences(line: ReceiptLine, paidMora: boolean): string {
+  const parts: string[] = [];
+
+  if (paidMora && line.moraPaid.length > 0) {
+    parts.push(
+      ` De este pago, *${money(moraTotal(line.moraPaid))}* fueron recargo por mora de ${moraOf(line)}.`,
+    );
+  }
+
+  if (line.moraPending > 0) {
+    parts.push(` Tiene pendiente *${money(line.moraPending)}* de recargo por mora.`);
+  }
+
+  return parts.join("");
+}
+
+/** "la cuota 4", "las cuotas 4 y 5", "la prima". */
+function moraOf(line: ReceiptLine): string {
+  const named = moraCuotas(line.moraPaid);
+
+  return named.startsWith("la ") ? named : `${named.startsWith("cuotas") ? "las" : "la"} ${named}`;
+}
+
 /** The message for a receipt on one lot. */
 function singleLot(receipt: Receipt, line: ReceiptLine): string {
   const paid = `*${money(receipt.totalPaid)}*`;
   const summary = appliedSummary(line);
+
+  // All of it went to mora: no cuota and no prima moved.
+  if (summary === null && line.moraPaid.length > 0 && moraTotal(line.moraPaid) === line.amount) {
+    return `Gracias por su pago de ${paid} de recargo por mora de ${moraOf(line)}.${moraSentences(line, false)}`;
+  }
+
+  return `${cuotaMessage(receipt, line, paid, summary)}${moraSentences(line, true)}`;
+}
+
+/** What a payment did to the cuotas or the prima of one lot. */
+function cuotaMessage(
+  receipt: Receipt,
+  line: ReceiptLine,
+  paid: string,
+  summary: ReturnType<typeof appliedSummary>,
+): string {
   const next = line.nextDue;
 
   if (summary?.kind === "abono") {
@@ -134,6 +180,24 @@ function lotPart(line: ReceiptLine, issuedOn: string): string {
 
   const summary = appliedSummary(line);
   const next = line.nextDue;
+  const mora = line.moraPaid.length > 0 ? ` · mora ${money(moraTotal(line.moraPaid))}` : "";
+  const pending = line.moraPending > 0 ? ` · mora pendiente ${money(line.moraPending)}` : "";
+
+  if (summary === null && mora !== "" && moraTotal(line.moraPaid) === line.amount) {
+    return `${lot}: recargo por mora ${money(moraTotal(line.moraPaid))}${pending}`;
+  }
+
+  return `${lotCuotas(line, issuedOn, summary, next)}${mora}${pending}`;
+}
+
+/** The cuotas part of `lotPart`. */
+function lotCuotas(
+  line: ReceiptLine,
+  issuedOn: string,
+  summary: ReturnType<typeof appliedSummary>,
+  next: NextDue | null,
+): string {
+  const lot = line.lotCode ?? "Lote";
 
   if (summary?.kind === "abono") {
     const { number, remaining, dueOn } = summary.installment;

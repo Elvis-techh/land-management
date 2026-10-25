@@ -101,6 +101,8 @@ export interface CustomerContract {
   salePrice: Cents;
   /** Total posted payments, in lempira centavos. Summed, never stored. */
   paidToDate: Cents;
+  /** Mora charged so far. What is owed is salePrice + moraCharged − paidToDate. */
+  moraCharged: Cents;
 }
 
 /** A customer with everything they are currently holding. */
@@ -156,9 +158,12 @@ export interface LotHolding {
    * Total posted payments, in lempira centavos.
    *
    * The backend computes this by summing the contract's payments. It is never
-   * typed in by a user, and the remaining balance is `salePrice - paidToDate`.
+   * typed in by a user, and the remaining balance is
+   * `salePrice + moraCharged - paidToDate`.
    */
   paidToDate: Cents;
+  /** Mora charged so far, zero while there has been none. Paid mora is inside `paidToDate`. */
+  moraCharged: Cents;
 }
 
 /**
@@ -322,6 +327,13 @@ export interface ContractHealth {
   settled: boolean;
 }
 
+/** A contract's mora: charged so far, paid of it, and still owed. */
+export interface ContractMora {
+  charged: Cents;
+  paid: Cents;
+  pending: Cents;
+}
+
 /**
  * One contract: one customer, one lot.
  *
@@ -366,9 +378,12 @@ export interface Contract {
   terms: ContractTerms;
   /** Summed from payments of type `down_payment`, not the agreed figure. */
   downPaymentPaid: Cents;
+  /** Everything received, mora included. `mora.paid` is the part that was mora. */
   paidToDate: Cents;
-  /** salePrice − paidToDate, computed server-side. Never typed in. */
+  /** What is left of the price, plus mora charged and not paid. Server-side, never typed in. */
   balance: Cents;
+  /** The late fees. All zero while mora has never been charged on this contract. */
+  mora: ContractMora;
   health: ContractHealth;
   /** How many installments the schedule works out to. */
   installmentCount: number;
@@ -465,10 +480,21 @@ export interface ReceiptLine {
   /** Derived by replaying the ledger, never stored. */
   previousBalance: Cents;
   newBalance: Cents;
-  /** Which cuotas this money went towards. */
+  /** Which cuotas this money went towards: the part of it that was not mora. */
   appliedTo: AppliedInstallment[];
+  /** The part of this money that paid mora, by cuota (0 is the prima). Empty when none did. */
+  moraPaid: MoraPaid[];
+  /** Mora the lot still owed right after this payment. */
+  moraPending: Cents;
   /** What the lot owes next once this money is in. `null` once it is paid off. */
   nextDue: NextDue | null;
+}
+
+/** Mora a payment paid on one cuota. */
+export interface MoraPaid {
+  /** The cuota's number; 0 for the prima. */
+  installment: number;
+  amount: Cents;
 }
 
 /** The next cuota (or the rest of the prima), as of a receipt. */
@@ -525,6 +551,8 @@ export interface Receipt {
   newBalance: Cents;
   /** Everything paid on the lots on this receipt, up to and including it. Same scope as the balances, so the summary adds up. */
   cumulativePaid: Cents;
+  /** Mora charged on those lots up to this receipt, so valor + mora − pagado = nuevo balance. */
+  moraCharged: Cents;
   transactionCount: number;
   method: string | null;
   /** Empty on the list endpoint, populated on the detail one. */

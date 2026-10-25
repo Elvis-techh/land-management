@@ -33,6 +33,7 @@ interface ReceiptResponse {
   previousBalance: number;
   newBalance: number;
   cumulativePaid: number;
+  moraCharged: number;
   transactionCount: number;
   method: string | null;
   attachments?: ReceiptAttachment[];
@@ -56,6 +57,8 @@ interface ReceiptResponse {
       installmentCents: number;
       remainingCents: number;
     }>;
+    moraPaid: Array<{ installment: number; amount: number }>;
+    moraPending: number;
     nextDue: {
       dueOn: string;
       amountCents: number;
@@ -81,6 +84,11 @@ function toLine(line: NonNullable<ReceiptResponse["lines"]>[number]): ReceiptLin
       installment: cents(installment.installmentCents),
       remaining: cents(installment.remainingCents),
     })),
+    moraPaid: line.moraPaid.map((entry) => ({
+      installment: entry.installment,
+      amount: cents(entry.amount),
+    })),
+    moraPending: cents(line.moraPending),
     nextDue: line.nextDue && {
       dueOn: line.nextDue.dueOn,
       amount: cents(line.nextDue.amountCents),
@@ -98,6 +106,7 @@ function toReceipt(receipt: ReceiptResponse): Receipt {
     previousBalance: cents(receipt.previousBalance),
     newBalance: cents(receipt.newBalance),
     cumulativePaid: cents(receipt.cumulativePaid),
+    moraCharged: cents(receipt.moraCharged),
     lines: receipt.lines?.map(toLine) ?? [],
     attachments: receipt.attachments ?? [],
   };
@@ -468,6 +477,10 @@ export async function fetchDuplicates(query: {
 export interface AfterPayment {
   appliedTo: AppliedInstallment[];
   installmentCount: number;
+  /** The part of the payment that would pay mora. */
+  mora: Cents;
+  /** Mora still owed after it. */
+  moraPending: Cents;
   newBalance: Cents;
   settled: boolean;
   nextDueAmount: Cents;
@@ -492,6 +505,8 @@ export async function fetchAfterPayment(contractId: string, amountCents: number)
       remaining: number;
     }>;
     installmentCount: number;
+    mora: number;
+    moraPending: number;
     newBalance: number;
     settled: boolean;
     nextDueAmount: number;
@@ -508,6 +523,8 @@ export async function fetchAfterPayment(contractId: string, amountCents: number)
       installment: cents(entry.installment),
       remaining: cents(entry.remaining),
     })),
+    mora: cents(raw.mora),
+    moraPending: cents(raw.moraPending),
     newBalance: cents(raw.newBalance),
     nextDueAmount: cents(raw.nextDueAmount),
     nextInstallment: cents(raw.nextInstallment),

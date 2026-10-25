@@ -10,6 +10,7 @@ import {
   readSettings,
   sectionChanged,
   settingsUpdateSchema,
+  writeMoraVersion,
   writeSection,
 } from "../lib/settings.js";
 import { businessToday } from "../lib/time.js";
@@ -79,8 +80,10 @@ export const settingsRoutes: FastifyPluginAsync<SettingsRouteOptions> = async (a
       business: parsed.data.business ?? current.business,
     };
 
+    const today = businessToday(options.timeZone);
+
     if (changed.includes("mora")) {
-      const problem = moraProblem(current.mora, next.mora, businessToday(options.timeZone));
+      const problem = moraProblem(current.mora, next.mora, today);
 
       if (problem) {
         return reply.code(400).send({ error: "invalid_mora", message: problem });
@@ -90,6 +93,12 @@ export const settingsRoutes: FastifyPluginAsync<SettingsRouteOptions> = async (a
     app.db.transaction((tx) => {
       for (const section of changed) {
         writeSection(tx, section, next[section], actor.id);
+
+        // The rules also go into their history, in force from tomorrow, so a
+        // mora already charged keeps the rules it was charged under.
+        if (section === "mora") {
+          writeMoraVersion(tx, next.mora, today, actor.id);
+        }
 
         // One row per section, so Historial says "the mora changed" apart from
         // "the phone number changed", and a filter can find either.

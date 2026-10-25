@@ -13,6 +13,7 @@ export interface MoraForm {
   fixed: string;
   graceDays: string;
   cap: string;
+  minimum: string;
   frequency: MoraSettings["frequency"];
   chargeDownPayment: boolean;
   paymentOrder: MoraSettings["paymentOrder"];
@@ -40,6 +41,10 @@ export function moraSummary(mora: MoraForm): string {
   const grace = days === "1" ? "1 día" : `${days} días`;
   const from = mora.startsOn === "" ? "desde la fecha que elijas" : `desde el ${formatDate(mora.startsOn)}`;
   const prima = mora.chargeDownPayment ? " La prima también lleva mora." : "";
+  const minimum =
+    mora.minimum.trim() === ""
+      ? ""
+      : ` No se cobra si de la cuota falta menos de L. ${mora.minimum.trim()}.`;
 
-  return `Se cobrará ${amount}${cap}, ${when}, después de ${grace} de gracia, ${from}.${prima}`;
+  return `Se cobrará ${amount}${cap}, ${when}, después de ${grace} de gracia, ${from}.${prima}${minimum}`;
 }

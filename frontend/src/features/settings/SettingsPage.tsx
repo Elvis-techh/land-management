@@ -38,6 +38,7 @@ function formFrom(settings: AppSettings): FormState {
       fixed: mora.fixedCents === 0 ? "" : toMoneyInput(cents(mora.fixedCents)),
       graceDays: String(mora.graceDays),
       cap: mora.capCents === null ? "" : toMoneyInput(cents(mora.capCents)),
+      minimum: mora.minUnpaidCents === null ? "" : toMoneyInput(cents(mora.minUnpaidCents)),
       frequency: mora.frequency,
       chargeDownPayment: mora.chargeDownPayment,
       paymentOrder: mora.paymentOrder,
@@ -65,6 +66,7 @@ function settingsFrom(form: FormState): AppSettings {
   const { mora, contracts } = form;
   const percent = Number(mora.percent);
   const cap = typedCentsOrZero(mora.cap);
+  const minimum = typedCentsOrZero(mora.minimum);
 
   return {
     mora: {
@@ -75,6 +77,7 @@ function settingsFrom(form: FormState): AppSettings {
       fixedCents: typedCentsOrZero(mora.fixed),
       graceDays: wholeNumber(mora.graceDays),
       capCents: cap > 0 ? cap : null,
+      minUnpaidCents: minimum > 0 ? minimum : null,
       frequency: mora.frequency,
       chargeDownPayment: mora.chargeDownPayment,
       paymentOrder: mora.paymentOrder,
@@ -525,6 +528,21 @@ export function SettingsPage({ user, settings, onSaved }: SettingsPageProps) {
                     onChange={(chargeDownPayment) => edit("mora", { chargeDownPayment })}
                   />
                 </SettingRow>
+                <SettingRow
+                  htmlFor="settings-mora-minimum"
+                  name="Sin mora si falta menos de"
+                  hint="Para que unos centavos no cuesten una mora entera."
+                >
+                  <div className="cfg-field cfg-row-amount">
+                    <MoneyInput
+                      id="settings-mora-minimum"
+                      value={mora.minimum}
+                      placeholder="Sin mínimo"
+                      readOnly={moraLocked}
+                      onChange={(minimum) => edit("mora", { minimum })}
+                    />
+                  </div>
+                </SettingRow>
                 <SettingRow name="Un pago cubre primero">
                   <div role="radiogroup" aria-label="Un pago cubre primero">
                     <Choices<MoraSettings["paymentOrder"]>
@@ -565,8 +583,8 @@ export function SettingsPage({ user, settings, onSaved }: SettingsPageProps) {
           </div>
 
           <p className="cfg-foot">
-            Todavía no se cobra: el cobro llega en la próxima actualización. Una mora pendiente
-            nunca pone un contrato «Atrasado».{" "}
+            Un cambio a la mora vale desde mañana: la mora ya cobrada, incluida la de hoy, no
+            cambia. Una mora pendiente nunca pone un contrato «Atrasado».{" "}
             {moraLocked
               ? "Solo el supervisor puede cambiarla o apagarla."
               : "Solo el supervisor la cambia; no se puede ceder al asociado."}

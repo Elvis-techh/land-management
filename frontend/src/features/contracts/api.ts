@@ -14,7 +14,7 @@ import type { Contract, ContractDocument } from "../../types";
  */
 interface ContractsResponse {
   contracts: Array<
-    Omit<Contract, "terms" | "health" | "downPaymentPaid" | "paidToDate" | "balance"> & {
+    Omit<Contract, "terms" | "health" | "downPaymentPaid" | "paidToDate" | "balance" | "mora"> & {
       terms: {
         salePrice: number;
         downPayment: number;
@@ -30,6 +30,7 @@ interface ContractsResponse {
       downPaymentPaid: number;
       paidToDate: number;
       balance: number;
+      mora: { charged: number; paid: number; pending: number };
       health: {
         status: Contract["health"]["status"];
         arrears: number;
@@ -63,6 +64,11 @@ export async function fetchContracts(): Promise<Contract[]> {
     downPaymentPaid: cents(contract.downPaymentPaid),
     paidToDate: cents(contract.paidToDate),
     balance: cents(contract.balance),
+    mora: {
+      charged: cents(contract.mora.charged),
+      paid: cents(contract.mora.paid),
+      pending: cents(contract.mora.pending),
+    },
     health: {
       ...contract.health,
       arrears: cents(contract.health.arrears),

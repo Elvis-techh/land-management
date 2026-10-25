@@ -8,6 +8,7 @@ import { contracts, customers, lots, payments, projects } from "../db/schema.js"
 import { recordAudit } from "../lib/audit.js";
 import { roleCan } from "../lib/capabilities.js";
 import { holdsLot } from "../lib/holding.js";
+import { loadMoraAccounts } from "../lib/moraAccounts.js";
 import { businessToday } from "../lib/time.js";
 
 /**
@@ -148,9 +149,15 @@ export const lotRoutes: FastifyPluginAsync<LotRoutesOptions> = async (app, optio
       // screen can offer a restore, exactly as the Proyectos screen does.
       const includeArchived = request.query.includeArchived === "true";
 
-      const rows = lotsListQuery(app.db, today())
+      const asOf = today();
+      const rows = lotsListQuery(app.db, asOf)
         .where(includeArchived ? undefined : isNull(lots.archivedAt))
         .all();
+      const mora = loadMoraAccounts(app.db, {
+        asOf,
+        timeZone: options.timeZone,
+        contractIds: rows.flatMap((row) => (row.contractId ? [row.contractId] : [])),
+      });
 
       return reply.send({
         lots: rows.map((row) => ({
@@ -171,6 +178,8 @@ export const lotRoutes: FastifyPluginAsync<LotRoutesOptions> = async (app, optio
                   status: row.contractStatus,
                   salePrice: row.salePriceCents,
                   paidToDate: row.paidToDateCents,
+                  // So price + mora charged − paid is what the holder owes.
+                  moraCharged: mora.get(row.contractId)?.chargedCents ?? 0,
                 }
               : null,
         })),

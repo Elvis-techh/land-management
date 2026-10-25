@@ -3,9 +3,9 @@ import { after, describe, it } from "node:test";
 
 import { eq } from "drizzle-orm";
 
-import { auditEvents, contracts } from "../src/db/schema.js";
+import { auditEvents, contracts, moraRules } from "../src/db/schema.js";
 import { shiftDays } from "../src/lib/contracts.js";
-import { DEFAULT_SETTINGS } from "../src/lib/settings.js";
+import { DEFAULT_SETTINGS, readMoraHistory } from "../src/lib/settings.js";
 import { businessToday } from "../src/lib/time.js";
 import { OWNER_PASSWORD, STAFF_PASSWORD, buildTestApp, login } from "./helpers.js";
 
@@ -126,6 +126,23 @@ describe("the Configuración screen", async () => {
     assert.equal(moraRows.length, 1);
     assert.equal(JSON.parse(moraRows[0]!.beforeJson!).enabled, false);
     assert.equal(JSON.parse(moraRows[0]!.afterJson!).percent, 2);
+  });
+
+  it("keeps the minimum unpaid for mora, and reads older rules as having none", async () => {
+    const settings = await read(ownerCookie);
+    const saved = await save(ownerCookie, { mora: { ...settings.mora, minUnpaidCents: 10_000 } });
+
+    assert.equal(saved.statusCode, 200);
+    assert.equal((await read(staffCookie)).mora.minUnpaidCents, 10_000);
+    assert.equal(readMoraHistory(db).at(-1)!.rules.minUnpaidCents, 10_000);
+
+    // Rules filed before the setting existed have no such field.
+    const { minUnpaidCents: _dropped, ...older } = settings.mora;
+    db.insert(moraRules)
+      .values({ id: "older-rules", effectiveFrom: "2000-01-01", value: JSON.stringify(older) })
+      .run();
+    assert.equal(readMoraHistory(db)[0]!.rules.minUnpaidCents, null);
+    db.delete(moraRules).where(eq(moraRules.id, "older-rules")).run();
   });
 
   it("files nothing when nothing changed", async () => {
