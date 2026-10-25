@@ -9,6 +9,7 @@ import type { User } from "../../lib/permissions";
 import { can } from "../../lib/permissions";
 import type { Contract, ContractAmendmentLink } from "../../types";
 import { ContractDocuments } from "./ContractDocuments";
+import { ContractMora } from "./ContractMora";
 import {
   HEALTH_PRESENTATION,
   KIND_LABELS,
@@ -54,6 +55,8 @@ interface ContractPanelProps {
    * to reach back up.
    */
   onDocumentsChanged: () => void;
+  /** Re-read the contracts list after mora is put on or taken off by hand. */
+  onMoraChanged: () => void;
 }
 
 /**
@@ -169,6 +172,7 @@ export function ContractPanel({
   onAmendContract,
   onOpenContract,
   onDocumentsChanged,
+  onMoraChanged,
 }: ContractPanelProps) {
   const stamp = primaryStamp(contract);
   const detail = healthDetail(contract);
@@ -399,6 +403,8 @@ export function ContractPanel({
               " El saldo incluye la mora pendiente; lo pagado incluye la mora pagada."}
           </p>
         </section>
+
+        <ContractMora contract={contract} money={money} user={user} onChanged={onMoraChanged} />
 
         {/* Both sides at once on a contract amended twice: what it replaced,
             and what later replaced it. */}

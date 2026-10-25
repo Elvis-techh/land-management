@@ -367,3 +367,85 @@ describe("what a payment covers", () => {
     assert.equal(moraPendingThrough(account, "2026-11-30"), 0);
   });
 });
+
+describe("mora put on by hand («Cargar mora»)", () => {
+  it("turns part of a payment already made into mora, without mora ever switched on", () => {
+    // Cuota 4 due 5 October. On the 20th the customer paid L 25,500: the cuota
+    // and L 500 of mora in cash, entered as one payment.
+    const credits = [...onTimeThroughCuota3(), pay("2026-10-20", 25_500)];
+
+    const before = moraAccount(CONTRACT, credits, [], "2026-10-25");
+
+    assert.deepEqual(before.charges, []);
+    assert.equal(before.splits.at(-1)!.toMoraCents, 0);
+
+    const manual = [{ id: "m1", installment: 4, incurredOn: "2026-10-20", amountCents: lempiras(500) }];
+    const after = moraAccount(CONTRACT, credits, [], "2026-10-25", manual);
+
+    assert.deepEqual(chargesOf(after), [[4, "2026-10-20", 500]]);
+    assert.equal(after.charges[0]!.manualId, "m1");
+
+    // Charged before the payment on the same day, so the payment covers it.
+    const split = after.splits.at(-1)!;
+
+    assert.equal(split.toMoraCents, lempiras(500));
+    assert.equal(split.toPriceCents, lempiras(25_000));
+    assert.deepEqual(split.moraPaid, [{ installment: 4, amountCents: lempiras(500) }]);
+    assert.equal(after.pendingCents, 0);
+    assert.deepEqual(after.pendingByCharge, {});
+  });
+
+  it("is owed from its day when nothing has paid it yet, and the next payment covers it", () => {
+    // Cuota 3 paid late on 30 September, before mora existed. L 500 agreed on 25 October.
+    const credits = [
+      pay("2026-06-15", 160_000),
+      pay("2026-07-05", 25_000),
+      pay("2026-08-05", 25_000),
+      pay("2026-09-30", 25_000),
+    ];
+    const manual = [{ id: "m2", installment: 3, incurredOn: "2026-10-25", amountCents: lempiras(500) }];
+
+    const owed = moraAccount(CONTRACT, credits, [], "2026-10-25", manual);
+
+    assert.equal(owed.pendingCents, lempiras(500));
+    assert.deepEqual(owed.pendingByCharge, { "mora:manual:m2": lempiras(500) });
+
+    const paid = moraAccount(CONTRACT, [...credits, pay("2026-11-05", 25_500)], [], "2026-11-06", manual);
+    const split = paid.splits.at(-1)!;
+
+    assert.equal(split.toMoraCents, lempiras(500));
+    assert.deepEqual(split.moraPaid, [{ installment: 3, amountCents: lempiras(500) }]);
+    assert.equal(paid.pendingCents, 0);
+  });
+
+  it("is not held to the rules: charged on top of the automatic mora, past the maximum", () => {
+    const rules = [since({ calculation: "fixed", fixedCents: lempiras(500), capCents: lempiras(500) })];
+    const manual = [{ id: "m3", installment: 4, incurredOn: "2026-10-15", amountCents: lempiras(300) }];
+
+    const account = moraAccount(CONTRACT, onTimeThroughCuota3(), rules, "2026-10-20", manual);
+
+    assert.deepEqual(chargesOf(account), [
+      [4, "2026-10-11", 500],
+      [4, "2026-10-15", 300],
+    ]);
+    assert.equal(account.pendingCents, lempiras(800));
+  });
+
+  it("waits for its day, and ignores a cuota the contract does not have", () => {
+    const manual = [
+      { id: "m4", installment: 4, incurredOn: "2026-10-30", amountCents: lempiras(500) },
+      { id: "m5", installment: 99, incurredOn: "2026-10-15", amountCents: lempiras(500) },
+    ];
+
+    assert.deepEqual(moraAccount(CONTRACT, onTimeThroughCuota3(), [], "2026-10-20", manual).charges, []);
+  });
+
+  it("never charges a reservation or a cash sale", () => {
+    const manual = [{ id: "m6", installment: 4, incurredOn: "2026-10-15", amountCents: lempiras(500) }];
+
+    assert.deepEqual(
+      moraAccount({ ...CONTRACT, kind: "reservation" }, onTimeThroughCuota3(), [], "2026-10-20", manual).charges,
+      [],
+    );
+  });
+});

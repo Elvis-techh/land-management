@@ -881,8 +881,11 @@ export const dashboardRoutes: FastifyPluginAsync<DashboardRoutesOptions> = async
         expectedCents: expectedIn(month),
         stillDueCents,
         stillDueContracts,
-        /** `null` while mora has never been switched on: the Panel shows no tile for it. */
-        mora: moraEverOn(moraHistory)
+        /**
+         * `null` while mora has never been switched on and none was put on by
+         * hand: the Panel shows no tile for it.
+         */
+        mora: moraEverOn(moraHistory) || moraAccounts.size > 0
           ? {
               pendingCents: owingMora.reduce((total, entry) => total + entry.moraPendingCents, 0),
               contracts: owingMora.length,

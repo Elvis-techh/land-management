@@ -7635,6 +7635,22 @@ input:disabled {
   color: var(--text-muted);
 }
 
+/* A mora put on by hand carries its reason, which is a sentence, not a size. */
+.cp-doc-sub.is-prose {
+  font-family: inherit;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+/* «Mora automática de esta cuota» in «Cargar mora»: a figure, not a field. */
+.mora-automatic {
+  padding: 9px 0;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
 /*
  * "The signed copy is on file", in the list.
  *

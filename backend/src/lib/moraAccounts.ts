@@ -1,10 +1,10 @@
 import { and, eq, inArray, isNull } from "drizzle-orm";
 
 import type { Db } from "../db/client.js";
-import { contracts, payments } from "../db/schema.js";
+import { contracts, moraManualCharges, payments } from "../db/schema.js";
 import type { SaleType } from "./contracts.js";
 import type { LedgerCharge } from "./ledger.js";
-import type { MoraAccount, MoraRuleVersion } from "./mora.js";
+import type { MoraAccount, MoraManualCharge, MoraRuleVersion } from "./mora.js";
 import { moraAccount, moraEverOn } from "./mora.js";
 import { readMoraHistory } from "./settings.js";
 import { businessToday, parseTimestamp } from "./time.js";
@@ -18,9 +18,9 @@ import { businessToday, parseTimestamp } from "./time.js";
  *
  * A contract missing from the result owes no mora, and every payment on it
  * went wholly to the price. That is every contract while mora has never been
- * switched on, which is why the first thing done here is to check, and return
- * nothing without touching the payments table: until the owner turns mora on,
- * no screen pays anything for it.
+ * switched on and none was put on by hand, which is why the first thing done
+ * here is to check, and return nothing without touching the payments table:
+ * until then, no screen pays anything for it.
  */
 
 export interface MoraAccountsOptions {
@@ -55,9 +55,47 @@ export function loadMoraAccounts(
   const history = options.history ?? readMoraHistory(db);
   const accounts = new Map<string, MoraAccount>();
 
-  if (!moraEverOn(history) || options.contractIds?.length === 0) {
+  if (options.contractIds?.length === 0) {
     return accounts;
   }
+
+  const manualRows = db
+    .select({
+      id: moraManualCharges.id,
+      contractId: moraManualCharges.contractId,
+      installment: moraManualCharges.installment,
+      incurredOn: moraManualCharges.incurredOn,
+      amountCents: moraManualCharges.amountCents,
+    })
+    .from(moraManualCharges)
+    .where(
+      options.contractIds
+        ? and(
+            isNull(moraManualCharges.removedAt),
+            inArray(moraManualCharges.contractId, [...options.contractIds]),
+          )
+        : isNull(moraManualCharges.removedAt),
+    )
+    .all();
+
+  if (!moraEverOn(history) && manualRows.length === 0) {
+    return accounts;
+  }
+
+  const manualByContract = new Map<string, MoraManualCharge[]>();
+
+  for (const { contractId, ...entry } of manualRows) {
+    const list = manualByContract.get(contractId);
+
+    if (list) {
+      list.push(entry);
+    } else {
+      manualByContract.set(contractId, [entry]);
+    }
+  }
+
+  // Mora never switched on: only the contracts with mora put on by hand.
+  const contractIds = moraEverOn(history) ? options.contractIds : [...manualByContract.keys()];
 
   // Only the contracts that can carry mora: signed, and paid in cuotas.
   const carrying = and(eq(contracts.kind, "contract"), eq(contracts.saleType, "financed"));
@@ -79,7 +117,7 @@ export function loadMoraAccounts(
       createdAt: contracts.createdAt,
     })
     .from(contracts)
-    .where(options.contractIds ? and(carrying, inArray(contracts.id, [...options.contractIds])) : carrying)
+    .where(contractIds ? and(carrying, inArray(contracts.id, [...contractIds])) : carrying)
     .all();
 
   if (rows.length === 0) {
@@ -96,7 +134,7 @@ export function loadMoraAccounts(
     })
     .from(payments)
     .where(
-      options.contractIds
+      contractIds
         ? and(isNull(payments.reversedAt), inArray(payments.contractId, rows.map((row) => row.id)))
         : isNull(payments.reversedAt),
     )
@@ -152,6 +190,7 @@ export function loadMoraAccounts(
         creditsByContract.get(row.id) ?? [],
         history,
         options.asOf,
+        manualByContract.get(row.id) ?? [],
       ),
     );
   }

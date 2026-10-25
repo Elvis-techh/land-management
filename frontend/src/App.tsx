@@ -1518,7 +1518,13 @@ export default function App() {
 
       {contractBeingViewed && (
         <ContractPanel
-          contract={contractBeingViewed}
+          // As the list has it now, so a change made from the panel (a mora
+          // put on by hand) or from another tab shows without reopening it.
+          contract={
+            (contractsState.status === "ready"
+              ? contractsState.contracts.find((candidate) => candidate.id === contractBeingViewed.id)
+              : undefined) ?? contractBeingViewed
+          }
           // The other lots of the SAME purchase, not merely the same customer:
           // two lots bought years apart share a person, not a receipt.
           siblings={
@@ -1559,6 +1565,8 @@ export default function App() {
           // The list marks which contracts have their signed copy on file, so
           // filing one from the panel has to re-read the list behind it.
           onDocumentsChanged={() => void reloadContracts()}
+          // A mora put on by hand moves the saldo and «Mora pendiente» above it.
+          onMoraChanged={() => void reloadContracts()}
         />
       )}
 

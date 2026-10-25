@@ -26,6 +26,8 @@ const actionPresentation: Record<AuditAction, { label: string; stampClass: strin
   reassign_lot: { label: "Lote corregido", stampClass: "stamp clay" },
   replace: { label: "Reemplazado por adenda", stampClass: "stamp clay" },
   reverse: { label: "Reversado", stampClass: "stamp danger" },
+  mora_charge: { label: "Mora cargada", stampClass: "stamp clay" },
+  mora_remove: { label: "Mora quitada", stampClass: "stamp danger" },
   // No longer written — sign-ins are kept on the account, not here — but the
   // rows recorded before that are still on file and still have to read.
   login: { label: "Inicio de sesión", stampClass: "stamp neutral" },
@@ -79,6 +81,9 @@ const fieldLabels: Record<string, string> = {
   reference: "Referencia",
   receiptNumber: "Número de recibo",
   customerName: "Cliente",
+  // Mora put on a contract by hand, «Cargar mora» — see routes/mora.ts.
+  moraInstallment: "Cuota",
+  moraIncurredOn: "Fecha de la mora",
   // Who a receipt says paid — see PATCH /receipts/:id/paid-by.
   paidBy: "Pagado por",
   issuedBy: "Emitido por",
@@ -135,6 +140,9 @@ function formatValue(field: string, value: unknown, money: MoneyView): string {
   }
   if (field === "paidBy" && value === null) {
     return "El cliente";
+  }
+  if (field === "moraInstallment" && typeof value === "number") {
+    return value === 0 ? "Prima" : `Cuota ${value}`;
   }
   if (value === null || value === undefined) {
     return "—";
