@@ -540,6 +540,12 @@ export interface Receipt {
    * image sent to the customer.
    */
   note: string | null;
+  /**
+   * Who handed over the money, when it was not the customer. Printed on the
+   * receipt in place of the customer's name; the contract and the balance stay
+   * the customer's. Null when the customer paid.
+   */
+  paidBy: string | null;
   /** Set when the receipt was voided. The row and the number both survive. */
   voidedAt: string | null;
   voidReason: string | null;

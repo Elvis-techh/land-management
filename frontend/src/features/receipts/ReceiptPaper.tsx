@@ -216,15 +216,30 @@ export function ReceiptPaper({ receipt, money }: ReceiptPaperProps) {
         </div>
       </header>
 
-      <div className="receipt-client">
-        <span className="receipt-label">CLIENTE</span>
-        <div className="receipt-client-name">{receipt.customer.fullName}</div>
-        {/* Not on the original, which took its names from Airtable and had
-            nothing else. An identidad is how a receipt is matched to a person
-            when two customers share a name. Dropped, line and all, when there
-            is nothing to put in it — see `clientDetail`. */}
-        {detail && <div className="receipt-client-detail">{detail}</div>}
-      </div>
+      {receipt.paidBy ? (
+        /* Somebody else paid, and the receipt is their proof, so it names
+           them. The customer stays on one line, because the money counts
+           towards their contract and a receipt that never named them could
+           not be traced back to it. Their identidad and phone are left off:
+           this paper goes to the payer. */
+        <div className="receipt-client">
+          <span className="receipt-label">PAGADO POR</span>
+          <div className="receipt-client-name">{receipt.paidBy}</div>
+          <div className="receipt-client-detail">
+            A cuenta de {receipt.customer.fullName}, titular del contrato
+          </div>
+        </div>
+      ) : (
+        <div className="receipt-client">
+          <span className="receipt-label">CLIENTE</span>
+          <div className="receipt-client-name">{receipt.customer.fullName}</div>
+          {/* Not on the original, which took its names from Airtable and had
+              nothing else. An identidad is how a receipt is matched to a person
+              when two customers share a name. Dropped, line and all, when there
+              is nothing to put in it — see `clientDetail`. */}
+          {detail && <div className="receipt-client-detail">{detail}</div>}
+        </div>
+      )}
 
       {/* The amount in words, as a receipt states it: digits can be misread or
           altered with a pen, words cannot. Always lempiras, the money that was

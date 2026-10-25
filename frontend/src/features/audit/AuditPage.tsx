@@ -79,6 +79,8 @@ const fieldLabels: Record<string, string> = {
   reference: "Referencia",
   receiptNumber: "Número de recibo",
   customerName: "Cliente",
+  // Who a receipt says paid — see PATCH /receipts/:id/paid-by.
+  paidBy: "Pagado por",
   issuedBy: "Emitido por",
   totalCents: "Total",
   lines: "Lotes",
@@ -130,6 +132,9 @@ function formatValue(field: string, value: unknown, money: MoneyView): string {
   }
   if (field === "minUnpaidCents" && value === null) {
     return "Sin mínimo";
+  }
+  if (field === "paidBy" && value === null) {
+    return "El cliente";
   }
   if (value === null || value === undefined) {
     return "—";
