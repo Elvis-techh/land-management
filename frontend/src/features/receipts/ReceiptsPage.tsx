@@ -47,6 +47,7 @@ import type { TransactionSort } from "./transactionSort";
 import { countReceipts, idsBetween, paintedByDrag, toggleOne } from "./transactionSelection";
 import type { DragMode } from "./transactionSelection";
 import { SelectionSummaryBar } from "./SelectionSummaryBar";
+import { ReceiptPaidByDialog } from "./ReceiptPaidByDialog";
 import { ReceiptRedistributeDialog } from "./ReceiptRedistributeDialog";
 
 interface ReceiptsPageProps {
@@ -726,6 +727,8 @@ export function ReceiptsPage({
    * correcting a transaction's amount. See POST /receipts/:id/redistribute.
    */
   const [receiptBeingSplit, setReceiptBeingSplit] = useState<Receipt | null>(null);
+  /** The receipt whose «Pagado por» is being changed, if any. Also `payment:edit`. */
+  const [receiptBeingRenamed, setReceiptBeingRenamed] = useState<Receipt | null>(null);
   // Attaching the proof behind a payment is part of recording it, so it rides
   // on the same capability rather than inventing a third.
   const canRecord = can(user, "payment:record");
@@ -1649,6 +1652,17 @@ export function ReceiptsPage({
                 </button>
               )}
 
+              {canEdit && detail.voidedAt === null && (
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => setReceiptBeingRenamed(detail)}
+                  title="Poner el recibo a nombre de quien entregó el dinero"
+                >
+                  Pagado por
+                </button>
+              )}
+
               {canVoid && detail.voidedAt === null && (
                 <button
                   type="button"
@@ -1842,6 +1856,19 @@ export function ReceiptsPage({
           solo se pierde la prueba que envió el cliente, y si ya no está en el chat no hay
           otra copia.
         </ConfirmDialog>
+      )}
+
+      {receiptBeingRenamed !== null && (
+        <ReceiptPaidByDialog
+          receipt={receiptBeingRenamed}
+          onClose={() => setReceiptBeingRenamed(null)}
+          onSaved={(saved) => {
+            setReceiptBeingRenamed(null);
+            // The paper changes and no figure does, so the panel takes the
+            // server's answer as it is, as it does for a note.
+            setDetail(saved);
+          }}
+        />
       )}
 
       {receiptBeingSplit !== null && (

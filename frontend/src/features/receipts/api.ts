@@ -25,6 +25,7 @@ interface ReceiptResponse {
   lookupCode: string;
   issuedOn: string;
   note: string | null;
+  paidBy: string | null;
   voidedAt: string | null;
   voidReason: string | null;
   customer: { id: string; fullName: string; identification: string | null; phone: string };
@@ -320,6 +321,8 @@ export interface ReceiptDraft {
   method: "cash" | "transfer" | "card";
   reference?: string | null;
   note?: string | null;
+  /** Who handed over the money, when it was not the customer. */
+  paidBy?: string | null;
   originalCurrency?: "HNL" | "USD";
   exchangeRate?: string;
   /**
@@ -380,6 +383,32 @@ export async function updateReceiptNote(receiptId: string, note: string | null):
   );
 
   return toReceipt(response.receipt);
+}
+
+/**
+ * Change who a receipt says paid. Blank puts the customer's name back. Takes a
+ * reason and is filed in the Historial — see `PATCH /receipts/:id/paid-by`.
+ */
+export async function updateReceiptPaidBy(
+  receiptId: string,
+  paidBy: string | null,
+  reason: string,
+): Promise<Receipt> {
+  const response = await api.patch<{ receipt: ReceiptResponse }>(
+    `/api/receipts/${receiptId}/paid-by`,
+    { paidBy, reason },
+  );
+
+  return toReceipt(response.receipt);
+}
+
+/** Who paid this customer's latest receipt, when it was not them; null otherwise. */
+export async function fetchLastPayer(customerId: string): Promise<string | null> {
+  const response = await api.get<{ paidBy: string | null }>(
+    `/api/receipts/last-payer?customerId=${encodeURIComponent(customerId)}`,
+  );
+
+  return response.paidBy;
 }
 
 /** One lot's share of a receipt that is being re-split. */

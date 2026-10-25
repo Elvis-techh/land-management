@@ -24,6 +24,7 @@ import { MAX_PROOFS, ProofDropzone, acceptProofFiles } from "./ProofDropzone";
 import type { AfterPayment, ReceiptDraft, ReceiptDraftLine } from "./api";
 import {
   createReceipt,
+  fetchLastPayer,
   fetchAfterPayment,
   fetchCustomerSplit,
   fetchDuplicates,
@@ -138,6 +139,17 @@ export function NewReceiptDialog({
   const [method, setMethod] = useState<Method>("cash");
   const [reference, setReference] = useState("");
   const [note, setNote] = useState("");
+  /*
+   * «Pagado por»: whoever handed over the money, when it was not the customer.
+   *
+   * Filled in from the customer's latest receipt, because somebody paying for
+   * another person's lot usually does so every month. Only until it is typed
+   * in: a fill arriving after the user has started writing would overwrite
+   * them. `paidBySuggested` is what lets the hint say where the name came from.
+   */
+  const [paidBy, setPaidBy] = useState("");
+  const [paidBySuggested, setPaidBySuggested] = useState(false);
+  const paidByTouchedRef = useRef(false);
   /*
    * What the customer handed over, as one figure.
    *
@@ -605,6 +617,7 @@ export function NewReceiptDialog({
       method,
       reference: reference.trim() === "" ? null : reference.trim(),
       note: note.trim() === "" ? null : note.trim(),
+      paidBy: paidBy.trim() === "" ? null : paidBy.trim(),
       idempotencyKey,
       allowOverpayment,
       lines,
@@ -723,6 +736,7 @@ export function NewReceiptDialog({
     amountText.trim() !== "" ||
     reference.trim() !== "" ||
     note.trim() !== "" ||
+    (paidByTouchedRef.current && paidBy.trim() !== "") ||
     proofs.length > 0 ||
     Object.values(amountByContract).some((amount) => amount.trim() !== "");
 
@@ -743,7 +757,17 @@ export function NewReceiptDialog({
    */
   const formDraft = useFormDraft(
     "receipt-create",
-    { customerId, paidOn, method, reference, note, amountText, amountByContract, typeByContract },
+    {
+      customerId,
+      paidOn,
+      method,
+      reference,
+      note,
+      paidBy,
+      amountText,
+      amountByContract,
+      typeByContract,
+    },
     hasEnteredAnything,
   );
 
@@ -767,10 +791,39 @@ export function NewReceiptDialog({
       setAmountText("");
       setSplitNote(null);
       setOverpaymentPrompt(null);
+      // Somebody who pays for one customer does not pay for the next.
+      setPaidBy("");
+      setPaidBySuggested(false);
+      paidByTouchedRef.current = false;
     }
 
     amountsCustomerRef.current = nextId;
   };
+
+  useEffect(() => {
+    if (customerId === "" || paidByTouchedRef.current) {
+      return;
+    }
+
+    let live = true;
+
+    // A failure only means the field starts empty, which is how it starts
+    // for most payments anyway. Not worth an error on the form.
+    fetchLastPayer(customerId)
+      .then((payer) => {
+        if (live && !paidByTouchedRef.current) {
+          setPaidBy(payer ?? "");
+          setPaidBySuggested(payer !== null);
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      live = false;
+    };
+  }, [customerId]);
+
+  const customerName = customers.find((row) => row.id === customerId)?.fullName ?? null;
 
   return (
     /*
@@ -847,6 +900,12 @@ export function NewReceiptDialog({
               setMethod(saved.method);
               setReference(saved.reference);
               setNote(saved.note);
+              // Drafts saved before «Pagado por» existed have no such value.
+              if (saved.paidBy) {
+                paidByTouchedRef.current = true;
+                setPaidBy(saved.paidBy);
+                setPaidBySuggested(false);
+              }
               setAmountText(saved.amountText);
               setAmountByContract(saved.amountByContract);
               setTypeByContract(saved.typeByContract);
@@ -1016,6 +1075,31 @@ export function NewReceiptDialog({
             </span>
           </div>
         )}
+
+        <div className="form-field full-width">
+          <label htmlFor="receipt-paid-by">Pagado por (opcional)</label>
+          <input
+            id="receipt-paid-by"
+            type="text"
+            maxLength={120}
+            value={paidBy}
+            onChange={(event) => {
+              paidByTouchedRef.current = true;
+              setPaidBy(event.target.value);
+              setPaidBySuggested(false);
+            }}
+            placeholder="Solo si entregó el dinero otra persona"
+          />
+          {/* Says what the name does, on the one screen where it is decided:
+              the paper changes, the account does not. */}
+          <span className="field-hint">
+            {paidBy.trim() === ""
+              ? "Vacío: el recibo sale a nombre del cliente."
+              : `${paidBySuggested ? "Del último recibo de este cliente. " : ""}El recibo sale a nombre de ${paidBy.trim()}${
+                  customerName ? `; el lote y el saldo siguen siendo de ${customerName}` : ""
+                }.`}
+          </span>
+        </div>
       </div>
 
       {customerId !== "" && payable.length === 0 && (

@@ -713,6 +713,18 @@ export const receipts = sqliteTable(
      */
     note: text("note"),
     /**
+     * The name of whoever handed over the money, when it was not the customer:
+     * a relative or a buyer paying for somebody else's lot. Null when the
+     * customer paid, which is nearly always.
+     *
+     * Printed on the receipt in place of the customer's name, because the
+     * receipt is proof for the person who paid. The contract, the lot and the
+     * balance stay the customer's: this changes who the paper names, never
+     * whose money it counts towards. A name and nothing else, not a customer
+     * record, since the payer owes nothing and has no contract to look up.
+     */
+    paidBy: text("paid_by"),
+    /**
      * Set when the receipt is voided. The row is never deleted and the number is
      * never reused: a missing receipt number cannot be told apart from a hidden
      * one, so a void has to be visible as a void.

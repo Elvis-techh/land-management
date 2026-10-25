@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import multipart from "@fastify/multipart";
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
@@ -150,6 +150,7 @@ const receiptsListQuery = (db: Db) =>
       lookupCode: receipts.lookupCode,
       issuedOn: receipts.issuedOn,
       note: receipts.note,
+      paidBy: receipts.paidBy,
       voidedAt: receipts.voidedAt,
       voidReason: receipts.voidReason,
       createdAt: receipts.createdAt,
@@ -350,6 +351,7 @@ function presentReceipts(
       lookupCode: row.lookupCode,
       issuedOn: row.issuedOn,
       note: row.note,
+      paidBy: row.paidBy,
       voidedAt: row.voidedAt,
       voidReason: row.voidReason,
       customer: {
@@ -462,6 +464,8 @@ const receiptBody = z.object({
   /** The bank's confirmation number, for a transfer. */
   reference: z.string().trim().max(120).nullish(),
   note: z.string().trim().max(500).nullish(),
+  /** Who handed over the money, when it was not the customer — see `receipts.paidBy`. */
+  paidBy: z.string().trim().max(120).nullish(),
   /**
    * What the customer actually handed over, when it was not lempiras.
    *
@@ -512,6 +516,21 @@ const voidBody = z.object({
 const noteBody = z.object({
   note: z.string().trim().max(500).nullable(),
 });
+
+/**
+ * Changing who a receipt says paid. An empty string or `null` puts the
+ * customer's name back. Takes a written reason, like any change to a document
+ * somebody may already be holding.
+ */
+const paidByBody = z.object({
+  paidBy: z.string().trim().max(120).nullable(),
+  reason: z.string().trim().min(10).max(500),
+});
+
+/** A blank «Pagado por» is the customer paying, the same as none at all. */
+function payerName(value: string | null | undefined): string | null {
+  return value === null || value === undefined || value === "" ? null : value;
+}
 
 /**
  * Moving money that is already on a receipt from one lot to another.
@@ -821,6 +840,37 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
     };
   });
 
+  /**
+   * Who paid this customer's latest receipt, when it was somebody else.
+   *
+   * The payment form fills «Pagado por» with it, because whoever pays for
+   * somebody else's lot usually does so every month, and typing their name
+   * twelve times is how it ends up spelled three ways. Null when the customer
+   * paid the last one themselves: that is where a payer stops being filled in.
+   * Voided receipts are skipped; they say nothing about who pays now.
+   */
+  app.get<{ Querystring: { customerId?: string } }>(
+    "/receipts/last-payer",
+    { onRequest: app.requireCapability("payment:record") },
+    async (request, reply) => {
+      const customerId = request.query.customerId ?? "";
+
+      if (customerId === "") {
+        return reply.code(400).send({ error: "invalid_query", message: "Falta el cliente." });
+      }
+
+      const latest = app.db
+        .select({ paidBy: receipts.paidBy })
+        .from(receipts)
+        .where(and(eq(receipts.customerId, customerId), isNull(receipts.voidedAt)))
+        .orderBy(desc(receipts.number))
+        .limit(1)
+        .get();
+
+      return { paidBy: latest?.paidBy ?? null };
+    },
+  );
+
   app.get<{ Params: { id: string } }>(
     "/receipts/:id",
     { onRequest: app.requireUser },
@@ -1027,6 +1077,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
               issuedBy: actor.id,
               idempotencyKey: body.idempotencyKey ?? null,
               note: body.note ?? null,
+              paidBy: payerName(body.paidBy),
               createdAt: now,
             })
             .run();
@@ -1133,6 +1184,86 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
       const next = parsed.data.note === null || parsed.data.note === "" ? null : parsed.data.note;
 
       app.db.update(receipts).set({ note: next }).where(eq(receipts.id, existing.id)).run();
+
+      const row = receiptsListQuery(app.db).where(eq(receipts.id, existing.id)).get()!;
+
+      return { receipt: presentReceipts(app.db, [row], true, moraAt())[0] };
+    },
+  );
+
+  /* ---------------------------------------------------------------------- */
+  /* Who paid                                                                */
+  /* ---------------------------------------------------------------------- */
+
+  /**
+   * Change the «Pagado por» on a receipt already issued: a name typed wrong,
+   * or a payer who asks for a receipt in their own name for money already
+   * recorded.
+   *
+   * On `payment:edit`, like correcting an amount, and filed in the Historial
+   * with its reason, because it changes what a document says and somebody may
+   * already be holding the old copy. Nothing in the ledger moves: the money
+   * stays on the same contracts, under the same customer.
+   *
+   * Refused on a voided receipt. It no longer stands, so there is nothing to
+   * correct on it.
+   */
+  app.patch<{ Params: { id: string } }>(
+    "/receipts/:id/paid-by",
+    { onRequest: app.requireCapability("payment:edit") },
+    async (request, reply) => {
+      const parsed = paidByBody.safeParse(request.body);
+
+      if (!parsed.success) {
+        return reply.code(400).send({
+          error: "invalid_body",
+          message: "Escribe un motivo de al menos 10 caracteres, y un nombre de hasta 120.",
+        });
+      }
+
+      const existing = app.db
+        .select()
+        .from(receipts)
+        .where(eq(receipts.id, request.params.id))
+        .get();
+
+      if (!existing) {
+        return reply.code(404).send({ error: "not_found", message: "Ese recibo no existe." });
+      }
+
+      if (existing.voidedAt !== null) {
+        return reply.code(409).send({
+          error: "receipt_voided",
+          message: "Este recibo está anulado; ya no se corrige.",
+        });
+      }
+
+      const next = payerName(parsed.data.paidBy);
+
+      if (next === existing.paidBy) {
+        return reply.code(409).send({
+          error: "no_change",
+          message: "El recibo ya dice eso.",
+        });
+      }
+
+      const actor = request.user!;
+
+      app.db.transaction((tx) => {
+        tx.update(receipts).set({ paidBy: next }).where(eq(receipts.id, existing.id)).run();
+
+        // `receiptCode` on both sides so the Historial can name the receipt
+        // without listing it as a change — see the void.
+        recordAudit(tx, {
+          actorId: actor.id,
+          entityType: "payment",
+          entityId: existing.id,
+          action: "update",
+          reason: parsed.data.reason,
+          before: { receiptCode: existing.code, paidBy: existing.paidBy },
+          after: { receiptCode: existing.code, paidBy: next },
+        });
+      });
 
       const row = receiptsListQuery(app.db).where(eq(receipts.id, existing.id)).get()!;
 
