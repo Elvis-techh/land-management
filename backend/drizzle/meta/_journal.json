@@ -169,6 +169,13 @@
       "when": 1792945516884,
       "tag": "0023_receipt_paid_by",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1792967623989,
+      "tag": "0024_mora_manual_charges",
+      "breakpoints": true
     }
   ]
 }

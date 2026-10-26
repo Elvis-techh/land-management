@@ -12,6 +12,8 @@ export type AuditAction =
   | "reassign_lot"
   | "replace"
   | "reverse"
+  | "mora_charge"
+  | "mora_remove"
   | "login"
   | "logout";
 

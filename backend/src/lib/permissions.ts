@@ -42,6 +42,7 @@ export const CAPABILITIES = [
   "rate:edit",
   "settings:edit",
   "mora:edit",
+  "mora:charge",
   "audit:view",
   "permission:manage",
   "user:manage",

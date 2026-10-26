@@ -63,6 +63,23 @@ export interface MoraContract {
   closedOn: string | null;
 }
 
+/**
+ * Mora put on by hand («Cargar mora»), already checked when it was entered.
+ * Removed ones are filtered out before they get here.
+ *
+ * Charged on its day, for the amount typed, whatever the rules say: the
+ * switch, «Desde», the grace days, the frequency and the maximum are all
+ * about the automatic mora. Nor does it count towards that maximum.
+ */
+export interface MoraManualCharge {
+  id: string;
+  /** 0 for the prima, otherwise the cuota's number. */
+  installment: number;
+  /** YYYY-MM-DD. */
+  incurredOn: string;
+  amountCents: number;
+}
+
 /** A payment that counts. Reversed ones are filtered out before they get here. */
 export interface MoraCredit {
   id: string;
@@ -87,6 +104,8 @@ export interface MoraCharge {
   amountCents: number;
   /** What was still unpaid of the cuota that day: the base of a percentage. */
   unpaidCents: number;
+  /** The «Cargar mora» entry this charge is, when it was put on by hand. */
+  manualId?: string;
 }
 
 /** What one payment paid of the mora, by cuota. */
@@ -122,6 +141,11 @@ export interface MoraAccount {
   paidCents: number;
   /** Charged and not paid, as of `asOf`. */
   pendingCents: number;
+  /**
+   * What is still unpaid of each charge, by charge id, for the ones not fully
+   * paid. Payments pay the oldest charge first.
+   */
+  pendingByCharge: Record<string, number>;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -258,6 +282,8 @@ function firstChargeOn(history: readonly MoraRuleVersion[], item: Item): string 
 interface Pending {
   date: string;
   item: Item;
+  /** Set for a charge put on by hand, which is charged once, as typed. */
+  manual?: MoraManualCharge;
   /** The first charge day, which the monthly ones count from. */
   anchor: string;
   /** 0 for the first charge, 1 for a month later, and so on. */
@@ -265,6 +291,7 @@ interface Pending {
 }
 
 interface Owed {
+  chargeId: string;
   installment: number;
   remainingCents: number;
 }
@@ -279,17 +306,22 @@ interface Owed {
  * the charge comes before the payments: the charge is for being late up to that
  * day, and a payment that day is already late.
  *
- * With mora never switched on, every payment goes wholly to the price, which is
- * exactly how the app counted before this file existed.
+ * With mora never switched on and none put on by hand, every payment goes
+ * wholly to the price, which is exactly how the app counted before this file
+ * existed.
  */
 export function moraAccount(
   contract: MoraContract,
   credits: readonly MoraCredit[],
   history: readonly MoraRuleVersion[],
   asOf: string,
+  manual: readonly MoraManualCharge[] = [],
 ): MoraAccount {
   const ordered = orderLedger(credits);
-  const items = carriesMora(contract) && moraEverOn(history) ? itemsOf(contract.terms) : [];
+  const items =
+    carriesMora(contract) && (moraEverOn(history) || manual.length > 0)
+      ? itemsOf(contract.terms)
+      : [];
   const chargeable = (date: string) =>
     date <= asOf && (contract.closedOn === null || date < contract.closedOn);
 
@@ -316,6 +348,14 @@ export function moraAccount(
     }
   }
 
+  for (const entry of manual) {
+    const item = items.find((candidate) => candidate.installment === entry.installment);
+
+    if (item && chargeable(entry.incurredOn)) {
+      enqueue({ date: entry.incurredOn, item, anchor: entry.incurredOn, month: 0, manual: entry });
+    }
+  }
+
   const charges: MoraCharge[] = [];
   const splits: MoraSplit[] = [];
   const owed: Owed[] = [];
@@ -327,6 +367,24 @@ export function moraAccount(
   const charge = (pending: Pending) => {
     const { item, date } = pending;
     const unpaid = unpaidOf(item, pricePaid);
+
+    if (pending.manual) {
+      // Owed as typed, even on a cuota paid by then: it is mora for having
+      // been late, and the cuota was late whatever happened after.
+      const id = `mora:manual:${pending.manual.id}`;
+
+      charges.push({
+        id,
+        installment: item.installment,
+        incurredOn: date,
+        amountCents: pending.manual.amountCents,
+        unpaidCents: unpaid,
+        manualId: pending.manual.id,
+      });
+      owed.push({ chargeId: id, installment: item.installment, remainingCents: pending.manual.amountCents });
+      moraOwed += pending.manual.amountCents;
+      return;
+    }
 
     if (unpaid <= 0) {
       // Paid by then, and payments only add up, so it can never be late again.
@@ -350,8 +408,10 @@ export function moraAccount(
       }
 
       if (amount > 0) {
+        const id = `mora:${item.installment}:${date}`;
+
         charges.push({
-          id: `mora:${item.installment}:${date}`,
+          id,
           installment: item.installment,
           incurredOn: date,
           amountCents: amount,
@@ -359,7 +419,7 @@ export function moraAccount(
         });
         item.chargedCents += amount;
         item.charges += 1;
-        owed.push({ installment: item.installment, remainingCents: amount });
+        owed.push({ chargeId: id, installment: item.installment, remainingCents: amount });
         moraOwed += amount;
       }
     }
@@ -452,6 +512,7 @@ export function moraAccount(
     chargedCents,
     paidCents: moraPaidTotal,
     pendingCents: chargedCents - moraPaidTotal,
+    pendingByCharge: Object.fromEntries(owed.map((entry) => [entry.chargeId, entry.remainingCents])),
   };
 }
 

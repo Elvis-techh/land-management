@@ -349,3 +349,44 @@ export function storedDocument(document: ContractDocument): ViewerFile {
     sizeBytes: document.byteSize,
   };
 }
+
+/** One mora put on by hand («Cargar mora»). Amounts in lempira centavos. */
+export interface ManualMora {
+  id: string;
+  /** 0 for the prima, otherwise the cuota's number. */
+  installment: number;
+  /** YYYY-MM-DD, the day it was charged or agreed. */
+  incurredOn: string;
+  amountCents: number;
+  /** What is still unpaid of it. 0 once a payment has covered it. */
+  pendingCents: number;
+  reason: string;
+  recordedBy: string;
+  recordedAt: string;
+}
+
+/** One contract's mora, for its panel. See GET /contracts/:id/mora. */
+export interface ContractMora {
+  /** Whether this contract can take mora at all: a signed credit sale, still open. */
+  chargeable: boolean;
+  manual: ManualMora[];
+  /** The automatic mora charged so far, by cuota (0 for the prima). */
+  automaticByInstallment: Record<number, number>;
+  /** The prima and the cuotas already due, which are the ones mora can go on. */
+  due: Array<{ installment: number; dueOn: string }>;
+}
+
+export function fetchContractMora(contractId: string): Promise<ContractMora> {
+  return api.get<ContractMora>(`/api/contracts/${contractId}/mora`);
+}
+
+export function chargeContractMora(
+  contractId: string,
+  entry: { installment: number; incurredOn: string; amountCents: number; reason: string },
+) {
+  return api.post<{ id: string }>(`/api/contracts/${contractId}/mora`, entry);
+}
+
+export function removeContractMora(contractId: string, chargeId: string, reason: string) {
+  return api.post<{ ok: true }>(`/api/contracts/${contractId}/mora/${chargeId}/remove`, { reason });
+}

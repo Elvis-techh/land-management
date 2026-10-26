@@ -116,6 +116,14 @@ const GROUPS: Array<{
           "que reversar. Exige escribir un motivo.",
       },
       {
+        capability: "mora:charge",
+        label: "Cargar o quitar mora en un contrato",
+        hint:
+          "Pone mora a mano en una cuota, con fecha y motivo: la que el cliente ya pagó o " +
+          "acordó antes de que la mora estuviera activada. Cambia lo que el cliente debe y " +
+          "queda en el historial.",
+      },
+      {
         capability: "price:change",
         label: "Cambiar el precio de un lote con contrato",
         hint: "Exige escribir un motivo, que queda en el historial.",

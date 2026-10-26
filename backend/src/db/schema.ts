@@ -202,6 +202,46 @@ export const moraRules = sqliteTable(
 );
 
 /**
+ * Mora put on one contract by hand: «Cargar mora».
+ *
+ * For what the automatic mora never does, since it never charges backwards:
+ * mora a customer paid before mora was switched on, and mora agreed with a
+ * customer for a cuota that was late before «Desde». One cuota (0 for the
+ * prima), the day it was charged or agreed, the amount, and why.
+ *
+ * A FACT, like a payment, so it is stored; what it does to the balance is
+ * derived, like everything else. lib/mora.ts replays it on its day beside the
+ * automatic charges, so a payment on or after that day covers it according
+ * to «Un pago cubre primero», and the receipt of that payment shows it.
+ *
+ * Never deleted. «Quitar» sets `removed_*` with a reason, and the replay
+ * stops counting it, the same way a reversed payment stops counting.
+ */
+export const moraManualCharges = sqliteTable(
+  "mora_manual_charges",
+  {
+    id: text("id").primaryKey(),
+    contractId: text("contract_id")
+      .notNull()
+      .references(() => contracts.id),
+    /** 0 for the prima, otherwise the cuota's number. */
+    installment: integer("installment").notNull(),
+    /** YYYY-MM-DD, the day it was charged or agreed. After the cuota fell due. */
+    incurredOn: text("incurred_on").notNull(),
+    amountCents: integer("amount_cents").notNull(),
+    reason: text("reason").notNull(),
+    recordedBy: text("recorded_by")
+      .notNull()
+      .references(() => users.id),
+    recordedAt: timestamp("recorded_at"),
+    removedAt: text("removed_at"),
+    removedBy: text("removed_by").references(() => users.id),
+    removalReason: text("removal_reason"),
+  },
+  (table) => [index("mora_manual_charges_contract_idx").on(table.contractId)],
+);
+
+/**
  * The lempira-per-dollar rate, as a HISTORY rather than a single value.
  *
  * Append-only, like payments: a new reading is a new row, never an overwrite.

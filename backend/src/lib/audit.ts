@@ -61,6 +61,10 @@ export interface AuditEntry {
     | "default"
     /** A contract closed by an adenda and succeeded by a new one on the same lot. */
     | "replace"
+    /** Mora put on one contract by hand, «Cargar mora». */
+    | "mora_charge"
+    /** Mora put on by hand, taken back with «Quitar». */
+    | "mora_remove"
     | "reverse";
   reason?: string | null;
   before?: unknown;
