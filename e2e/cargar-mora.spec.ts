@@ -101,6 +101,8 @@ test("mora put on by hand moves an old payment's L 200 to mora, and «Quitar» t
   await panel.getByRole("button", { name: "Cargar mora" }).click();
   const form = page.getByRole("dialog", { name: /Cargar mora/ });
   await form.getByLabel("Cuota *").selectOption("1");
+  // Mora is off, so cuota 1 has none of its own: no «L. 0» line to misread.
+  await expect(form).not.toContainText(/mora automática/i);
   await form.getByLabel("Fecha *").fill(paidOn);
   await form.getByLabel("Monto *").fill("200");
   await form.getByLabel("Motivo *").fill("Pagó L 200 de mora en efectivo junto con la cuota 1.");

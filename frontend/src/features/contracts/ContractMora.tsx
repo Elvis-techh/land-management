@@ -257,11 +257,7 @@ function ChargeMoraDialog({ contract, data, money, onClose, onCharged }: ChargeM
           <MoneyInput id="mora-amount" value={amountText} onChange={setAmountText} placeholder="Ej. 500" />
         </div>
 
-        <div className="form-field">
-          <span className="picker-label">Mora automática de esta cuota</span>
-          <span className="mora-automatic">{formatMoney(cents(automatic), money)}</span>
-        </div>
-
+        {/* Only when there is some: a bare «L. 0» read as an amount about to be charged. */}
         {automatic > 0 && (
           <p className="form-warning full-width">
             {itemName(installment)} ya tiene {formatMoney(cents(automatic), money)} de mora
