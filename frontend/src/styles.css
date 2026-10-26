@@ -7643,14 +7643,6 @@ input:disabled {
   overflow-wrap: anywhere;
 }
 
-/* «Mora automática de esta cuota» in «Cargar mora»: a figure, not a field. */
-.mora-automatic {
-  padding: 9px 0;
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-  color: var(--text-primary);
-}
-
 /*
  * "The signed copy is on file", in the list.
  *
