@@ -7635,6 +7635,23 @@ input:disabled {
   color: var(--text-muted);
 }
 
+/* «Regla de mora» on the contract: the rule read out, with who set it and why below. */
+.cp-mora-rule {
+  display: grid;
+  gap: 2px;
+  margin: 8px 0 0;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.cp-mora-rule.is-upcoming {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--amber-bg);
+}
+
 /* A mora put on by hand carries its reason, which is a sentence, not a size. */
 .cp-doc-sub.is-prose {
   font-family: inherit;

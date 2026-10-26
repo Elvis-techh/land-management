@@ -14,6 +14,7 @@ export type AuditAction =
   | "reverse"
   | "mora_charge"
   | "mora_remove"
+  | "mora_rule"
   | "login"
   | "logout";
 

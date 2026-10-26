@@ -3,6 +3,7 @@ import { ApiError, api } from "../../lib/api";
 import { CLIENT_ID } from "../../lib/liveUpdates";
 import { cents } from "../../lib/money";
 import type { Contract, ContractDocument } from "../../types";
+import type { MoraSettings } from "../settings/api";
 
 /**
  * Exactly what GET /api/contracts sends back.
@@ -365,6 +366,29 @@ export interface ManualMora {
   recordedAt: string;
 }
 
+/** What a contract's own rule («Regla propia») sets. The rest stays the general rule's. */
+export type OwnMoraRules = Pick<
+  MoraSettings,
+  "calculation" | "percent" | "fixedCents" | "capCents" | "minUnpaidCents" | "frequency"
+>;
+
+/** A contract's own mora rule. "general" follows Configuración. */
+export type ContractMoraRule =
+  | { mode: "general" }
+  | { mode: "none" }
+  | { mode: "own"; rules: OwnMoraRules };
+
+/** One version of a contract's rule, in force from `effectiveFrom` until the next. */
+export interface ContractMoraRuleVersion {
+  id: string;
+  /** YYYY-MM-DD. The last version may start tomorrow. */
+  effectiveFrom: string;
+  rule: ContractMoraRule;
+  reason: string;
+  recordedBy: string;
+  recordedAt: string;
+}
+
 /** One contract's mora, for its panel. See GET /contracts/:id/mora. */
 export interface ContractMora {
   /** Whether this contract can take mora at all: a signed credit sale, still open. */
@@ -374,6 +398,10 @@ export interface ContractMora {
   automaticByInstallment: Record<number, number>;
   /** The prima and the cuotas already due, which are the ones mora can go on. */
   due: Array<{ installment: number; dueOn: string }>;
+  /** Its own rule, oldest first. Empty while it has always followed the general one. */
+  rules: ContractMoraRuleVersion[];
+  /** The general rule, from Configuración. */
+  general: MoraSettings;
 }
 
 export function fetchContractMora(contractId: string): Promise<ContractMora> {
@@ -389,4 +417,9 @@ export function chargeContractMora(
 
 export function removeContractMora(contractId: string, chargeId: string, reason: string) {
   return api.post<{ ok: true }>(`/api/contracts/${contractId}/mora/${chargeId}/remove`, { reason });
+}
+
+/** Give a contract its own mora rule, or put it back on the general one. From tomorrow. */
+export function setContractMoraRule(contractId: string, rule: ContractMoraRule & { reason: string }) {
+  return api.post<{ effectiveFrom: string }>(`/api/contracts/${contractId}/mora/rule`, rule);
 }

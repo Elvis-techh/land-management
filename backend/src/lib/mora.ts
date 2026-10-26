@@ -21,6 +21,10 @@
  * - A payment covers the mora first, or the cuotas already due first, as set.
  * - An unpaid mora alone never makes a contract «Atrasado»; that is decided by
  *   the cuotas in lib/contracts.ts, which this file does not change.
+ * - One contract can have its own rule: «Sin mora», or «Regla propia» with its
+ *   own amount, maximum, minimum and frequency. From the day after it is set,
+ *   never backwards; everything else stays the general rule's. See
+ *   `contractHistory`.
  *
  * And the promise on the screen, «una mora ya cobrada no cambia»: the rules are
  * kept as a HISTORY (`MoraRuleVersion`), each version in force from the day
@@ -36,7 +40,7 @@
 import type { ContractTerms } from "./contracts.js";
 import { addMonthsOnDay, buildSchedule, shiftDays } from "./contracts.js";
 import { orderLedger } from "./ledger.js";
-import type { MoraSettings } from "./settings.js";
+import type { MoraSettings, OwnMoraRules } from "./settings.js";
 
 /* -------------------------------------------------------------------------- */
 /* Inputs                                                                      */
@@ -173,6 +177,81 @@ export function rulesOn(history: readonly MoraRuleVersion[], date: string): Mora
 /** Has mora ever been on? When not, nobody owes any and nothing needs working out. */
 export function moraEverOn(history: readonly MoraRuleVersion[]): boolean {
   return history.some((version) => version.rules.enabled);
+}
+
+/** One contract's own rule, from `moraContractRules`. */
+export type ContractMoraRule =
+  | { mode: "general" }
+  | { mode: "none" }
+  | { mode: "own"; rules: OwnMoraRules };
+
+/** A contract's rule as it stood from `effectiveFrom` until its next version. */
+export interface ContractMoraVersion {
+  /** YYYY-MM-DD. */
+  effectiveFrom: string;
+  rule: ContractMoraRule;
+}
+
+/**
+ * The general history with one contract's own rule laid over it: the history
+ * that contract's mora is worked out with. With no versions of its own, the
+ * general history itself, so every other contract is counted exactly as before.
+ *
+ * - «Sin mora»: the switch reads off for this contract while it lasts.
+ * - «Regla propia»: its own amount, maximum, minimum and frequency. The switch,
+ *   «Desde», the grace days (which also decide «Atrasado»), the prima and the
+ *   payment order stay the general rule's, so with mora switched off in
+ *   Configuración no contract is charged, whatever its own rule.
+ * - Back on a rule after «Sin mora», only cuotas falling due from that day on
+ *   carry mora, as with «Desde»: the months without mora are never charged
+ *   afterwards.
+ */
+export function contractHistory(
+  general: readonly MoraRuleVersion[],
+  versions: readonly ContractMoraVersion[],
+): readonly MoraRuleVersion[] {
+  if (versions.length === 0) {
+    return general;
+  }
+
+  const own = [...versions].sort((a, b) => (a.effectiveFrom < b.effectiveFrom ? -1 : 1));
+  const days = [...new Set([...general.map((v) => v.effectiveFrom), ...own.map((v) => v.effectiveFrom)])].sort();
+  const merged: MoraRuleVersion[] = [];
+  // The day this contract last came back from «Sin mora», if it ever did.
+  let floor: string | null = null;
+  let index = -1;
+
+  for (const day of days) {
+    while (index + 1 < own.length && own[index + 1]!.effectiveFrom <= day) {
+      index += 1;
+
+      if (own[index]!.rule.mode !== "none" && index > 0 && own[index - 1]!.rule.mode === "none") {
+        floor = own[index]!.effectiveFrom;
+      }
+    }
+
+    const base = rulesOn(general, day);
+
+    if (base === null) {
+      continue;
+    }
+
+    const rule = index >= 0 ? own[index]!.rule : null;
+    let rules: MoraSettings =
+      rule?.mode === "none"
+        ? { ...base, enabled: false }
+        : rule?.mode === "own"
+          ? { ...base, ...rule.rules }
+          : base;
+
+    if (floor !== null && rules.startsOn !== null && rules.startsOn < floor) {
+      rules = { ...rules, startsOn: floor };
+    }
+
+    merged.push({ effectiveFrom: day, rules });
+  }
+
+  return merged;
 }
 
 /** Does this contract carry mora at all? */
