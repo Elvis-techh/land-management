@@ -5,7 +5,7 @@ import { eq } from "drizzle-orm";
 
 import { auditEvents, contracts, moraRules } from "../src/db/schema.js";
 import { shiftDays } from "../src/lib/contracts.js";
-import { DEFAULT_SETTINGS, readMoraHistory } from "../src/lib/settings.js";
+import { DEFAULT_SETTINGS, clearSection, readMoraHistory, writeSection } from "../src/lib/settings.js";
 import { businessToday } from "../src/lib/time.js";
 import { OWNER_PASSWORD, STAFF_PASSWORD, buildTestApp, login } from "./helpers.js";
 
@@ -126,6 +126,55 @@ describe("the Configuración screen", async () => {
     assert.equal(moraRows.length, 1);
     assert.equal(JSON.parse(moraRows[0]!.beforeJson!).enabled, false);
     assert.equal(JSON.parse(moraRows[0]!.afterJson!).percent, 2);
+  });
+
+  it("lets «Desde» go back to a date already in force, and only to one", async () => {
+    // As on the site: mora on from four days ago, then «Desde» moved to
+    // yesterday by a save that has been in force since today.
+    const settings = await read(ownerCookie);
+    const on = { ...settings.mora, enabled: true, calculation: "percent", percent: 2 };
+    const fourDaysAgo = shiftDays(today, -4);
+    const yesterday = shiftDays(today, -1);
+    const version = (id: string, effectiveFrom: string, rules: object) =>
+      db.insert(moraRules).values({ id, effectiveFrom, value: JSON.stringify(rules) }).run();
+
+    db.delete(moraRules).run();
+    version("first", shiftDays(today, -3), { ...on, startsOn: fourDaysAgo });
+    version("moved", today, { ...on, startsOn: yesterday });
+    writeSection(db, "mora", { ...on, startsOn: yesterday }, ids.ownerId);
+
+    // Never in force: still charging backwards.
+    const earlier = await save(ownerCookie, { mora: { ...on, startsOn: shiftDays(today, -6) } });
+    assert.equal(earlier.statusCode, 400);
+    assert.match(earlier.json().message, /hacia atrás/);
+
+    // In force until yesterday: an undo, filed from tomorrow like any save.
+    const undo = await save(ownerCookie, { mora: { ...on, startsOn: fourDaysAgo } });
+    assert.equal(undo.statusCode, 200);
+    assert.equal((await read(staffCookie)).mora.startsOn, fourDaysAgo);
+    assert.deepEqual(
+      readMoraHistory(db).map((entry) => [entry.effectiveFrom, entry.rules.startsOn]),
+      [
+        [shiftDays(today, -3), fourDaysAgo],
+        [today, yesterday],
+        [shiftDays(today, 1), fourDaysAgo],
+      ],
+    );
+
+    // Mora switched off in between breaks the chain: the cuotas that fell due
+    // while it was off were never going to be charged.
+    db.delete(moraRules).run();
+    version("first", shiftDays(today, -3), { ...on, startsOn: fourDaysAgo });
+    version("off", shiftDays(today, -2), { ...on, enabled: false, startsOn: fourDaysAgo });
+    version("back-on", today, { ...on, startsOn: yesterday });
+    writeSection(db, "mora", { ...on, startsOn: yesterday }, ids.ownerId);
+
+    const acrossOff = await save(ownerCookie, { mora: { ...on, startsOn: fourDaysAgo } });
+    assert.equal(acrossOff.statusCode, 400);
+    assert.match(acrossOff.json().message, /hacia atrás/);
+
+    db.delete(moraRules).run();
+    clearSection(db, "mora");
   });
 
   it("keeps the minimum unpaid for mora, and reads older rules as having none", async () => {

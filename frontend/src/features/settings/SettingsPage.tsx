@@ -500,7 +500,7 @@ export function SettingsPage({ user, settings, onSaved }: SettingsPageProps) {
                     readOnly={moraLocked}
                     onChange={(event) => edit("mora", { startsOn: event.target.value })}
                   />
-                  <span className="cfg-hint">Hoy o después: nada de antes se cobra.</span>
+                  <span className="cfg-hint">Hoy o después, o volver a una fecha que ya estaba vigente.</span>
                 </div>
               </div>
 

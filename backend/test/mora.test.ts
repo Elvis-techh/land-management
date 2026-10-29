@@ -207,6 +207,19 @@ describe("mora charges", () => {
     assert.deepEqual(account.charges, []);
   });
 
+  it("after «Desde» is put back, charges a cuota from the in-between days no earlier than the undo", () => {
+    // «Desde» 1 October, moved to 8 October, then put back from the 15th.
+    // Cuota 4, due 5 October, would have been charged on the 11th.
+    const history = [
+      since(),
+      since({ startsOn: "2026-10-08" }, "2026-10-07"),
+      since({}, "2026-10-15"),
+    ];
+    const account = moraAccount(CONTRACT, onTimeThroughCuota3(), history, "2026-10-20");
+
+    assert.deepEqual(chargesOf(account), [[4, "2026-10-15", 500]]);
+  });
+
   it("charges a late prima only when the setting says so", () => {
     const terms = { ...TERMS, signedOn: "2026-10-15", firstDueOn: "2026-11-05" };
     const contract = { ...CONTRACT, terms };
