@@ -311,6 +311,30 @@ describe("the charges seam", () => {
     assert.equal(ledger.balanceCents, lempiras(90_500));
   });
 
+  it("counts mora forgiven during a day only for the payments entered after it", () => {
+    const forgiven: LedgerCharge = {
+      id: "forgiven",
+      incurredOn: "2026-02-10",
+      amountCents: -lempiras(300),
+      kind: "late_fee_forgiven",
+      recordedAt: "2026-02-10T12:00:00.000Z",
+    };
+    const ledger = replayContract({
+      salePriceCents,
+      charges: [forgiven, lateFee("f1", "2026-02-10", 500)],
+      credits: [
+        credit({ id: "a", paidOn: "2026-02-10", amountCents: lempiras(1_000), createdAt: "2026-02-10T09:00:00.000Z" }),
+        credit({ id: "b", paidOn: "2026-02-10", amountCents: lempiras(1_000), createdAt: "2026-02-10T15:00:00.000Z" }),
+      ],
+    });
+
+    // The morning payment sees the L 500 fee and not the L 300 forgiven later.
+    assert.equal(ledger.lines[0]!.balanceBeforeCents, lempiras(100_500));
+    assert.equal(ledger.lines[1]!.balanceBeforeCents, lempiras(99_200));
+    assert.equal(ledger.lines[1]!.chargesAppliedCents, -lempiras(300));
+    assert.equal(ledger.balanceCents, lempiras(98_200));
+  });
+
   it("changes nothing at all when there are no charges", () => {
     const withEmpty = replayContract({
       salePriceCents,

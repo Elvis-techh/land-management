@@ -112,7 +112,7 @@ describe("charging mora", async () => {
   it("charges nothing while mora has never been switched on", async () => {
     const row = await contract();
 
-    assert.deepEqual(row.mora, { charged: 0, paid: 0, pending: 0 });
+    assert.deepEqual(row.mora, { charged: 0, paid: 0, forgiven: 0, pending: 0 });
     assert.equal(row.balance, 13_500_000 - 1_500_000);
     assert.equal(row.health.monthsBehind, 2);
   });
@@ -122,7 +122,7 @@ describe("charging mora", async () => {
     const row = await contract();
 
     // 2 % of each unpaid L 10,000 cuota.
-    assert.deepEqual(row.mora, { charged: 40_000, paid: 0, pending: 40_000 });
+    assert.deepEqual(row.mora, { charged: 40_000, paid: 0, forgiven: 0, pending: 40_000 });
     assert.equal(row.balance, 12_000_000 + 40_000);
     // Mora is not a cuota: the arrears and «Atrasado» are as before.
     assert.equal(row.health.arrears, 2_000_000);
@@ -179,7 +179,7 @@ describe("charging mora", async () => {
   it("counts the mora as paid, and only the rest towards the cuotas", async () => {
     const row = await contract();
 
-    assert.deepEqual(row.mora, { charged: 40_000, paid: 40_000, pending: 0 });
+    assert.deepEqual(row.mora, { charged: 40_000, paid: 40_000, forgiven: 0, pending: 0 });
     assert.equal(row.paidToDate, 1_500_000 + 1_040_000);
     assert.equal(row.balance, 11_000_000);
     assert.equal(row.health.monthsBehind, 1);
@@ -248,7 +248,7 @@ describe("a contract whose cuotas are paid and whose mora is not", async () => {
 
     const row = await contract();
     assert.equal(row.status, "active");
-    assert.deepEqual(row.mora, { charged: 40_000, paid: 0, pending: 40_000 });
+    assert.deepEqual(row.mora, { charged: 40_000, paid: 0, forgiven: 0, pending: 40_000 });
     assert.equal(row.balance, 40_000);
     assert.equal(row.health.settled, true);
   });

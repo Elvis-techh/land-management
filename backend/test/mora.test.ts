@@ -2,8 +2,21 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import type { ContractTerms } from "../src/lib/contracts.js";
-import type { ContractMoraVersion, MoraContract, MoraCredit, MoraRuleVersion } from "../src/lib/mora.js";
-import { contractHistory, moraAccount, moraPaidThrough, moraPendingThrough, rulesOn } from "../src/lib/mora.js";
+import type {
+  ContractMoraVersion,
+  MoraContract,
+  MoraCredit,
+  MoraForgiveness,
+  MoraRuleVersion,
+} from "../src/lib/mora.js";
+import {
+  contractHistory,
+  moraAccount,
+  moraForgivenThrough,
+  moraPaidThrough,
+  moraPendingThrough,
+  rulesOn,
+} from "../src/lib/mora.js";
 import type { MoraSettings, OwnMoraRules } from "../src/lib/settings.js";
 
 /** L 1 = 100 centavos, as everywhere else in the app. */
@@ -526,5 +539,91 @@ describe("a contract's own rule", () => {
     assert.deepEqual(chargesOf(account([none("2026-10-01"), general("2026-11-01")], "2026-11-20")), [
       [5, "2026-11-11", 500],
     ]);
+  });
+});
+
+describe("mora forgiven («Perdonar»)", () => {
+  /** Forgiven on `on`, entered at noon unless said otherwise. */
+  const forgive = (on: string, amount: number, installment = 4, at = "12:00:00"): MoraForgiveness => ({
+    id: `f-${on}-${amount}`,
+    installment,
+    forgivenOn: on,
+    recordedAt: `${on}T${at}.000Z`,
+    amountCents: lempiras(amount),
+  });
+
+  it("clears all or part of what is unpaid, from its day", () => {
+    const account = moraAccount(CONTRACT, onTimeThroughCuota3(), [since()], "2026-10-20", [], [
+      forgive("2026-10-15", 300),
+    ]);
+
+    assert.equal(account.chargedCents, lempiras(500));
+    assert.equal(account.forgivenCents, lempiras(300));
+    assert.equal(account.pendingCents, lempiras(200));
+    assert.deepEqual(account.pendingByInstallment, { 4: lempiras(200) });
+    assert.equal(moraPendingThrough(account, "2026-10-14"), lempiras(500));
+    assert.equal(moraPendingThrough(account, "2026-10-15"), lempiras(200));
+    assert.equal(moraForgivenThrough(account, "2026-10-14"), 0);
+  });
+
+  it("clears no more than is unpaid of that cuota, and nothing of another", () => {
+    const account = moraAccount(CONTRACT, onTimeThroughCuota3(), [since()], "2026-11-20", [], [
+      forgive("2026-10-15", 800),
+    ]);
+
+    // Cuota 4's L 500 is cleared; cuota 5's, charged on 11 November, is not.
+    assert.equal(account.forgiven[0]!.amountCents, lempiras(500));
+    assert.deepEqual(account.pendingByInstallment, { 5: lempiras(500) });
+  });
+
+  it("charges a cuota still late again the next month with «Cada mes»", () => {
+    const account = moraAccount(CONTRACT, onTimeThroughCuota3(), [since({ frequency: "monthly" })], "2026-11-20", [], [
+      forgive("2026-10-15", 500),
+    ]);
+
+    assert.deepEqual(
+      account.charges.filter((entry) => entry.installment === 4).map((entry) => entry.incurredOn),
+      ["2026-10-11", "2026-11-11"],
+    );
+    assert.equal(account.pendingByInstallment[4], lempiras(500));
+  });
+
+  it("still counts what was forgiven towards the maximum", () => {
+    const rules = since({ calculation: "fixed", fixedCents: lempiras(500), frequency: "monthly", capCents: lempiras(1_000) });
+    const account = moraAccount(CONTRACT, onTimeThroughCuota3(), [rules], "2027-01-20", [], [
+      forgive("2026-10-15", 500),
+    ]);
+
+    // L 500 forgiven and L 500 more reach the L 1,000 maximum: no third charge.
+    assert.deepEqual(
+      account.charges.filter((entry) => entry.installment === 4).map((entry) => entry.amountCents / 100),
+      [500, 500],
+    );
+  });
+
+  it("leaves a payment entered before it on the same day as it was", () => {
+    const credits = [...onTimeThroughCuota3(), { ...pay("2026-10-15", 100), createdAt: "2026-10-15T09:00:00.000Z" }];
+    const without = moraAccount(CONTRACT, credits, [since()], "2026-10-20");
+    const withIt = moraAccount(CONTRACT, credits, [since()], "2026-10-20", [], [forgive("2026-10-15", 300)]);
+
+    assert.deepEqual(withIt.splits.at(-1), without.splits.at(-1));
+    assert.equal(withIt.pendingCents, lempiras(100));
+  });
+
+  it("is paid around by a payment entered after it on the same day", () => {
+    const credits = [...onTimeThroughCuota3(), { ...pay("2026-10-15", 25_000), createdAt: "2026-10-15T15:00:00.000Z" }];
+    const account = moraAccount(CONTRACT, credits, [since()], "2026-10-20", [], [forgive("2026-10-15", 300)]);
+
+    // Only the L 200 left is mora; the rest goes to cuota 4.
+    assert.equal(account.splits.at(-1)!.toMoraCents, lempiras(200));
+    assert.equal(account.pendingCents, 0);
+  });
+
+  it("clears less when a payment entered later, with an earlier date, already paid part", () => {
+    const credits = [...onTimeThroughCuota3(), pay("2026-10-12", 400)];
+    const account = moraAccount(CONTRACT, credits, [since()], "2026-10-20", [], [forgive("2026-10-15", 300)]);
+
+    assert.equal(account.forgiven[0]!.amountCents, lempiras(100));
+    assert.equal(account.pendingCents, 0);
   });
 });

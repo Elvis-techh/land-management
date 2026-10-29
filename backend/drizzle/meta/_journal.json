@@ -183,6 +183,13 @@
       "when": 1793054662382,
       "tag": "0025_mora_contract_rules",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1793302180645,
+      "tag": "0026_mora_forgiveness",
+      "breakpoints": true
     }
   ]
 }

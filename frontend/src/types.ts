@@ -327,10 +327,12 @@ export interface ContractHealth {
   settled: boolean;
 }
 
-/** A contract's mora: charged so far, paid of it, and still owed. */
+/** A contract's mora: charged so far, paid of it, forgiven of it, and still owed. */
 export interface ContractMora {
   charged: Cents;
   paid: Cents;
+  /** Taken off with «Perdonar». */
+  forgiven: Cents;
   pending: Cents;
 }
 

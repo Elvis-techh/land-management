@@ -31,7 +31,7 @@ interface ContractsResponse {
       downPaymentPaid: number;
       paidToDate: number;
       balance: number;
-      mora: { charged: number; paid: number; pending: number };
+      mora: { charged: number; paid: number; forgiven: number; pending: number };
       health: {
         status: Contract["health"]["status"];
         arrears: number;
@@ -68,6 +68,7 @@ export async function fetchContracts(): Promise<Contract[]> {
     mora: {
       charged: cents(contract.mora.charged),
       paid: cents(contract.mora.paid),
+      forgiven: cents(contract.mora.forgiven),
       pending: cents(contract.mora.pending),
     },
     health: {
@@ -366,6 +367,24 @@ export interface ManualMora {
   recordedAt: string;
 }
 
+/** One «Perdonar»: mora charged and not paid, forgiven on one cuota. Amounts in lempira centavos. */
+export interface ForgivenMora {
+  id: string;
+  /** 0 for the prima, otherwise the cuota's number. */
+  installment: number;
+  /** YYYY-MM-DD, the day it was entered. */
+  forgivenOn: string;
+  amountCents: number;
+  /**
+   * What it actually cleared. Less than `amountCents` only when a payment
+   * entered later, with an earlier date, had already paid part of that mora.
+   */
+  clearedCents: number;
+  reason: string;
+  recordedBy: string;
+  recordedAt: string;
+}
+
 /** What a contract's own rule («Regla propia») sets. The rest stays the general rule's. */
 export type OwnMoraRules = Pick<
   MoraSettings,
@@ -394,6 +413,10 @@ export interface ContractMora {
   /** Whether this contract can take mora at all: a signed credit sale, still open. */
   chargeable: boolean;
   manual: ManualMora[];
+  /** Mora forgiven with «Perdonar», oldest first. */
+  forgiven: ForgivenMora[];
+  /** Mora charged and neither paid nor forgiven, by cuota: what «Perdonar» can clear. */
+  pendingByInstallment: Record<number, number>;
   /** The automatic mora charged so far, by cuota (0 for the prima). */
   automaticByInstallment: Record<number, number>;
   /** The prima and the cuotas already due, which are the ones mora can go on. */
@@ -417,6 +440,18 @@ export function chargeContractMora(
 
 export function removeContractMora(contractId: string, chargeId: string, reason: string) {
   return api.post<{ ok: true }>(`/api/contracts/${contractId}/mora/${chargeId}/remove`, { reason });
+}
+
+/** «Perdonar»: forgive all or part of one cuota's unpaid mora, from now on. */
+export function forgiveContractMora(
+  contractId: string,
+  entry: { installment: number; amountCents: number; reason: string },
+) {
+  return api.post<{ id: string }>(`/api/contracts/${contractId}/mora/forgive`, entry);
+}
+
+export function unforgiveContractMora(contractId: string, forgivenessId: string, reason: string) {
+  return api.post<{ ok: true }>(`/api/contracts/${contractId}/mora/forgiven/${forgivenessId}/remove`, { reason });
 }
 
 /** Give a contract its own mora rule, or put it back on the general one. From tomorrow. */

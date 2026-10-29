@@ -25,6 +25,11 @@
  *   own amount, maximum, minimum and frequency. From the day after it is set,
  *   never backwards; everything else stays the general rule's. See
  *   `contractHistory`.
+ * - Mora charged and not paid can be forgiven («Perdonar»), on one cuota, all
+ *   or part. From the moment it is entered: after the payments already
+ *   entered that day, so no receipt issued before it changes. It still counts
+ *   towards the maximum, and a cuota still late is charged again when its
+ *   rule says so. See `MoraForgiveness`.
  *
  * And the promise on the screen, «una mora ya cobrada no cambia»: the rules are
  * kept as a HISTORY (`MoraRuleVersion`), each version in force from the day
@@ -40,6 +45,7 @@
 import type { ContractTerms } from "./contracts.js";
 import { addMonthsOnDay, buildSchedule, shiftDays } from "./contracts.js";
 import { orderLedger } from "./ledger.js";
+import { parseTimestamp } from "./time.js";
 import type { MoraSettings, OwnMoraRules } from "./settings.js";
 
 /* -------------------------------------------------------------------------- */
@@ -84,6 +90,21 @@ export interface MoraManualCharge {
   amountCents: number;
 }
 
+/**
+ * Mora forgiven by hand («Perdonar»), already checked when it was entered.
+ * Removed ones are filtered out before they get here.
+ */
+export interface MoraForgiveness {
+  id: string;
+  /** 0 for the prima, otherwise the cuota's number. */
+  installment: number;
+  /** YYYY-MM-DD, the day it was entered. */
+  forgivenOn: string;
+  /** When it was entered, to place it among the payments of its day. */
+  recordedAt: string;
+  amountCents: number;
+}
+
 /** A payment that counts. Reversed ones are filtered out before they get here. */
 export interface MoraCredit {
   id: string;
@@ -110,6 +131,21 @@ export interface MoraCharge {
   unpaidCents: number;
   /** The «Cargar mora» entry this charge is, when it was put on by hand. */
   manualId?: string;
+}
+
+/** What one «Perdonar» cleared. */
+export interface MoraForgiven {
+  /** Stable, so the ledger orders it the same way every time. */
+  id: string;
+  forgivenessId: string;
+  installment: number;
+  forgivenOn: string;
+  recordedAt: string;
+  /**
+   * What it actually cleared: what was typed, unless a payment entered later
+   * with an earlier date left less unpaid on that cuota by then.
+   */
+  amountCents: number;
 }
 
 /** What one payment paid of the mora, by cuota. */
@@ -141,15 +177,20 @@ export interface MoraAccount {
   charges: MoraCharge[];
   /** One per counted payment, in ledger order. */
   splits: MoraSplit[];
+  /** One per «Perdonar» up to `asOf`, in the order they were entered. */
+  forgiven: MoraForgiven[];
   chargedCents: number;
   paidCents: number;
-  /** Charged and not paid, as of `asOf`. */
+  forgivenCents: number;
+  /** Charged and neither paid nor forgiven, as of `asOf`. */
   pendingCents: number;
   /**
    * What is still unpaid of each charge, by charge id, for the ones not fully
-   * paid. Payments pay the oldest charge first.
+   * paid. Payments and «Perdonar» clear the oldest charge first.
    */
   pendingByCharge: Record<string, number>;
+  /** The same, added up by cuota (0 for the prima): what «Perdonar» can clear. */
+  pendingByInstallment: Record<number, number>;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -395,8 +436,18 @@ export function moraAccount(
   history: readonly MoraRuleVersion[],
   asOf: string,
   manual: readonly MoraManualCharge[] = [],
+  forgiveness: readonly MoraForgiveness[] = [],
 ): MoraAccount {
   const ordered = orderLedger(credits);
+  const forgivings = forgiveness
+    .filter((entry) => entry.forgivenOn <= asOf)
+    .sort((a, b) =>
+      a.forgivenOn !== b.forgivenOn
+        ? a.forgivenOn < b.forgivenOn
+          ? -1
+          : 1
+        : parseTimestamp(a.recordedAt) - parseTimestamp(b.recordedAt) || (a.id < b.id ? -1 : 1),
+    );
   const items =
     carriesMora(contract) && (moraEverOn(history) || manual.length > 0)
       ? itemsOf(contract.terms)
@@ -437,11 +488,14 @@ export function moraAccount(
 
   const charges: MoraCharge[] = [];
   const splits: MoraSplit[] = [];
+  const forgiven: MoraForgiven[] = [];
   const owed: Owed[] = [];
   let pricePaid = 0;
   let moraOwed = 0;
   let moraPaidTotal = 0;
+  let moraForgivenTotal = 0;
   let next = 0;
+  let nextForgiving = 0;
 
   const charge = (pending: Pending) => {
     const { item, date } = pending;
@@ -570,28 +624,87 @@ export function moraAccount(
     });
   };
 
-  while (queue.length > 0 || next < ordered.length) {
+  /** Clear what is unpaid of one cuota's mora, oldest charge first, up to what was typed. */
+  const forgive = (entry: MoraForgiveness) => {
+    let left = entry.amountCents;
+    let cleared = 0;
+
+    for (let index = 0; index < owed.length && left > 0; ) {
+      const unpaid = owed[index]!;
+
+      if (unpaid.installment !== entry.installment) {
+        index += 1;
+        continue;
+      }
+
+      const share = Math.min(left, unpaid.remainingCents);
+      unpaid.remainingCents -= share;
+      left -= share;
+      cleared += share;
+
+      if (unpaid.remainingCents === 0) {
+        owed.splice(index, 1);
+      } else {
+        index += 1;
+      }
+    }
+
+    moraOwed -= cleared;
+    moraForgivenTotal += cleared;
+    forgiven.push({
+      id: `mora:forgiven:${entry.id}`,
+      forgivenessId: entry.id,
+      installment: entry.installment,
+      forgivenOn: entry.forgivenOn,
+      recordedAt: entry.recordedAt,
+      amountCents: cleared,
+    });
+  };
+
+  // On one day: the charges first, then the payments and the «Perdonar» in
+  // the order they were entered, so a payment entered before a «Perdonar» on
+  // the same day keeps the receipt it was given.
+  const creditFirst = (credit: MoraCredit, entry: MoraForgiveness) =>
+    credit.paidOn !== entry.forgivenOn
+      ? credit.paidOn < entry.forgivenOn
+      : parseTimestamp(credit.createdAt) <= parseTimestamp(entry.recordedAt);
+
+  while (queue.length > 0 || next < ordered.length || nextForgiving < forgivings.length) {
     const pending = queue[0];
     const credit = ordered[next];
+    const entry = forgivings[nextForgiving];
+    const nextDay =
+      credit && (!entry || creditFirst(credit, entry)) ? credit.paidOn : entry ? entry.forgivenOn : undefined;
 
-    if (pending && (!credit || pending.date <= credit.paidOn)) {
+    if (pending && (nextDay === undefined || pending.date <= nextDay)) {
       queue.shift();
       charge(pending);
-    } else {
-      pay(credit!);
+    } else if (credit && (!entry || creditFirst(credit, entry))) {
+      pay(credit);
       next += 1;
+    } else {
+      forgive(entry!);
+      nextForgiving += 1;
     }
   }
 
   const chargedCents = charges.reduce((total, entry) => total + entry.amountCents, 0);
+  const pendingByInstallment: Record<number, number> = {};
+
+  for (const entry of owed) {
+    pendingByInstallment[entry.installment] = (pendingByInstallment[entry.installment] ?? 0) + entry.remainingCents;
+  }
 
   return {
     charges,
     splits,
+    forgiven,
     chargedCents,
     paidCents: moraPaidTotal,
-    pendingCents: chargedCents - moraPaidTotal,
+    forgivenCents: moraForgivenTotal,
+    pendingCents: chargedCents - moraPaidTotal - moraForgivenTotal,
     pendingByCharge: Object.fromEntries(owed.map((entry) => [entry.chargeId, entry.remainingCents])),
+    pendingByInstallment,
   };
 }
 
@@ -612,12 +725,20 @@ export function moraPaidThrough(account: MoraAccount, date: string): number {
   );
 }
 
-/** Mora charged on or before `date` and not paid by then. */
+/** Mora forgiven on or before `date`. */
+export function moraForgivenThrough(account: MoraAccount, date: string): number {
+  return account.forgiven.reduce(
+    (total, entry) => (entry.forgivenOn <= date ? total + entry.amountCents : total),
+    0,
+  );
+}
+
+/** Mora charged on or before `date` and neither paid nor forgiven by then. */
 export function moraPendingThrough(account: MoraAccount, date: string): number {
   const charged = account.charges.reduce(
     (total, entry) => (entry.incurredOn <= date ? total + entry.amountCents : total),
     0,
   );
 
-  return charged - moraPaidThrough(account, date);
+  return charged - moraPaidThrough(account, date) - moraForgivenThrough(account, date);
 }

@@ -280,6 +280,45 @@ export const moraContractRules = sqliteTable(
 );
 
 /**
+ * Mora forgiven on one cuota of one contract: «Perdonar».
+ *
+ * All or part of the mora charged on that cuota and not yet paid, with a
+ * reason. A FACT, like «Cargar mora», so it is stored; lib/mora.ts replays it
+ * on `forgiven_on` (the day it was entered, never earlier), after the
+ * payments already entered that day, so no receipt issued before it changes.
+ *
+ * It clears only what had been charged. A cuota still late is charged again
+ * the next time its rule says so, and what was forgiven still counts towards
+ * the maximum per cuota, so forgiving never restarts the charges.
+ *
+ * Never deleted. «Quitar» sets `removed_*` with a reason.
+ */
+export const moraForgiveness = sqliteTable(
+  "mora_forgiveness",
+  {
+    id: text("id").primaryKey(),
+    contractId: text("contract_id")
+      .notNull()
+      .references(() => contracts.id),
+    /** 0 for the prima, otherwise the cuota's number. */
+    installment: integer("installment").notNull(),
+    /** YYYY-MM-DD, the day it was entered. */
+    forgivenOn: text("forgiven_on").notNull(),
+    amountCents: integer("amount_cents").notNull(),
+    reason: text("reason").notNull(),
+    recordedBy: text("recorded_by")
+      .notNull()
+      .references(() => users.id),
+    /** Places it among the payments of its day. */
+    recordedAt: timestamp("recorded_at"),
+    removedAt: text("removed_at"),
+    removedBy: text("removed_by").references(() => users.id),
+    removalReason: text("removal_reason"),
+  },
+  (table) => [index("mora_forgiveness_contract_idx").on(table.contractId)],
+);
+
+/**
  * The lempira-per-dollar rate, as a HISTORY rather than a single value.
  *
  * Append-only, like payments: a new reading is a new row, never an overwrite.

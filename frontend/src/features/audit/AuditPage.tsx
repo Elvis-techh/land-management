@@ -29,6 +29,8 @@ const actionPresentation: Record<AuditAction, { label: string; stampClass: strin
   mora_charge: { label: "Mora cargada", stampClass: "stamp clay" },
   mora_remove: { label: "Mora quitada", stampClass: "stamp danger" },
   mora_rule: { label: "Regla de mora", stampClass: "stamp clay" },
+  mora_forgive: { label: "Mora perdonada", stampClass: "stamp success" },
+  mora_unforgive: { label: "Perdón de mora quitado", stampClass: "stamp danger" },
   // No longer written — sign-ins are kept on the account, not here — but the
   // rows recorded before that are still on file and still have to read.
   login: { label: "Inicio de sesión", stampClass: "stamp neutral" },
@@ -85,6 +87,7 @@ const fieldLabels: Record<string, string> = {
   // Mora put on a contract by hand, «Cargar mora» — see routes/mora.ts.
   moraInstallment: "Cuota",
   moraIncurredOn: "Fecha de la mora",
+  moraForgivenOn: "Mora perdonada el",
   // A contract's own mora rule — see POST /contracts/:id/mora/rule.
   moraRule: "Regla de mora",
   moraRuleFrom: "Regla desde",

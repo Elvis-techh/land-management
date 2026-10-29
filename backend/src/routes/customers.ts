@@ -7,7 +7,7 @@ import { z } from "zod";
 import { contracts, customers, lots, payments, projects } from "../db/schema.js";
 import { recordAudit } from "../lib/audit.js";
 import { openContract } from "../lib/holding.js";
-import { loadMoraAccounts } from "../lib/moraAccounts.js";
+import { loadMoraAccounts, moraOwedOf } from "../lib/moraAccounts.js";
 import { normalizePhone } from "../lib/phone.js";
 import { businessToday } from "../lib/time.js";
 
@@ -190,8 +190,9 @@ export const customerRoutes: FastifyPluginAsync<CustomerRoutesOptions> = async (
         projectName: row.projectName,
         salePrice: row.salePriceCents,
         paidToDate: row.paidToDateCents,
-        // So price + mora charged − paid is what the contract owes.
-        moraCharged: mora.get(row.contractId)?.chargedCents ?? 0,
+        // So price + mora charged − paid is what the contract owes. Net of
+        // any forgiven, which is no longer owed.
+        moraCharged: moraOwedOf(mora.get(row.contractId)),
       });
 
       byCustomer.set(row.customerId, list);

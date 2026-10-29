@@ -388,6 +388,7 @@ function present(
     mora: {
       charged: mora?.chargedCents ?? 0,
       paid: moraPaidCents,
+      forgiven: mora?.forgivenCents ?? 0,
       pending: moraPendingCents,
     },
     health: {
