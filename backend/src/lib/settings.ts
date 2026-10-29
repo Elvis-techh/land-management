@@ -316,7 +316,8 @@ export function healthRulesOf(settings: AppSettings): HealthRules {
  *   needs a start date of today or later, so no cuota that fell due before
  *   anybody decided to charge mora ever carries one. A start date already in
  *   the past is fine to keep while other settings change: that only means mora
- *   has been running since then.
+ *   has been running since then. So is going back to one that was already in
+ *   force, with mora on ever since (`undoesStart`).
  * - Mora that is on charges something. A zero rate would look switched on and
  *   charge nothing, which is the same as off, only harder to notice.
  */
@@ -324,6 +325,7 @@ export function moraProblem(
   before: MoraSettings,
   after: MoraSettings,
   today: string,
+  history: readonly MoraRuleVersion[],
 ): string | null {
   if (!after.enabled) {
     return null;
@@ -335,11 +337,41 @@ export function moraProblem(
 
   const startsAnew = !before.enabled || before.startsOn !== after.startsOn;
 
-  if (startsAnew && after.startsOn < today) {
+  if (startsAnew && after.startsOn < today && !undoesStart(history, after.startsOn, today)) {
     return "La mora no se cobra hacia atrás: «Desde» tiene que ser hoy o una fecha futura.";
   }
 
   return amountProblem(after);
+}
+
+/**
+ * Is `startsOn` a «Desde» that was already in force, with mora on from then
+ * until today? Putting it back is then an undo, not charging backwards.
+ *
+ * Nothing that fell due under the other «Desde» is charged on a day before the
+ * undo: it is filed from tomorrow like any save, and lib/mora.ts never charges
+ * a cuota before the version that first charges it is in force. A change saved
+ * today is not in force yet, so undoing it the same day replaces it outright.
+ *
+ * Mora switched off at any point since breaks the chain: cuotas that fell due
+ * while it was off were never going to be charged, and going back would.
+ */
+function undoesStart(history: readonly MoraRuleVersion[], startsOn: string, today: string): boolean {
+  const inForce = history.filter((version) => version.effectiveFrom <= today);
+
+  for (let index = inForce.length - 1; index >= 0; index -= 1) {
+    const { rules } = inForce[index]!;
+
+    if (!rules.enabled) {
+      return false;
+    }
+
+    if (rules.startsOn === startsOn) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 /**

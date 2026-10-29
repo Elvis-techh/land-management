@@ -7,6 +7,7 @@ import {
   SECTION_CAPABILITY,
   SETTINGS_SECTIONS,
   moraProblem,
+  readMoraHistory,
   readSettings,
   sectionChanged,
   settingsUpdateSchema,
@@ -83,7 +84,7 @@ export const settingsRoutes: FastifyPluginAsync<SettingsRouteOptions> = async (a
     const today = businessToday(options.timeZone);
 
     if (changed.includes("mora")) {
-      const problem = moraProblem(current.mora, next.mora, today);
+      const problem = moraProblem(current.mora, next.mora, today, readMoraHistory(app.db));
 
       if (problem) {
         return reply.code(400).send({ error: "invalid_mora", message: problem });
