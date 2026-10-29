@@ -5,7 +5,7 @@ import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 
 import type { Db } from "../db/client.js";
-import { contracts, moraContractRules, moraManualCharges, users } from "../db/schema.js";
+import { contracts, moraContractRules, moraForgiveness, moraManualCharges, users } from "../db/schema.js";
 import { recordAudit } from "../lib/audit.js";
 import { syncContractLifecycle } from "../lib/contractLifecycle.js";
 import type { ContractTerms, SaleType } from "../lib/contracts.js";
@@ -23,7 +23,8 @@ interface MoraRouteOptions {
  * «Cargar mora»: mora put on one contract by hand. See `moraManualCharges` in
  * src/db/schema.ts for what it is for, and lib/mora.ts for how it counts.
  *
- * Also a contract's own rule («Regla de mora»): see `moraContractRules`.
+ * Also a contract's own rule («Regla de mora»): see `moraContractRules`, and
+ * «Perdonar», mora forgiven: see `moraForgiveness`.
  *
  * Every write is on `mora:charge` (supervisors by default, changeable in
  * Permisos), take a written reason and are filed in the Historial. The money
@@ -35,6 +36,13 @@ const chargeBody = z.object({
   /** 0 for the prima, otherwise the cuota's number. */
   installment: z.number().int().min(0),
   incurredOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Usa una fecha AAAA-MM-DD."),
+  amountCents: z.number().int().positive(),
+  reason: z.string().trim().min(10).max(500),
+});
+
+const forgiveBody = z.object({
+  /** 0 for the prima, otherwise the cuota's number. */
+  installment: z.number().int().min(0),
   amountCents: z.number().int().positive(),
   reason: z.string().trim().min(10).max(500),
 });
@@ -99,6 +107,14 @@ function snapshot(entry: { installment: number; incurredOn: string; amountCents:
   return {
     moraInstallment: entry.installment,
     moraIncurredOn: entry.incurredOn,
+    amountCents: entry.amountCents,
+  };
+}
+
+function forgivenSnapshot(entry: { installment: number; forgivenOn: string; amountCents: number }) {
+  return {
+    moraInstallment: entry.installment,
+    moraForgivenOn: entry.forgivenOn,
     amountCents: entry.amountCents,
   };
 }
@@ -211,11 +227,37 @@ export const moraRoutes: FastifyPluginAsync<MoraRouteOptions> = async (app, opti
           pendingCents: account?.pendingByCharge[`mora:manual:${entry.id}`] ?? 0,
         }));
 
+      const clearedById = new Map((account?.forgiven ?? []).map((entry) => [entry.forgivenessId, entry.amountCents]));
+      const forgiven = app.db
+        .select({
+          id: moraForgiveness.id,
+          installment: moraForgiveness.installment,
+          forgivenOn: moraForgiveness.forgivenOn,
+          amountCents: moraForgiveness.amountCents,
+          reason: moraForgiveness.reason,
+          recordedAt: moraForgiveness.recordedAt,
+          recordedBy: users.name,
+        })
+        .from(moraForgiveness)
+        .innerJoin(users, eq(users.id, moraForgiveness.recordedBy))
+        .where(and(eq(moraForgiveness.contractId, row.id), isNull(moraForgiveness.removedAt)))
+        .orderBy(asc(moraForgiveness.forgivenOn), asc(moraForgiveness.recordedAt))
+        .all()
+        .map((entry) => ({
+          ...entry,
+          // Less than typed only when a payment entered later, with an earlier
+          // date, left less unpaid on that cuota by then.
+          clearedCents: clearedById.get(entry.id) ?? 0,
+        }));
+
       const asOf = today();
 
       return {
         chargeable: contractProblem(row) === null,
         manual,
+        forgiven,
+        // What «Perdonar» can clear on each cuota today.
+        pendingByInstallment: account?.pendingByInstallment ?? {},
         automaticByInstallment,
         due: itemsOf(row).filter((item) => item.dueOn < asOf),
         // Its own rule, every version (the last one may start tomorrow), and
@@ -405,6 +447,149 @@ export const moraRoutes: FastifyPluginAsync<MoraRouteOptions> = async (app, opti
       });
 
       return reply.code(201).send({ id });
+    },
+  );
+
+  /**
+   * «Perdonar»: forgive all or part of the mora charged on one cuota and not
+   * paid. From now on, never backwards: the payments already entered keep
+   * their receipts. Only what has been charged; a cuota still late is charged
+   * again when its rule says so (that is what «Sin mora» is for).
+   */
+  app.post<{ Params: { id: string } }>(
+    "/contracts/:id/mora/forgive",
+    { onRequest: app.requireCapability("mora:charge") },
+    async (request, reply) => {
+      const parsed = forgiveBody.safeParse(request.body);
+
+      if (!parsed.success) {
+        return reply.code(400).send({
+          error: "invalid_body",
+          message: "Elige la cuota y un monto, y escribe un motivo de al menos 10 caracteres.",
+        });
+      }
+
+      const body = parsed.data;
+      const row = readContract(app.db, request.params.id);
+
+      if (!row) {
+        return reply.code(404).send({ error: "not_found", message: "Ese contrato no existe." });
+      }
+
+      const problem = contractProblem(row);
+
+      if (problem) {
+        return reply.code(409).send({ error: "not_chargeable", message: problem });
+      }
+
+      const unpaid = loadMoraAccount(app.db, row.id, at())?.pendingByInstallment[body.installment] ?? 0;
+
+      if (unpaid === 0) {
+        return reply.code(400).send({
+          error: "nothing_to_forgive",
+          message: "Esa cuota no tiene mora sin pagar. La mora ya pagada se devuelve con «Anular recibo».",
+        });
+      }
+
+      if (body.amountCents > unpaid) {
+        return reply.code(400).send({
+          error: "too_much",
+          message: `De esa cuota solo faltan L. ${(unpaid / 100).toLocaleString("en-US", { minimumFractionDigits: 2 })} de mora por pagar; no se puede perdonar más.`,
+        });
+      }
+
+      const actor = request.user!;
+      const id = randomUUID();
+      const forgivenOn = today();
+
+      app.db.transaction((tx) => {
+        tx.insert(moraForgiveness)
+          .values({
+            id,
+            contractId: row.id,
+            installment: body.installment,
+            forgivenOn,
+            amountCents: body.amountCents,
+            reason: body.reason,
+            recordedBy: actor.id,
+            // An instant, not SQLite's default: it places this among the
+            // payments of the day.
+            recordedAt: new Date().toISOString(),
+          })
+          .run();
+
+        recordAudit(tx, {
+          actorId: actor.id,
+          entityType: "contract",
+          entityId: row.id,
+          action: "mora_forgive",
+          reason: body.reason,
+          after: forgivenSnapshot({ ...body, forgivenOn }),
+        });
+
+        // Forgiving the last of what was owed can settle the contract.
+        syncContractLifecycle(tx, row.id, at());
+      });
+
+      return reply.code(201).send({ id });
+    },
+  );
+
+  /** Take back a «Perdonar» entered by mistake. Its row stays, marked removed. */
+  app.post<{ Params: { id: string; forgivenessId: string } }>(
+    "/contracts/:id/mora/forgiven/:forgivenessId/remove",
+    { onRequest: app.requireCapability("mora:charge") },
+    async (request, reply) => {
+      const parsed = removeBody.safeParse(request.body);
+
+      if (!parsed.success) {
+        return reply.code(400).send({
+          error: "invalid_body",
+          message: "Escribe un motivo de al menos 10 caracteres.",
+        });
+      }
+
+      const existing = app.db
+        .select()
+        .from(moraForgiveness)
+        .where(
+          and(
+            eq(moraForgiveness.id, request.params.forgivenessId),
+            eq(moraForgiveness.contractId, request.params.id),
+          ),
+        )
+        .get();
+
+      if (!existing || existing.removedAt !== null) {
+        return reply.code(404).send({ error: "not_found", message: "Ese perdón no existe o ya se quitó." });
+      }
+
+      const actor = request.user!;
+
+      app.db.transaction((tx) => {
+        tx.update(moraForgiveness)
+          .set({
+            removedAt: new Date().toISOString(),
+            removedBy: actor.id,
+            removalReason: parsed.data.reason,
+          })
+          .where(eq(moraForgiveness.id, existing.id))
+          .run();
+
+        recordAudit(tx, {
+          actorId: actor.id,
+          entityType: "contract",
+          entityId: existing.contractId,
+          action: "mora_unforgive",
+          reason: parsed.data.reason,
+          before: forgivenSnapshot(existing),
+        });
+
+        // The mora is owed again, which can reopen a contract that was paid off.
+        syncContractLifecycle(tx, existing.contractId, at());
+      });
+
+      return reply.send({ ok: true });
     },
   );
 

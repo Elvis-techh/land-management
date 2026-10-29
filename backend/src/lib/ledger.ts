@@ -127,8 +127,43 @@ export interface LedgerCharge {
   /** YYYY-MM-DD — the day it became owed, which is where it lands in the ledger. */
   incurredOn: string;
   amountCents: number;
-  /** "late_fee" | "legal_fee" | "other" — the sale price is not one of these. */
+  /**
+   * "late_fee" | "legal_fee" | "other" — the sale price is not one of these.
+   * "late_fee_forgiven" is mora taken off («Perdonar»), with a negative amount.
+   */
   kind: string;
+  /**
+   * When it was entered, for an entry made by somebody during a day rather
+   * than owed from its start, like «Perdonar»: it then counts only for the
+   * payments of its day entered after it, so a receipt already given that day
+   * keeps its figures. Left out, it counts for every payment of its day.
+   */
+  recordedAt?: string;
+}
+
+/** The order charges land in: by day, the ones owed from the start of the day first, then as entered. */
+function compareCharges(a: LedgerCharge, b: LedgerCharge): number {
+  if (a.incurredOn !== b.incurredOn) {
+    return a.incurredOn < b.incurredOn ? -1 : 1;
+  }
+
+  if ((a.recordedAt === undefined) !== (b.recordedAt === undefined)) {
+    return a.recordedAt === undefined ? -1 : 1;
+  }
+
+  const recordedDelta =
+    a.recordedAt === undefined ? 0 : parseTimestamp(a.recordedAt) - parseTimestamp(b.recordedAt!);
+
+  return recordedDelta !== 0 ? recordedDelta : a.id < b.id ? -1 : 1;
+}
+
+/** Is this charge owed by the time this payment is made? */
+function owedBy(charge: LedgerCharge, entry: LedgerOrderable): boolean {
+  if (charge.incurredOn !== entry.paidOn) {
+    return charge.incurredOn < entry.paidOn;
+  }
+
+  return charge.recordedAt === undefined || parseTimestamp(charge.recordedAt) < parseTimestamp(entry.createdAt);
 }
 
 /** A transaction the customer is CREDITED for: a payment that still counts. */
@@ -212,9 +247,7 @@ export interface ReplayInput<T extends LedgerCredit> {
  */
 export function replayContract<T extends LedgerCredit>(input: ReplayInput<T>): ContractLedger<T> {
   const credits = orderLedger(input.credits.filter(isCounted));
-  const charges = [...(input.charges ?? [])].sort((a, b) =>
-    a.incurredOn === b.incurredOn ? (a.id < b.id ? -1 : 1) : a.incurredOn < b.incurredOn ? -1 : 1,
-  );
+  const charges = [...(input.charges ?? [])].sort(compareCharges);
 
   const lines: LedgerLine<T>[] = [];
 
@@ -229,7 +262,7 @@ export function replayContract<T extends LedgerCredit>(input: ReplayInput<T>): C
     // arithmetic does not work.
     let chargesApplied = 0;
 
-    while (nextCharge < charges.length && charges[nextCharge]!.incurredOn <= entry.paidOn) {
+    while (nextCharge < charges.length && owedBy(charges[nextCharge]!, entry)) {
       chargesApplied += charges[nextCharge]!.amountCents;
       nextCharge += 1;
     }

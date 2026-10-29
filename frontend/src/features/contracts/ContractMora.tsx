@@ -14,10 +14,18 @@ import type {
   ContractMora as ContractMoraData,
   ContractMoraRule,
   ContractMoraRuleVersion,
+  ForgivenMora,
   ManualMora,
   OwnMoraRules,
 } from "./api";
-import { chargeContractMora, fetchContractMora, removeContractMora, setContractMoraRule } from "./api";
+import {
+  chargeContractMora,
+  fetchContractMora,
+  forgiveContractMora,
+  removeContractMora,
+  setContractMoraRule,
+  unforgiveContractMora,
+} from "./api";
 import { formatDate } from "./contractPresentation";
 
 interface ContractMoraProps {
@@ -100,6 +108,9 @@ function ruleSentence(rule: ContractMoraRule, general: MoraSettings, money: Mone
  * general one or its own, and «Cambiar» for a supervisor. See
  * `moraContractRules` in the backend.
  *
+ * Below it, «Mora perdonada»: mora charged and not paid, forgiven with
+ * «Perdonar». See `moraForgiveness` in the backend.
+ *
  * Fetched when the panel opens, like the documents: the contracts list only
  * needs the totals, which already include these.
  */
@@ -107,6 +118,8 @@ export function ContractMora({ contract, money, user, onChanged }: ContractMoraP
   const [data, setData] = useState<ContractMoraData | null>(null);
   const [isCharging, setCharging] = useState(false);
   const [removing, setRemoving] = useState<ManualMora | null>(null);
+  const [isForgiving, setForgiving] = useState(false);
+  const [unforgiving, setUnforgiving] = useState<ForgivenMora | null>(null);
   const [isChangingRule, setChangingRule] = useState(false);
   const canCharge = can(user, "mora:charge");
 
@@ -120,7 +133,7 @@ export function ContractMora({ contract, money, user, onChanged }: ContractMoraP
 
   // Also when the totals move (a payment from another tab), so «pagada» and
   // «pendiente» below keep up with «Mora pendiente» above.
-  useEffect(load, [load, contract.mora.charged, contract.mora.paid]);
+  useEffect(load, [load, contract.mora.charged, contract.mora.paid, contract.mora.forgiven]);
 
   if (data === null || (!data.chargeable && data.manual.length === 0 && data.rules.length === 0)) {
     return null;
@@ -133,6 +146,7 @@ export function ContractMora({ contract, money, user, onChanged }: ContractMoraP
 
   const today = businessToday();
   const current = ruleOn(data.rules, today);
+  const forgivable = Object.values(data.pendingByInstallment).some((amount) => amount > 0);
   const upcoming = data.rules.find((version) => version.effectiveFrom > today) ?? null;
 
   return (
@@ -248,6 +262,79 @@ export function ContractMora({ contract, money, user, onChanged }: ContractMoraP
               onClose={() => setRemoving(null)}
               onRemoved={() => {
                 setRemoving(null);
+                afterChange();
+              }}
+            />
+          )}
+        </section>
+      )}
+
+      {((data.chargeable && forgivable) || data.forgiven.length > 0) && (
+        <section className="cp-section">
+          <div className="cp-docs-head">
+            <h3 className="cp-section-title">Mora perdonada</h3>
+            {canCharge && data.chargeable && forgivable && (
+              <button type="button" className="btn-secondary is-small" onClick={() => setForgiving(true)}>
+                Perdonar
+              </button>
+            )}
+          </div>
+
+          {data.forgiven.length === 0 ? (
+            <p className="cp-note">
+              Ninguna. Para quitar mora cobrada que el cliente todavía no ha pagado.
+            </p>
+          ) : (
+            <ul className="cp-docs">
+              {data.forgiven.map((entry) => (
+                <li key={entry.id} className="cp-doc">
+                  <span className="cp-doc-meta">
+                    <span className="cp-doc-name">
+                      {itemName(entry.installment)} · {formatDate(entry.forgivenOn)} ·{" "}
+                      {formatMoney(cents(entry.clearedCents), money)}
+                    </span>
+                    <span className="cp-doc-sub is-prose">
+                      {entry.clearedCents < entry.amountCents &&
+                        `De ${formatMoney(cents(entry.amountCents), money)}: un pago ya había cubierto el resto · `}
+                      {entry.reason} · {entry.recordedBy}
+                    </span>
+                  </span>
+                  {canCharge && (
+                    <button
+                      type="button"
+                      className="link-btn is-danger"
+                      onClick={() => setUnforgiving(entry)}
+                      aria-label={`Quitar el perdón de ${itemName(entry.installment).toLowerCase()}`}
+                    >
+                      Quitar
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {isForgiving && (
+            <ForgiveMoraDialog
+              contract={contract}
+              data={data}
+              money={money}
+              onClose={() => setForgiving(false)}
+              onForgiven={() => {
+                setForgiving(false);
+                afterChange();
+              }}
+            />
+          )}
+
+          {unforgiving && (
+            <UnforgiveMoraDialog
+              contract={contract}
+              entry={unforgiving}
+              money={money}
+              onClose={() => setUnforgiving(null)}
+              onRemoved={() => {
+                setUnforgiving(null);
                 afterChange();
               }}
             />
@@ -700,6 +787,235 @@ function RemoveMoraDialog({ contract, entry, money, onClose, onRemoved }: Remove
           onClick={() => void submit()}
         >
           {isSaving ? "Quitando…" : "Quitar mora"}
+        </button>
+      </div>
+    </Dialog>
+  );
+}
+
+interface ForgiveMoraDialogProps {
+  contract: Contract;
+  data: ContractMoraData;
+  money: MoneyView;
+  onClose: () => void;
+  onForgiven: () => void;
+}
+
+/** «Perdonar»: which cuota, how much of its unpaid mora, and why. */
+function ForgiveMoraDialog({ contract, data, money, onClose, onForgiven }: ForgiveMoraDialogProps) {
+  // The cuotas with mora still unpaid, oldest first.
+  const options = Object.entries(data.pendingByInstallment)
+    .map(([installment, pendingCents]) => ({ installment: Number(installment), pendingCents }))
+    .filter((entry) => entry.pendingCents > 0)
+    .sort((a, b) => a.installment - b.installment);
+  const [installment, setInstallment] = useState(options[0]!.installment);
+  const [amountText, setAmountText] = useState(toMoneyInput(cents(options[0]!.pendingCents)));
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [isSaving, setSaving] = useState(false);
+
+  const unpaid = options.find((entry) => entry.installment === installment)!.pendingCents;
+  const amountCents = typedCents(amountText);
+  const trimmedReason = reason.trim();
+  const amountProblem =
+    amountText.trim() === "" || amountCents <= 0
+      ? null
+      : amountCents > unpaid
+        ? `No puede pasar de ${formatMoney(cents(unpaid), money)}, lo que falta de mora en esta cuota.`
+        : null;
+  const canSubmit =
+    amountCents > 0 && amountProblem === null && trimmedReason.length >= MINIMUM_REASON && !isSaving;
+
+  const choose = (next: number) => {
+    setInstallment(next);
+    // All of it, unless they type less.
+    setAmountText(toMoneyInput(cents(options.find((entry) => entry.installment === next)!.pendingCents)));
+  };
+
+  const submit = async () => {
+    setError(null);
+    setSaving(true);
+
+    try {
+      await forgiveContractMora(contract.id, { installment, amountCents, reason: trimmedReason });
+      onForgiven();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "No se pudo perdonar la mora.");
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog ariaLabel={`Perdonar mora, contrato ${contract.code}`} onClose={onClose}>
+      <div className="modal-header">
+        <div>
+          <p className="modal-eyebrow">Perdonar mora</p>
+          <h2>{contract.code}</h2>
+          <p className="modal-description">
+            {contract.customer.fullName} · Lote {contract.lot.code} · {contract.lot.projectName}
+          </p>
+        </div>
+        <button type="button" className="modal-close" onClick={onClose} aria-label="Cerrar">
+          <IconClose />
+        </button>
+      </div>
+
+      <div className="modal-form-grid">
+        <div className="form-field">
+          <label htmlFor="mora-forgive-installment">
+            Cuota <span className="required-mark">*</span>
+          </label>
+          <select
+            id="mora-forgive-installment"
+            value={installment}
+            onChange={(event) => choose(Number(event.target.value))}
+          >
+            {options.map((entry) => (
+              <option key={entry.installment} value={entry.installment}>
+                {itemName(entry.installment)} · falta {formatMoney(cents(entry.pendingCents), money)}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="form-field">
+          <label htmlFor="mora-forgive-amount">
+            Monto <span className="required-mark">*</span>
+          </label>
+          <MoneyInput id="mora-forgive-amount" value={amountText} onChange={setAmountText} />
+          {amountProblem ? (
+            <span className="field-error">{amountProblem}</span>
+          ) : (
+            <span className="field-hint">Toda la mora sin pagar de la cuota, o una parte.</span>
+          )}
+        </div>
+
+        <div className="form-field full-width">
+          <label htmlFor="mora-forgive-reason">
+            Motivo <span className="required-mark">*</span>
+          </label>
+          <textarea
+            id="mora-forgive-reason"
+            rows={2}
+            maxLength={500}
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            placeholder="Ej. Se puso al día y se acordó perdonarle la mora de esta cuota."
+          />
+          <span className="field-hint">Queda en el Historial.</span>
+          {trimmedReason.length > 0 && trimmedReason.length < MINIMUM_REASON && (
+            <span className="field-error">Escribe al menos {MINIMUM_REASON} caracteres.</span>
+          )}
+        </div>
+
+        <p className="form-note full-width">
+          Cuenta desde hoy: los recibos ya entregados no cambian. Solo borra la mora ya cobrada; si
+          la cuota sigue atrasada, se le vuelve a cobrar cuando la regla lo diga (para que no, usa
+          «Sin mora»). Lo perdonado sigue contando para el máximo por cuota.
+        </p>
+
+        {error && <p className="form-error full-width">{error}</p>}
+      </div>
+
+      <div className="modal-actions">
+        <button type="button" className="btn-secondary" onClick={onClose}>
+          Cancelar
+        </button>
+        <button
+          type="button"
+          className="btn-primary modal-submit"
+          disabled={!canSubmit}
+          onClick={() => void submit()}
+        >
+          {isSaving ? "Perdonando…" : "Perdonar mora"}
+        </button>
+      </div>
+    </Dialog>
+  );
+}
+
+interface UnforgiveMoraDialogProps {
+  contract: Contract;
+  entry: ForgivenMora;
+  money: MoneyView;
+  onClose: () => void;
+  onRemoved: () => void;
+}
+
+/** «Quitar» on a «Perdonar» entered by mistake: the mora is owed again. Asks why, and files it. */
+function UnforgiveMoraDialog({ contract, entry, money, onClose, onRemoved }: UnforgiveMoraDialogProps) {
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [isSaving, setSaving] = useState(false);
+  const trimmed = reason.trim();
+
+  const submit = async () => {
+    setError(null);
+    setSaving(true);
+
+    try {
+      await unforgiveContractMora(contract.id, entry.id, trimmed);
+      onRemoved();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "No se pudo quitar el perdón.");
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog ariaLabel={`Quitar perdón de mora, contrato ${contract.code}`} onClose={onClose}>
+      <div className="modal-header">
+        <div>
+          <p className="modal-eyebrow danger-eyebrow">Quitar perdón de mora</p>
+          <h2>
+            {itemName(entry.installment)} · {formatMoney(cents(entry.clearedCents), money)}
+          </h2>
+          <p className="modal-description">
+            {contract.code} · {formatDate(entry.forgivenOn)}
+          </p>
+        </div>
+        <button type="button" className="modal-close" onClick={onClose} aria-label="Cerrar">
+          <IconClose />
+        </button>
+      </div>
+
+      <div className="modal-form-grid">
+        <p className="form-note full-width">
+          Esa mora se vuelve a deber, y los pagos hechos después de perdonarla la cubren primero
+          si así lo dice Configuración. Queda en el Historial.
+        </p>
+
+        <div className="form-field full-width">
+          <label htmlFor="mora-unforgive-reason">
+            Motivo <span className="required-mark">*</span>
+          </label>
+          <textarea
+            id="mora-unforgive-reason"
+            rows={2}
+            maxLength={500}
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            placeholder="Ej. Se perdonó en el contrato equivocado."
+          />
+          {trimmed.length > 0 && trimmed.length < MINIMUM_REASON && (
+            <span className="field-error">Escribe al menos {MINIMUM_REASON} caracteres.</span>
+          )}
+        </div>
+
+        {error && <p className="form-error full-width">{error}</p>}
+      </div>
+
+      <div className="modal-actions">
+        <button type="button" className="btn-secondary" onClick={onClose}>
+          Cancelar
+        </button>
+        <button
+          type="button"
+          className="btn-danger modal-submit"
+          disabled={trimmed.length < MINIMUM_REASON || isSaving}
+          onClick={() => void submit()}
+        >
+          {isSaving ? "Quitando…" : "Quitar perdón"}
         </button>
       </div>
     </Dialog>

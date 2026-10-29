@@ -365,6 +365,12 @@ export function ContractPanel({
               <span className="cell-money">{formatMoney(contract.mora.paid, money)}</span>
             </div>
           )}
+          {contract.mora.forgiven > 0 && (
+            <div className="cp-row">
+              <span>Mora perdonada</span>
+              <span className="cell-money">{formatMoney(contract.mora.forgiven, money)}</span>
+            </div>
+          )}
           {/* Only while the contract is open. A closed one has no next cuota,
               whatever its schedule would still say. */}
           {isOpen && (

@@ -1,10 +1,17 @@
 import { and, eq, inArray, isNull } from "drizzle-orm";
 
 import type { Db } from "../db/client.js";
-import { contracts, moraContractRules, moraManualCharges, payments } from "../db/schema.js";
+import { contracts, moraContractRules, moraForgiveness, moraManualCharges, payments } from "../db/schema.js";
 import type { SaleType } from "./contracts.js";
 import type { LedgerCharge } from "./ledger.js";
-import type { ContractMoraRule, ContractMoraVersion, MoraAccount, MoraManualCharge, MoraRuleVersion } from "./mora.js";
+import type {
+  ContractMoraRule,
+  ContractMoraVersion,
+  MoraAccount,
+  MoraForgiveness,
+  MoraManualCharge,
+  MoraRuleVersion,
+} from "./mora.js";
 import { contractHistory, moraAccount, moraEverOn } from "./mora.js";
 import { ownMoraSchema, readMoraHistory } from "./settings.js";
 import { businessToday, parseTimestamp } from "./time.js";
@@ -145,6 +152,7 @@ export function loadMoraAccounts(
   }
 
   const rulesByContract = readContractRules(db, contractIds ? rows.map((row) => row.id) : undefined);
+  const forgivenessByContract = readForgiveness(db, contractIds ? rows.map((row) => row.id) : undefined);
   const creditsByContract = new Map<string, typeof credits>();
 
   for (const credit of credits) {
@@ -192,6 +200,7 @@ export function loadMoraAccounts(
         contractHistory(history, rulesByContract.get(row.id) ?? []),
         options.asOf,
         manualByContract.get(row.id) ?? [],
+        forgivenessByContract.get(row.id) ?? [],
       ),
     );
   }
@@ -260,6 +269,47 @@ function readContractRules(
   return byContract;
 }
 
+/** Every «Perdonar» still counting, by contract. Only these contracts when given. */
+function readForgiveness(
+  db: Pick<Db, "select">,
+  contractIds: readonly string[] | undefined,
+): Map<string, MoraForgiveness[]> {
+  const byContract = new Map<string, MoraForgiveness[]>();
+
+  if (contractIds?.length === 0) {
+    return byContract;
+  }
+
+  const rows = db
+    .select({
+      id: moraForgiveness.id,
+      contractId: moraForgiveness.contractId,
+      installment: moraForgiveness.installment,
+      forgivenOn: moraForgiveness.forgivenOn,
+      recordedAt: moraForgiveness.recordedAt,
+      amountCents: moraForgiveness.amountCents,
+    })
+    .from(moraForgiveness)
+    .where(
+      contractIds
+        ? and(isNull(moraForgiveness.removedAt), inArray(moraForgiveness.contractId, [...contractIds]))
+        : isNull(moraForgiveness.removedAt),
+    )
+    .all();
+
+  for (const { contractId, ...entry } of rows) {
+    const list = byContract.get(contractId);
+
+    if (list) {
+      list.push(entry);
+    } else {
+      byContract.set(contractId, [entry]);
+    }
+  }
+
+  return byContract;
+}
+
 /** One contract's account, or `undefined` when it owes no mora and never did. */
 export function loadMoraAccount(
   db: Pick<Db, "select">,
@@ -269,12 +319,34 @@ export function loadMoraAccount(
   return loadMoraAccounts(db, { ...options, contractIds: [contractId] }).get(contractId);
 }
 
-/** The charges as the ledger takes them, so receipts and balances include them. */
+/**
+ * The charges as the ledger takes them, so receipts and balances include them.
+ * A «Perdonar» is a negative one, from the moment it was entered.
+ */
 export function ledgerChargesOf(account: MoraAccount | undefined): LedgerCharge[] {
-  return (account?.charges ?? []).map((entry) => ({
+  const charges: LedgerCharge[] = (account?.charges ?? []).map((entry) => ({
     id: entry.id,
     incurredOn: entry.incurredOn,
     amountCents: entry.amountCents,
     kind: "late_fee",
   }));
+
+  for (const entry of account?.forgiven ?? []) {
+    if (entry.amountCents > 0) {
+      charges.push({
+        id: entry.id,
+        incurredOn: entry.forgivenOn,
+        amountCents: -entry.amountCents,
+        kind: "late_fee_forgiven",
+        recordedAt: entry.recordedAt,
+      });
+    }
+  }
+
+  return charges;
+}
+
+/** Mora charged and not forgiven: what price + this − paid counts as owed. */
+export function moraOwedOf(account: MoraAccount | undefined): number {
+  return (account?.chargedCents ?? 0) - (account?.forgivenCents ?? 0);
 }

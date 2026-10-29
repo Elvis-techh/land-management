@@ -117,11 +117,11 @@ const GROUPS: Array<{
       },
       {
         capability: "mora:charge",
-        label: "Cargar o quitar mora en un contrato",
+        label: "Cargar, perdonar o quitar mora en un contrato",
         hint:
           "Pone mora a mano en una cuota, con fecha y motivo: la que el cliente ya pagó o " +
-          "acordó antes de que la mora estuviera activada. Cambia lo que el cliente debe y " +
-          "queda en el historial.",
+          "acordó antes de que la mora estuviera activada. También perdona mora ya cobrada. " +
+          "Cambia lo que el cliente debe y queda en el historial.",
       },
       {
         capability: "price:change",

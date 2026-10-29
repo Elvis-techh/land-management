@@ -67,6 +67,10 @@ export interface AuditEntry {
     | "mora_remove"
     /** A contract given its own mora rule, or put back on the general one. */
     | "mora_rule"
+    /** Mora charged and not paid, forgiven on one cuota, «Perdonar». */
+    | "mora_forgive"
+    /** A «Perdonar» taken back with «Quitar». */
+    | "mora_unforgive"
     | "reverse";
   reason?: string | null;
   before?: unknown;

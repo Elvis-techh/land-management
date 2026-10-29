@@ -8,7 +8,7 @@ import { contracts, customers, lots, payments, projects } from "../db/schema.js"
 import { recordAudit } from "../lib/audit.js";
 import { roleCan } from "../lib/capabilities.js";
 import { holdsLot } from "../lib/holding.js";
-import { loadMoraAccounts } from "../lib/moraAccounts.js";
+import { loadMoraAccounts, moraOwedOf } from "../lib/moraAccounts.js";
 import { businessToday } from "../lib/time.js";
 
 /**
@@ -178,8 +178,9 @@ export const lotRoutes: FastifyPluginAsync<LotRoutesOptions> = async (app, optio
                   status: row.contractStatus,
                   salePrice: row.salePriceCents,
                   paidToDate: row.paidToDateCents,
-                  // So price + mora charged − paid is what the holder owes.
-                  moraCharged: mora.get(row.contractId)?.chargedCents ?? 0,
+                  // So price + mora charged − paid is what the holder owes. Net of
+                  // any forgiven, which is no longer owed.
+                  moraCharged: moraOwedOf(mora.get(row.contractId)),
                 }
               : null,
         })),

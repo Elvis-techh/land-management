@@ -92,7 +92,7 @@ describe("«Cargar mora»", async () => {
   it("starts with the extra L 200 counted towards the price", async () => {
     const row = await contract();
 
-    assert.deepEqual(row.mora, { charged: 0, paid: 0, pending: 0 });
+    assert.deepEqual(row.mora, { charged: 0, paid: 0, forgiven: 0, pending: 0 });
     assert.equal(row.balance, 12_000_000 - 1_020_000);
   });
 
@@ -130,7 +130,7 @@ describe("«Cargar mora»", async () => {
 
     const row = await contract();
 
-    assert.deepEqual(row.mora, { charged: 20_000, paid: 20_000, pending: 0 });
+    assert.deepEqual(row.mora, { charged: 20_000, paid: 20_000, forgiven: 0, pending: 0 });
     assert.equal(row.balance, 12_000_000 - 1_000_000);
 
     const receipt = (
