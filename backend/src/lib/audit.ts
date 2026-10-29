@@ -65,6 +65,8 @@ export interface AuditEntry {
     | "mora_charge"
     /** Mora put on by hand, taken back with «Quitar». */
     | "mora_remove"
+    /** A contract given its own mora rule, or put back on the general one. */
+    | "mora_rule"
     | "reverse";
   reason?: string | null;
   before?: unknown;

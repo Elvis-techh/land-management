@@ -88,7 +88,22 @@ const businessSchema = z.object({
   email: z.string().trim().max(120).pipe(z.email()),
 });
 
+/**
+ * What one contract's own rule («Regla propia») sets: how much and how often.
+ * The rest (the switch, «Desde», the grace days, the prima, the payment order)
+ * stays the general rule's. See `moraContractRules`.
+ */
+export const ownMoraSchema = moraSchema.pick({
+  calculation: true,
+  percent: true,
+  fixedCents: true,
+  capCents: true,
+  minUnpaidCents: true,
+  frequency: true,
+});
+
 export type MoraSettings = z.infer<typeof moraSchema>;
+export type OwnMoraRules = z.infer<typeof ownMoraSchema>;
 export type ContractSettings = z.infer<typeof contractsSchema>;
 export type BusinessSettings = z.infer<typeof businessSchema>;
 
@@ -324,11 +339,20 @@ export function moraProblem(
     return "La mora no se cobra hacia atrás: «Desde» tiene que ser hoy o una fecha futura.";
   }
 
-  if (after.calculation === "percent" && after.percent <= 0) {
+  return amountProblem(after);
+}
+
+/**
+ * Why these rules would charge nothing, or null when they charge something.
+ * For the general rule and for a contract's own: a zero rate looks like a rule
+ * and is the same as none, only harder to notice. «Sin mora» says that openly.
+ */
+export function amountProblem(rules: OwnMoraRules): string | null {
+  if (rules.calculation === "percent" && rules.percent <= 0) {
     return "Escribe el porcentaje de mora.";
   }
 
-  if (after.calculation === "fixed" && after.fixedCents <= 0) {
+  if (rules.calculation === "fixed" && rules.fixedCents <= 0) {
     return "Escribe el monto fijo de mora.";
   }
 

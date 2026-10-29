@@ -242,6 +242,44 @@ export const moraManualCharges = sqliteTable(
 );
 
 /**
+ * One contract's own mora rule, as a HISTORY, like `moraRules`.
+ *
+ * For a signed clause that differs from the general rule («Regla propia»), or
+ * a contract agreed to carry no mora («Sin mora»). Back to the general rule is
+ * one more version («General»), so what decided each day's charge is always on
+ * file. Each version is in force from `effective_from`, the day after it was
+ * saved, for the same reason as the general rule: «una mora ya cobrada no
+ * cambia». A second save on the same day replaces the first.
+ *
+ * Only how much and how often: the switch, «Desde», the grace days, the prima
+ * and the payment order stay the general ones. See `contractHistory` in
+ * src/lib/mora.ts.
+ */
+export const moraContractRules = sqliteTable(
+  "mora_contract_rules",
+  {
+    id: text("id").primaryKey(),
+    contractId: text("contract_id")
+      .notNull()
+      .references(() => contracts.id),
+    /** YYYY-MM-DD, the first day this version decides a charge. */
+    effectiveFrom: text("effective_from").notNull(),
+    /** "general" | "none" | "own". */
+    mode: text("mode").notNull(),
+    /** For "own": the amount, maximum, minimum and frequency, as JSON. Null otherwise. */
+    value: text("value"),
+    reason: text("reason").notNull(),
+    recordedBy: text("recorded_by")
+      .notNull()
+      .references(() => users.id),
+    recordedAt: timestamp("recorded_at"),
+  },
+  (table) => [
+    uniqueIndex("mora_contract_rules_contract_day_unique").on(table.contractId, table.effectiveFrom),
+  ],
+);
+
+/**
  * The lempira-per-dollar rate, as a HISTORY rather than a single value.
  *
  * Append-only, like payments: a new reading is a new row, never an overwrite.

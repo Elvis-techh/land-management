@@ -1,12 +1,12 @@
 import { and, eq, inArray, isNull } from "drizzle-orm";
 
 import type { Db } from "../db/client.js";
-import { contracts, moraManualCharges, payments } from "../db/schema.js";
+import { contracts, moraContractRules, moraManualCharges, payments } from "../db/schema.js";
 import type { SaleType } from "./contracts.js";
 import type { LedgerCharge } from "./ledger.js";
-import type { MoraAccount, MoraManualCharge, MoraRuleVersion } from "./mora.js";
-import { moraAccount, moraEverOn } from "./mora.js";
-import { readMoraHistory } from "./settings.js";
+import type { ContractMoraRule, ContractMoraVersion, MoraAccount, MoraManualCharge, MoraRuleVersion } from "./mora.js";
+import { contractHistory, moraAccount, moraEverOn } from "./mora.js";
+import { ownMoraSchema, readMoraHistory } from "./settings.js";
 import { businessToday, parseTimestamp } from "./time.js";
 
 /**
@@ -144,6 +144,7 @@ export function loadMoraAccounts(
     credits.push({ ...options.adding, createdAt: new Date().toISOString() });
   }
 
+  const rulesByContract = readContractRules(db, contractIds ? rows.map((row) => row.id) : undefined);
   const creditsByContract = new Map<string, typeof credits>();
 
   for (const credit of credits) {
@@ -188,7 +189,7 @@ export function loadMoraAccounts(
           },
         },
         creditsByContract.get(row.id) ?? [],
-        history,
+        contractHistory(history, rulesByContract.get(row.id) ?? []),
         options.asOf,
         manualByContract.get(row.id) ?? [],
       ),
@@ -196,6 +197,67 @@ export function loadMoraAccounts(
   }
 
   return accounts;
+}
+
+/**
+ * A stored contract rule as lib/mora.ts takes it. A «Regla propia» whose
+ * numbers no longer pass the schema (only possible by editing the database by
+ * hand) reads as the general rule rather than reaching the arithmetic.
+ */
+export function contractRuleOf(mode: string, value: string | null): ContractMoraRule {
+  if (mode === "none") {
+    return { mode: "none" };
+  }
+
+  if (mode === "own" && value !== null) {
+    try {
+      const parsed = ownMoraSchema.safeParse(JSON.parse(value));
+
+      if (parsed.success) {
+        return { mode: "own", rules: parsed.data };
+      }
+    } catch {
+      // Falls through to the general rule.
+    }
+  }
+
+  return { mode: "general" };
+}
+
+/** Every contract's own rule versions, by contract. Only these contracts when given. */
+function readContractRules(
+  db: Pick<Db, "select">,
+  contractIds: readonly string[] | undefined,
+): Map<string, ContractMoraVersion[]> {
+  const byContract = new Map<string, ContractMoraVersion[]>();
+
+  if (contractIds?.length === 0) {
+    return byContract;
+  }
+
+  const rows = db
+    .select({
+      contractId: moraContractRules.contractId,
+      effectiveFrom: moraContractRules.effectiveFrom,
+      mode: moraContractRules.mode,
+      value: moraContractRules.value,
+    })
+    .from(moraContractRules)
+    .where(contractIds ? inArray(moraContractRules.contractId, [...contractIds]) : undefined)
+    .all();
+
+  for (const row of rows) {
+    const version = { effectiveFrom: row.effectiveFrom, rule: contractRuleOf(row.mode, row.value) };
+    const list = byContract.get(row.contractId);
+
+    if (list) {
+      list.push(version);
+    } else {
+      byContract.set(row.contractId, [version]);
+    }
+  }
+
+  return byContract;
 }
 
 /** One contract's account, or `undefined` when it owes no mora and never did. */

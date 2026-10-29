@@ -5,12 +5,14 @@ import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 
 import type { Db } from "../db/client.js";
-import { contracts, moraManualCharges, users } from "../db/schema.js";
+import { contracts, moraContractRules, moraManualCharges, users } from "../db/schema.js";
 import { recordAudit } from "../lib/audit.js";
 import { syncContractLifecycle } from "../lib/contractLifecycle.js";
 import type { ContractTerms, SaleType } from "../lib/contracts.js";
-import { buildSchedule } from "../lib/contracts.js";
-import { loadMoraAccount } from "../lib/moraAccounts.js";
+import { buildSchedule, shiftDays } from "../lib/contracts.js";
+import type { ContractMoraRule } from "../lib/mora.js";
+import { contractRuleOf, loadMoraAccount } from "../lib/moraAccounts.js";
+import { amountProblem, ownMoraSchema, readSettings } from "../lib/settings.js";
 import { businessToday } from "../lib/time.js";
 
 interface MoraRouteOptions {
@@ -21,7 +23,9 @@ interface MoraRouteOptions {
  * «Cargar mora»: mora put on one contract by hand. See `moraManualCharges` in
  * src/db/schema.ts for what it is for, and lib/mora.ts for how it counts.
  *
- * Both writes are on `mora:charge` (supervisors by default, changeable in
+ * Also a contract's own rule («Regla de mora»): see `moraContractRules`.
+ *
+ * Every write is on `mora:charge` (supervisors by default, changeable in
  * Permisos), take a written reason and are filed in the Historial. The money
  * received never changes: only how the payments on that contract divide
  * between mora and cuotas.
@@ -38,6 +42,16 @@ const chargeBody = z.object({
 const removeBody = z.object({
   reason: z.string().trim().min(10).max(500),
 });
+
+/**
+ * A contract's own rule: back to «General», «Sin mora», or «Regla propia»
+ * with its numbers. Always with a reason, like every other mora decision.
+ */
+const ruleBody = z.discriminatedUnion("mode", [
+  z.object({ mode: z.literal("general"), reason: z.string().trim().min(10).max(500) }),
+  z.object({ mode: z.literal("none"), reason: z.string().trim().min(10).max(500) }),
+  z.object({ mode: z.literal("own"), rules: ownMoraSchema, reason: z.string().trim().min(10).max(500) }),
+]);
 
 /** Statuses that can still be charged: an open contract, or one paid off that a charge may reopen. */
 const CHARGEABLE = new Set(["active", "paid_off"]);
@@ -87,6 +101,60 @@ function snapshot(entry: { installment: number; incurredOn: string; amountCents:
     moraIncurredOn: entry.incurredOn,
     amountCents: entry.amountCents,
   };
+}
+
+/** Two rules that charge the same, whatever order their keys came in. */
+function sameRule(a: ContractMoraRule, b: ContractMoraRule): boolean {
+  if (a.mode !== b.mode) {
+    return false;
+  }
+
+  if (a.mode !== "own" || b.mode !== "own") {
+    return true;
+  }
+
+  const keys = Object.keys(ownMoraSchema.shape) as Array<keyof typeof a.rules>;
+  return keys.every((key) => a.rules[key] === b.rules[key]);
+}
+
+/** A rule as the Historial lists it: one field per setting, so it shows what changed. */
+function flatRule(rule: ContractMoraRule) {
+  return rule.mode === "own" ? { moraRule: rule.mode, ...rule.rules } : { moraRule: rule.mode };
+}
+
+/** One contract's rule versions, oldest first, with who set each and why. */
+function readRuleVersions(db: Pick<Db, "select">, contractId: string) {
+  return db
+    .select({
+      id: moraContractRules.id,
+      effectiveFrom: moraContractRules.effectiveFrom,
+      mode: moraContractRules.mode,
+      value: moraContractRules.value,
+      reason: moraContractRules.reason,
+      recordedAt: moraContractRules.recordedAt,
+      recordedBy: users.name,
+    })
+    .from(moraContractRules)
+    .innerJoin(users, eq(users.id, moraContractRules.recordedBy))
+    .where(eq(moraContractRules.contractId, contractId))
+    .orderBy(asc(moraContractRules.effectiveFrom))
+    .all()
+    .map(({ mode, value, ...version }) => ({ ...version, rule: contractRuleOf(mode, value) }));
+}
+
+/** The rule in force on `date`, from versions oldest first. */
+function ruleOn(versions: ReadonlyArray<{ effectiveFrom: string; rule: ContractMoraRule }>, date: string) {
+  let found: ContractMoraRule = { mode: "general" };
+
+  for (const version of versions) {
+    if (version.effectiveFrom > date) {
+      break;
+    }
+
+    found = version.rule;
+  }
+
+  return found;
 }
 
 function readContract(db: Pick<Db, "select">, id: string): ContractRow | undefined {
@@ -150,7 +218,107 @@ export const moraRoutes: FastifyPluginAsync<MoraRouteOptions> = async (app, opti
         manual,
         automaticByInstallment,
         due: itemsOf(row).filter((item) => item.dueOn < asOf),
+        // Its own rule, every version (the last one may start tomorrow), and
+        // the general rule it is laid over, so the panel can say both.
+        rules: readRuleVersions(app.db, row.id),
+        general: readSettings(app.db).mora,
       };
+    },
+  );
+
+  /**
+   * Give one contract its own rule, or put it back on the general one. In
+   * force from tomorrow, like a change in Configuración: today's mora was
+   * charged this morning and stays. A second change on the same day replaces
+   * the first, which never got to decide anything.
+   */
+  app.post<{ Params: { id: string } }>(
+    "/contracts/:id/mora/rule",
+    { onRequest: app.requireCapability("mora:charge") },
+    async (request, reply) => {
+      const parsed = ruleBody.safeParse(request.body);
+
+      if (!parsed.success) {
+        return reply.code(400).send({
+          error: "invalid_body",
+          message: "Elige la regla y escribe un motivo de al menos 10 caracteres.",
+        });
+      }
+
+      const body = parsed.data;
+      const row = readContract(app.db, request.params.id);
+
+      if (!row) {
+        return reply.code(404).send({ error: "not_found", message: "Ese contrato no existe." });
+      }
+
+      const problem = contractProblem(row);
+
+      if (problem) {
+        return reply.code(409).send({ error: "not_chargeable", message: problem });
+      }
+
+      const rule: ContractMoraRule = body.mode === "own" ? { mode: "own", rules: body.rules } : { mode: body.mode };
+
+      if (rule.mode === "own") {
+        const amount = amountProblem(rule.rules);
+
+        if (amount) {
+          return reply.code(400).send({ error: "invalid_rule", message: amount });
+        }
+      }
+
+      const today = businessToday(options.timeZone);
+      const tomorrow = shiftDays(today, 1);
+      const versions = readRuleVersions(app.db, row.id);
+      const before = ruleOn(versions, tomorrow);
+
+      if (sameRule(before, rule)) {
+        return reply.code(400).send({ error: "unchanged", message: "Este contrato ya tiene esa regla." });
+      }
+
+      const actor = request.user!;
+
+      app.db.transaction((tx) => {
+        if (sameRule(ruleOn(versions, today), rule)) {
+          // Back to what is in force today: tomorrow's change is simply undone.
+          tx.delete(moraContractRules)
+            .where(and(eq(moraContractRules.contractId, row.id), eq(moraContractRules.effectiveFrom, tomorrow)))
+            .run();
+        } else {
+          const value = rule.mode === "own" ? JSON.stringify(rule.rules) : null;
+          const recordedAt = new Date().toISOString();
+
+          tx.insert(moraContractRules)
+            .values({
+              id: randomUUID(),
+              contractId: row.id,
+              effectiveFrom: tomorrow,
+              mode: rule.mode,
+              value,
+              reason: body.reason,
+              recordedBy: actor.id,
+              recordedAt,
+            })
+            .onConflictDoUpdate({
+              target: [moraContractRules.contractId, moraContractRules.effectiveFrom],
+              set: { mode: rule.mode, value, reason: body.reason, recordedBy: actor.id, recordedAt },
+            })
+            .run();
+        }
+
+        recordAudit(tx, {
+          actorId: actor.id,
+          entityType: "contract",
+          entityId: row.id,
+          action: "mora_rule",
+          reason: body.reason,
+          before: flatRule(before),
+          after: { ...flatRule(rule), moraRuleFrom: tomorrow },
+        });
+      });
+
+      return reply.code(201).send({ effectiveFrom: tomorrow });
     },
   );
 

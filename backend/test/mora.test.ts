@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import type { ContractTerms } from "../src/lib/contracts.js";
-import type { MoraContract, MoraCredit, MoraRuleVersion } from "../src/lib/mora.js";
-import { moraAccount, moraPaidThrough, moraPendingThrough, rulesOn } from "../src/lib/mora.js";
-import type { MoraSettings } from "../src/lib/settings.js";
+import type { ContractMoraVersion, MoraContract, MoraCredit, MoraRuleVersion } from "../src/lib/mora.js";
+import { contractHistory, moraAccount, moraPaidThrough, moraPendingThrough, rulesOn } from "../src/lib/mora.js";
+import type { MoraSettings, OwnMoraRules } from "../src/lib/settings.js";
 
 /** L 1 = 100 centavos, as everywhere else in the app. */
 const lempiras = (amount: number) => Math.round(amount * 100);
@@ -447,5 +447,71 @@ describe("mora put on by hand («Cargar mora»)", () => {
       moraAccount({ ...CONTRACT, kind: "reservation" }, onTimeThroughCuota3(), [], "2026-10-20", manual).charges,
       [],
     );
+  });
+});
+
+describe("a contract's own rule", () => {
+  const OWN: OwnMoraRules = {
+    calculation: "fixed",
+    percent: 0,
+    fixedCents: lempiras(300),
+    capCents: null,
+    minUnpaidCents: null,
+    frequency: "once",
+  };
+  const none = (effectiveFrom: string): ContractMoraVersion => ({ effectiveFrom, rule: { mode: "none" } });
+  const general = (effectiveFrom: string): ContractMoraVersion => ({ effectiveFrom, rule: { mode: "general" } });
+  const own = (effectiveFrom: string, rules: Partial<OwnMoraRules> = {}): ContractMoraVersion => ({
+    effectiveFrom,
+    rule: { mode: "own", rules: { ...OWN, ...rules } },
+  });
+  const account = (versions: ContractMoraVersion[], asOf: string, history = [since()]) =>
+    moraAccount(CONTRACT, onTimeThroughCuota3(), contractHistory(history, versions), asOf);
+
+  it("leaves every other contract on the general history, untouched", () => {
+    const history = [since()];
+
+    assert.equal(contractHistory(history, []), history);
+  });
+
+  it("charges nothing on a contract «Sin mora»", () => {
+    assert.deepEqual(chargesOf(account([none("2026-10-01")], "2026-12-20")), []);
+  });
+
+  it("keeps the mora charged before «Sin mora» was set: never backwards", () => {
+    // Cuota 4 was charged on the 11th; «Sin mora» counts from the 12th.
+    assert.deepEqual(chargesOf(account([none("2026-10-12")], "2026-12-20")), [[4, "2026-10-11", 500]]);
+  });
+
+  it("charges its own amount, on the general grace days", () => {
+    assert.deepEqual(chargesOf(account([own("2026-10-01")], "2026-10-20")), [[4, "2026-10-11", 300]]);
+  });
+
+  it("charges nothing while mora is switched off in Configuración, whatever its own rule", () => {
+    const off = [since({ enabled: false })];
+
+    assert.deepEqual(chargesOf(account([own("2026-10-01")], "2026-12-20", off)), []);
+  });
+
+  it("changes how much and how often from its day, after a charge under the general rule", () => {
+    // 2 % once under the general rule on 11 October; from the 20th, 1 % every
+    // month, so cuota 4 is charged again on 11 November, and cuota 5 too.
+    const charges = chargesOf(
+      account([own("2026-10-20", { calculation: "percent", percent: 1, frequency: "monthly" })], "2026-11-20"),
+    );
+
+    assert.deepEqual(charges, [
+      [4, "2026-10-11", 500],
+      [4, "2026-11-11", 250],
+      [5, "2026-11-11", 250],
+    ]);
+  });
+
+  it("back from «Sin mora», charges only the cuotas falling due from that day", () => {
+    // Without mora through October; back on the general rule from 1 November.
+    // Cuota 4 (due 5 October) stays without mora; cuota 5 (due 5 November) does not.
+    assert.deepEqual(chargesOf(account([none("2026-10-01"), general("2026-11-01")], "2026-11-20")), [
+      [5, "2026-11-11", 500],
+    ]);
   });
 });

@@ -176,6 +176,13 @@
       "when": 1792967623989,
       "tag": "0024_mora_manual_charges",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1793054662382,
+      "tag": "0025_mora_contract_rules",
+      "breakpoints": true
     }
   ]
 }

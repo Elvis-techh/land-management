@@ -28,6 +28,7 @@ const actionPresentation: Record<AuditAction, { label: string; stampClass: strin
   reverse: { label: "Reversado", stampClass: "stamp danger" },
   mora_charge: { label: "Mora cargada", stampClass: "stamp clay" },
   mora_remove: { label: "Mora quitada", stampClass: "stamp danger" },
+  mora_rule: { label: "Regla de mora", stampClass: "stamp clay" },
   // No longer written — sign-ins are kept on the account, not here — but the
   // rows recorded before that are still on file and still have to read.
   login: { label: "Inicio de sesión", stampClass: "stamp neutral" },
@@ -84,6 +85,9 @@ const fieldLabels: Record<string, string> = {
   // Mora put on a contract by hand, «Cargar mora» — see routes/mora.ts.
   moraInstallment: "Cuota",
   moraIncurredOn: "Fecha de la mora",
+  // A contract's own mora rule — see POST /contracts/:id/mora/rule.
+  moraRule: "Regla de mora",
+  moraRuleFrom: "Regla desde",
   // Who a receipt says paid — see PATCH /receipts/:id/paid-by.
   paidBy: "Pagado por",
   issuedBy: "Emitido por",
@@ -115,6 +119,7 @@ const settingChoiceLabels: Record<string, Record<string, string>> = {
   calculation: { percent: "% de lo que falta de la cuota", fixed: "Monto fijo" },
   frequency: { once: "Una vez por cuota atrasada", monthly: "Cada mes que siga atrasada" },
   paymentOrder: { mora: "La mora", cuota: "La cuota" },
+  moraRule: { general: "La general", none: "Sin mora", own: "Regla propia" },
 };
 
 /** Money fields are stored in centavos and must not be printed raw. */
