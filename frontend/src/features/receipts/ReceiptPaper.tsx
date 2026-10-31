@@ -316,7 +316,7 @@ export function ReceiptPaper({ receipt, money }: ReceiptPaperProps) {
           </div>
         </div>
 
-        <div className="receipt-summary-col">
+        <div className="receipt-summary-col is-wide">
           <div className="receipt-summary-row">
             <span>Balance Anterior Total</span>
             <span className="receipt-summary-value">

@@ -1442,7 +1442,14 @@ tbody tr:hover {
 }
 
 .receipt-summary-col {
-  width: 48%;
+  width: 44%;
+}
+
+/* The right-hand column holds the boxed balance, and "Nuevo Balance Pendiente"
+   plus a six- or seven-figure amount is the widest line on the page. The left
+   column's rows have room to spare, so the extra goes to this one. */
+.receipt-summary-col.is-wide {
+  width: 52%;
 }
 
 .receipt-summary-row {
@@ -1478,7 +1485,7 @@ tbody tr:hover {
   justify-content: space-between;
   align-items: center;
   margin-top: 0.9375em;
-  padding: 0.9375em;
+  padding: 0.9375em 0.75em;
   border: 1px solid var(--r-border);
   border-radius: 8px;
   background: var(--r-highlight);
@@ -1486,8 +1493,16 @@ tbody tr:hover {
   font-weight: 700;
 }
 
+/* The label centres its own text, so it stays level with the amount even when
+   the box is taller than the text. That happens in the image sent over
+   WhatsApp: it is drawn at twice the size, where the text comes out a little
+   narrower than on screen, so a label that wrapped on screen fits on one line
+   there, inside a box that kept the two-line height. */
 .receipt-highlight-label {
-  padding-right: 0.8em;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding-right: 0.4em;
   line-height: 1.2;
 }
 
@@ -1557,7 +1572,8 @@ tbody tr:hover {
     gap: 0;
   }
 
-  .receipt-summary-col {
+  .receipt-summary-col,
+  .receipt-summary-col.is-wide {
     width: 100%;
   }
 
