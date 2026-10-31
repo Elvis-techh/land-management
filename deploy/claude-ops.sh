@@ -12,7 +12,8 @@
 # including extra words, is refused. Nothing the caller sends is ever run.
 #
 #   help             this list
-#   status           both apps' health, memory, disk, Lindero's service, the live build
+#   status           both apps' health, memory, disk, Lindero's service, the live build,
+#                    the step 13 guard rails (bascula's place in line, the journal cap)
 #   nginx            Lindero's nginx site, its snippets, and `nginx -t`
 #   logs             recent Lindero, autodeploy and backup logs, secrets masked
 #   install-headers  runbook step 9d: the browser security headers
@@ -97,6 +98,7 @@ show_status() {
   uptime
   free -m
   df -h / | tail -n 1
+  echo "journal:         $(journalctl --disk-usage 2>/dev/null | grep -oE '[0-9.]+[KMGT]' | head -n 1 || echo unknown), cap $(grep -hs '^SystemMaxUse=' /etc/systemd/journald.conf.d/*.conf | tail -n 1 || echo none)   expect SystemMaxUse=200M"
 
   echo "==> Lindero"
   systemctl show lindero-api -p ActiveState -p MainPID -p NRestarts \
@@ -125,6 +127,12 @@ show_status() {
           console.log(`pm2 ${p.name}: ${e.status} pid=${p.pid} restarts=${e.restart_time} since=${new Date(e.pm_uptime).toISOString()} mem=${Math.round((p.monit?.memory || 0) / 1048576)}MB`);
         }
       });' 2>/dev/null || echo "pm2: could not read the list"
+    # Its place in line when memory runs out (deploy/droplet-guardrails.sh).
+    # Short process names only, never their arguments.
+    local pm2 child
+    pm2=$(cat /root/.pm2/pm2.pid)
+    echo "oom_score_adj:   pm2 $(cat "/proc/$pm2/oom_score_adj")$(for child in $(ps -o pid= --ppid "$pm2"); do printf ', %s %s' "$(cat "/proc/$child/comm")" "$(cat "/proc/$child/oom_score_adj")"; done)   expect -500"
+    echo "after a reboot:  $(grep -hs '^OOMScoreAdjust=' /etc/systemd/system/pm2-root.service.d/*.conf | tail -n 1 || echo 'not set')   expect OOMScoreAdjust=-500"
   else
     echo "pm2: daemon not running (not started from here)"
   fi
