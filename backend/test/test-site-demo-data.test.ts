@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,13 +9,16 @@ import { describe, it } from "node:test";
 import Database from "better-sqlite3";
 
 import { loadConfig } from "../src/config/env.js";
+import { demoPasswords } from "../src/db/demoLogins.js";
 import { verifyPassword } from "../src/lib/password.js";
 
 const backend = join(import.meta.dirname, "..");
 const tsx = join(backend, "..", "node_modules", ".bin", "tsx");
 
-const SUPERVISOR_PASSWORD = "una-clave-solo-del-droplet-1";
-const ASSOCIATE_PASSWORD = "una-clave-solo-del-droplet-2";
+// Made up on each run, and read from the code: no password is written in this file.
+const SUPERVISOR_PASSWORD = randomBytes(16).toString("hex");
+const ASSOCIATE_PASSWORD = randomBytes(16).toString("hex");
+const PUBLISHED = demoPasswords({ site: "live" });
 
 /** A scratch data folder, and the environment of a server pointed at it. */
 function site(extra: Record<string, string> = {}) {
@@ -94,8 +98,8 @@ describe("the test site's demo data", () => {
 
     assert.equal(await verifyPassword(SUPERVISOR_PASSWORD, owner), true);
     assert.equal(await verifyPassword(ASSOCIATE_PASSWORD, staff), true);
-    assert.equal(await verifyPassword("lindero123", owner), false);
-    assert.equal(await verifyPassword("asociado123", staff), false);
+    assert.equal(await verifyPassword(PUBLISHED.owner, owner), false);
+    assert.equal(await verifyPassword(PUBLISHED.staff, staff), false);
   });
 
   it("never prints a password into the log", () => {
@@ -103,15 +107,15 @@ describe("the test site's demo data", () => {
     assert.equal(run("migrate", env).status, 0);
     const result = run("seed", env);
     assert.equal(result.status, 0, result.stderr);
-    for (const secret of [SUPERVISOR_PASSWORD, ASSOCIATE_PASSWORD, "lindero123", "asociado123"]) {
+    for (const secret of [SUPERVISOR_PASSWORD, ASSOCIATE_PASSWORD, PUBLISHED.owner, PUBLISHED.staff]) {
       assert.ok(!result.stdout.includes(secret), secret);
     }
   });
 
   for (const [why, passwords, message] of [
     ["no passwords set", {}, /TEST_SITE_SUPERVISOR_PASSWORD/],
-    ["a short password", { TEST_SITE_SUPERVISOR_PASSWORD: "corta", TEST_SITE_ASSOCIATE_PASSWORD: ASSOCIATE_PASSWORD }, /at least/],
-    ["a published password", { TEST_SITE_SUPERVISOR_PASSWORD: SUPERVISOR_PASSWORD, TEST_SITE_ASSOCIATE_PASSWORD: "asociado123" }, /TEST_SITE_ASSOCIATE_PASSWORD/],
+    ["a short password", { TEST_SITE_SUPERVISOR_PASSWORD: "x".repeat(5), TEST_SITE_ASSOCIATE_PASSWORD: ASSOCIATE_PASSWORD }, /at least/],
+    ["a published password", { TEST_SITE_SUPERVISOR_PASSWORD: SUPERVISOR_PASSWORD, TEST_SITE_ASSOCIATE_PASSWORD: PUBLISHED.staff }, /TEST_SITE_ASSOCIATE_PASSWORD/],
   ] as const) {
     it(`refuses ${why}, and writes nothing`, () => {
       const { env, databasePath } = site({ LINDERO_SITE: "test", ...passwords });
@@ -169,11 +173,11 @@ describe("on a developer's laptop", () => {
     assert.equal(run("migrate", env).status, 0);
     const result = run("seed", env);
     assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /lindero123/);
+    assert.ok(result.stdout.includes(PUBLISHED.owner));
 
     const db = new Database(databasePath, { readonly: true });
     const { hash } = db.prepare("select password_hash as hash from users where email = ?").get("gerencia@lindero.hn") as { hash: string };
     db.close();
-    assert.equal(await verifyPassword("lindero123", hash), true);
+    assert.equal(await verifyPassword(PUBLISHED.owner, hash), true);
   });
 });
