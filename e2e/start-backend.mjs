@@ -18,7 +18,9 @@ const env = {
   NODE_ENV: "development",
   HOST: "127.0.0.1",
   PORT: process.env.E2E_API_PORT ?? "3100",
-  FRONTEND_ORIGIN: `http://localhost:${process.env.E2E_WEB_PORT ?? "5174"}`,
+  FRONTEND_ORIGIN: [process.env.E2E_WEB_PORT ?? "5174", process.env.E2E_TEST_SITE_PORT ?? "5175"]
+    .map((port) => `http://localhost:${port}`)
+    .join(","),
   DATABASE_PATH: join(data, "lindero.db"),
   UPLOADS_PATH: join(data, "uploads"),
   // No calls to the exchange-rate provider: the tests must not depend on it.

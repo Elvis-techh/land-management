@@ -17,6 +17,7 @@
 
 import { formatMoney } from "../../lib/money";
 import type { MoneyView } from "../../lib/money";
+import { messageRecipient } from "../../lib/site";
 import type { Contract } from "../../types";
 
 /** The three ways out, in the order they appear beside a row. */
@@ -136,16 +137,16 @@ export function contactUrl(
   const phone = contract.customer.phone ?? "";
 
   if (channel === "whatsapp") {
-    return `https://wa.me/${phone.replace(/\D/g, "")}?text=${encodeURIComponent(message)}`;
+    return `https://wa.me/${messageRecipient(phone.replace(/\D/g, ""))}?text=${encodeURIComponent(message)}`;
   }
 
   if (channel === "sms") {
-    return `sms:${phone}?&body=${encodeURIComponent(message)}`;
+    return `sms:${messageRecipient(phone)}?&body=${encodeURIComponent(message)}`;
   }
 
   const email = (contract.customer.email ?? "").trim();
 
-  return `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(
+  return `mailto:${messageRecipient(encodeURIComponent(email))}?subject=${encodeURIComponent(
     subject,
   )}&body=${encodeURIComponent(message)}`;
 }

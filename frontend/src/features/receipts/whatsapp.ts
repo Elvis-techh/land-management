@@ -41,6 +41,7 @@
  * The image now stays inside the app, in the same viewer the comprobantes use.
  */
 
+import { messageRecipient } from "../../lib/site";
 import type { Receipt } from "../../types";
 import { receiptMessage } from "./receiptMessage";
 
@@ -137,7 +138,7 @@ export function copyGesture(): string {
  * the desktop app or the web client depending on where it is opened.
  */
 export function chatUrl(phone: string, caption: string): string {
-  return `https://wa.me/${phone.replace(/\D/g, "")}?text=${encodeURIComponent(caption)}`;
+  return `https://wa.me/${messageRecipient(phone.replace(/\D/g, ""))}?text=${encodeURIComponent(caption)}`;
 }
 
 /** Can this browser put a file into the OS share sheet? */
