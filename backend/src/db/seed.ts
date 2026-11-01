@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { loadConfig } from "../config/env.js";
 import { hashPassword } from "../lib/password.js";
 import { createDb } from "./client.js";
+import { demoPasswords } from "./demoLogins.js";
 import { contracts, customers, lots, payments, projects, users } from "./schema.js";
 
 /**
@@ -13,12 +14,18 @@ import { contracts, customers, lots, payments, projects, users } from "./schema.
  * Also refuses outright in production — this is fictional demo data, complete
  * with a published password, and no real deployment should ever get it. See
  * db:bootstrap for how a real deployment creates its first account instead.
+ *
+ * The one exception is the test site (LINDERO_SITE=test), which is fake data on
+ * purpose and takes its passwords from its own `.env`. See demoLogins.ts.
  */
 const config = loadConfig();
 
-if (config.nodeEnv === "production") {
+if (config.nodeEnv === "production" && config.site !== "test") {
   throw new Error("db:seed is disabled in production — use db:bootstrap to create the first account");
 }
+
+// Before anything is opened or written, so a missing password leaves no trace.
+const passwords = demoPasswords(config);
 
 const { db, sqlite } = createDb(config.databasePath);
 
@@ -264,8 +271,8 @@ const lotSpecs: LotSpec[] = [
   },
 ];
 
-const ownerPassword = await hashPassword("lindero123");
-const staffPassword = await hashPassword("asociado123");
+const ownerPassword = await hashPassword(passwords.owner);
+const staffPassword = await hashPassword(passwords.staff);
 
 db.transaction((tx) => {
   tx.insert(users)
@@ -352,5 +359,8 @@ db.transaction((tx) => {
 sqlite.close();
 
 console.log(`Seeded ${config.databasePath}`);
-console.log("  Supervisor  gerencia@lindero.hn / lindero123");
-console.log("  Asociado    asociado@lindero.hn / asociado123");
+// The test site's passwords stay out of its log.
+if (config.site !== "test") {
+  console.log(`  Supervisor  gerencia@lindero.hn / ${passwords.owner}`);
+  console.log(`  Asociado    asociado@lindero.hn / ${passwords.staff}`);
+}

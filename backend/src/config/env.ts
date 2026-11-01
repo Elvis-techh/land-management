@@ -1,5 +1,14 @@
 export type AppConfig = {
   nodeEnv: "development" | "test" | "production";
+  /**
+   * Which Lindero this is: the real one, or the test site with its fake data.
+   *
+   * Separate from `nodeEnv` because the test site is on the internet and runs
+   * in production mode like the real one. What this decides is whether demo
+   * data may be written and deleted here; see db/seed.ts and db/reset.ts. Only
+   * the test site's own `.env` sets it.
+   */
+  site: "live" | "test";
   host: string;
   port: number;
   frontendOrigins: string[];
@@ -121,6 +130,14 @@ export function loadConfig(environment = process.env): AppConfig {
   const nodeEnv = allowedEnvironments.has(rawNodeEnv as AppConfig["nodeEnv"])
     ? (rawNodeEnv as AppConfig["nodeEnv"])
     : "development";
+  const site = environment.LINDERO_SITE ?? "live";
+
+  // A typo here must not be read as "the real site" or as "the test site":
+  // one of those two is where demo data may delete everything.
+  if (site !== "live" && site !== "test") {
+    throw new Error(`LINDERO_SITE must be "live" or "test", not "${site}"`);
+  }
+
   const port = Number(environment.PORT ?? 3000);
 
   if (!Number.isInteger(port) || port < 1 || port > 65_535) {
@@ -177,6 +194,7 @@ export function loadConfig(environment = process.env): AppConfig {
 
   return {
     nodeEnv,
+    site,
     host: environment.HOST ?? "0.0.0.0",
     port,
     frontendOrigins: (environment.FRONTEND_ORIGIN ?? "http://localhost:5173")
