@@ -12,13 +12,13 @@
 #   sudo bash deploy/update-from-build.sh
 #
 # Pull first, so this script is itself the latest version when it runs.
+#
+# `update-from-build.sh test` does the same for the test site, from
+# `deploy-build-test`. See site-settings.sh for why it runs from this checkout.
 
 set -euo pipefail
 
-REPO=/opt/lindero
-NODE_BIN=/opt/node22/bin
-FRONTEND_DEST=/var/www/lindero/frontend/dist
-UNIT=/etc/systemd/system/lindero-api.service
+source "$(dirname "$(readlink -f "$0")")/site-settings.sh" "${1:-live}"
 
 if [[ $EUID -ne 0 ]]; then
   echo "Run with sudo: sudo bash deploy/update-from-build.sh" >&2
@@ -35,17 +35,19 @@ if ! flock -w 600 9; then
   exit 1
 fi
 
-as_lindero() { sudo -u lindero -H env "PATH=$NODE_BIN:$PATH" "$@"; }
+as_site() { sudo -u "$SITE_USER" -H env "PATH=$NODE_BIN:$PATH" "$@"; }
 
 cd "$REPO"
 
 echo "==> Fetching the built app"
-as_lindero git fetch --quiet origin deploy-build
+as_site git fetch --quiet origin "$BUILD_BRANCH"
 BUILD=$(mktemp -d)
 trap 'rm -rf "$BUILD"' EXIT
-as_lindero git archive FETCH_HEAD | tar -x -C "$BUILD"
+as_site git archive FETCH_HEAD | tar -x -C "$BUILD"
 
-echo "    source checkout: $(as_lindero git log -1 --format='%h %s')"
+if [[ $SITE == live ]]; then
+  echo "    source checkout: $(as_site git log -1 --format='%h %s')"
+fi
 echo "    build:           $(grep -m1 '^Source commit:' "$BUILD/README.md" || echo 'unknown')"
 
 # The Google Drive settings are baked into the frontend at build time, so a
@@ -69,15 +71,23 @@ fi
 # Reinstalling is the one heavy step of a deploy on a 512 MB machine shared
 # with bascula-central, so it is skipped unless the lockfile or Node changed.
 echo "==> Runtime dependencies (Node 22)"
+# The live site's come from its checkout. The test site has no checkout of the
+# source, because it runs whichever branch was sent to it, and that branch's
+# packages arrive with its build.
+if [[ $SITE == test ]]; then
+  for file in package.json package-lock.json backend/package.json frontend/package.json; do
+    install -D -o "$SITE_USER" -g "$SITE_USER" -m 644 "$BUILD/$file" "$REPO/$file"
+  done
+fi
 DEPS_ID="$(sha256sum package-lock.json | cut -d' ' -f1) $("$NODE_BIN/node" -v)"
 DEPS_STAMP="$REPO/node_modules/.lindero-deps"
 if [[ -f "$DEPS_STAMP" && "$(cat "$DEPS_STAMP")" == "$DEPS_ID" ]] &&
-  as_lindero "$NODE_BIN/node" -e "require('$REPO/node_modules/better-sqlite3')" 2>/dev/null; then
+  as_site "$NODE_BIN/node" -e "require('$REPO/node_modules/better-sqlite3')" 2>/dev/null; then
   echo "    unchanged, not reinstalled"
 else
-  as_lindero "$NODE_BIN/npm" ci --omit=dev --no-audit --no-fund
-  as_lindero "$NODE_BIN/node" -e "require('$REPO/node_modules/better-sqlite3')"
-  echo "$DEPS_ID" | as_lindero tee "$DEPS_STAMP" >/dev/null
+  as_site "$NODE_BIN/npm" ci --omit=dev --no-audit --no-fund
+  as_site "$NODE_BIN/node" -e "require('$REPO/node_modules/better-sqlite3')"
+  echo "$DEPS_ID" | as_site tee "$DEPS_STAMP" >/dev/null
 fi
 
 # Kept so a build that fails to start can be put back (see the end).
@@ -89,17 +99,17 @@ rsync -a --delete "$REPO/backend/dist/" "$REPO/backend/dist.prev/"
 echo "==> Copying the build into place"
 rsync -a --delete "$BUILD/frontend/dist/" "$FRONTEND_DEST/"
 rsync -a --delete "$BUILD/backend/dist/" "$REPO/backend/dist/"
-chown -R lindero:lindero "$REPO/backend/dist"
+chown -R "$SITE_USER:$SITE_USER" "$REPO/backend/dist"
 
 # Before the restart, so the stop of the OLD process already uses the new
 # unit's settings (TimeoutStopSec). The droplet's own settings live in the
 # drop-in under lindero-api.service.d/, which this does not touch.
 echo "==> Systemd unit"
 UNIT_CHANGED=0
-if ! cmp -s deploy/lindero-api.service "$UNIT"; then
+if ! cmp -s "$UNIT_SOURCE" "$UNIT"; then
   UNIT_CHANGED=1
   cp "$UNIT" "$UNIT.bak"
-  install -m 644 deploy/lindero-api.service "$UNIT"
+  install -m 644 "$UNIT_SOURCE" "$UNIT"
   systemctl daemon-reload
   echo "    updated (previous copy at $UNIT.bak)"
 else
@@ -108,7 +118,19 @@ fi
 
 # The .env line can carry a trailing comment ("PORT=3001  # NOT 3000 ...").
 PORT=$(grep -E '^PORT=' backend/.env | cut -d= -f2 | sed 's/#.*//' | tr -d '[:space:]' || true)
-PORT=${PORT:-3001}
+PORT=${PORT:-$DEFAULT_PORT}
+
+# Only the test site, and only when the Deploy test workflow was asked to. It
+# erases that site's database and uploads, and seed.ts refuses to run anywhere
+# without LINDERO_SITE=test in the site's .env. After the build is in place, so
+# the data is made by the code being tried.
+if [[ $SITE == test ]] && grep -qx 'Reset test data: yes' "$BUILD/README.md"; then
+  echo "==> Putting fresh demo data back"
+  systemctl stop "$SERVICE"
+  for script in reset migrate seed; do
+    (cd backend && as_site "$NODE_BIN/node" --env-file=.env "dist/db/$script.js")
+  done
+fi
 
 healthy() {
   for _ in $(seq 1 20); do
@@ -121,7 +143,7 @@ healthy() {
 }
 
 echo "==> Restarting (migrations run on start)"
-time systemctl restart lindero-api
+time systemctl restart "$SERVICE"
 
 if healthy; then
   echo "==> Up: $(curl -fsS "http://127.0.0.1:$PORT/api/health")"
@@ -131,17 +153,17 @@ fi
 # The new version did not come up. Put the previous one back rather than
 # leave Lindero down until somebody notices.
 echo "!! Not answering on port $PORT after 20 s. Recent log:" >&2
-journalctl -u lindero-api -n 30 --no-pager >&2
+journalctl -u "$SERVICE" -n 30 --no-pager >&2
 
 echo "==> Rolling back to the previous version" >&2
 rsync -a --delete "$FRONTEND_DEST.prev/" "$FRONTEND_DEST/"
 rsync -a --delete "$REPO/backend/dist.prev/" "$REPO/backend/dist/"
-chown -R lindero:lindero "$REPO/backend/dist"
+chown -R "$SITE_USER:$SITE_USER" "$REPO/backend/dist"
 if [[ $UNIT_CHANGED == 1 ]]; then
   cp "$UNIT.bak" "$UNIT"
   systemctl daemon-reload
 fi
-systemctl restart lindero-api
+systemctl restart "$SERVICE"
 
 if healthy; then
   echo "!! Rolled back: the previous version is running again. The new build was NOT deployed." >&2
