@@ -747,6 +747,47 @@ Lindero and open a contract; run `free -h` and `pm2 list` while both are in
 use. The third check is the one people skip — the failure mode of this droplet
 is not a wrong answer, it is memory.
 
+### 13. Guard rails, before a third program moves in
+
+Before a test site, the Junta or the POS joins the droplet, three things make
+sure one of them can never take the scale stations down:
+
+- **bascula-central is the last program the kernel ends when memory runs
+  out.** Every other program gets a memory cap of its own, so in practice the
+  kernel ends something inside a capped program. If memory ever runs out across
+  the whole machine, it picks bascula-central only after everything else.
+- **One deploy at a time.** `update-from-build.sh` takes
+  `/run/lock/droplet-deploy.lock` before anything else, and every site's deploy
+  waits for it. This needs nothing on the droplet; it arrives with the deploy.
+- **The journal is capped at 200 MB**, so logs can never fill the disk.
+
+The first and third are one script, pasted into the droplet console once:
+
+```bash
+bash /opt/lindero/deploy/droplet-guardrails.sh
+```
+
+It shows bascula-central's processes before and after, and ends with "bascula-central
+was not restarted: the same processes are running." It restarts nothing but the
+journal, which keeps every program's log connection open while it restarts. It
+also reports two things it does not change: the size of PM2's own log folder,
+and whether DigitalOcean's metrics agent is running. Running it twice is safe;
+`--undo` takes both changes out again.
+
+Then, so `ssh lindero-ops status` can show the guard rails, copy the locked
+key's script in again (see [claude-ops-key.md](claude-ops-key.md)):
+
+```bash
+install -m 755 -o root -g root /opt/lindero/deploy/claude-ops.sh /usr/local/sbin/lindero-claude-ops
+sha256sum /opt/lindero/deploy/claude-ops.sh /usr/local/sbin/lindero-claude-ops   # the two must match
+```
+
+Last, email alerts, in the DigitalOcean panel: **Monitoring → Resource
+Alerts → Create Resource Alert**, for this droplet, at 80% for memory, disk and
+CPU, each over 5 minutes, emailing you. They are free. Memory and disk alerts
+need the metrics agent; if the script reported it inactive, ask before
+installing it, since it is one more program on this machine.
+
 ## Deploying again, later
 
 ```bash

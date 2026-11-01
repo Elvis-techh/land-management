@@ -25,6 +25,16 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
+# One deploy at a time on this droplet. A deploy that reinstalls packages
+# briefly takes about 200 MB, and two at once (the live site and a test site,
+# say) would push the machine into swap beside bascula-central. Every site's
+# deploy takes this same lock and waits its turn.
+exec 9>/run/lock/droplet-deploy.lock
+if ! flock -w 600 9; then
+  echo "!! Another deploy has been running on this droplet for 10 minutes; not deploying." >&2
+  exit 1
+fi
+
 as_lindero() { sudo -u lindero -H env "PATH=$NODE_BIN:$PATH" "$@"; }
 
 cd "$REPO"
