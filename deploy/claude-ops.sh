@@ -13,9 +13,10 @@
 #
 #   help             this list
 #   status           both apps' health, memory, disk, Lindero's service, the live build,
-#                    the step 13 guard rails (bascula's place in line, the journal cap)
-#   nginx            Lindero's nginx site, its snippets, and `nginx -t`
-#   logs             recent Lindero, autodeploy and backup logs, secrets masked
+#                    the step 13 guard rails (bascula's place in line, the journal cap),
+#                    the test site, and what else runs here (site, port and program names)
+#   nginx            Lindero's nginx sites, their snippets, and `nginx -t`
+#   logs             recent Lindero, test site, autodeploy and backup logs, secrets masked
 #   install-headers  runbook step 9d: the browser security headers
 #   undo-headers     takes the step 9d include lines out again
 #
@@ -29,7 +30,9 @@ REPO=/opt/lindero
 HEADERS_SOURCE=$REPO/deploy/nginx-headers.conf
 HEADERS_SNIPPET=/etc/nginx/snippets/lindero-headers.conf
 BACKUPS=/root/lindero-nginx-backups
+TEST_SITE=/etc/nginx/sites-available/lindero-test
 LINDERO_HOST=lindero.basculacentral.com
+TEST_HOST=prueba-lindero.basculacentral.com
 BASCULA_HOST=api.basculacentral.com
 INCLUDE_LINE='include snippets/lindero-headers.conf;'
 
@@ -136,12 +139,37 @@ show_status() {
   else
     echo "pm2: daemon not running (not started from here)"
   fi
+
+  echo "==> Lindero test site"
+  if systemctl cat lindero-test-api >/dev/null 2>&1; then
+    systemctl show lindero-test-api -p ActiveState -p MainPID -p NRestarts \
+      -p ActiveEnterTimestamp -p MemoryCurrent -p MemoryPeak -p MemoryMax
+    echo "health (local):  $(curl -s --max-time 5 http://127.0.0.1:3101/api/health || echo 'no answer')"
+    echo "health (nginx):  $(code "$TEST_HOST" /api/health)   expect 200"
+    echo "hidden from search engines: $(headers "$TEST_HOST" / | grep -ci '^x-robots-tag:' || true)   expect 1"
+    echo "lindero-test-autodeploy.timer: $(systemctl is-active lindero-test-autodeploy.timer || true)"
+    echo "deployed build:  $(cat /var/lib/lindero-autodeploy/last-build-test 2>/dev/null || echo unknown)"
+    echo "page uses:       $(grep -o 'assets/index-[^"]*\.js' /var/www/lindero-test/frontend/dist/index.html || echo unknown)"
+  else
+    echo "not set up"
+  fi
+
+  # What else shares this droplet. Names and sizes only, never process arguments.
+  echo "==> Everything on this machine"
+  echo "nginx sites:     $(ls /etc/nginx/sites-enabled | tr '\n' ' ')"
+  echo "listening:       $(ss -ltnH | awk '{ print $4 }' | sort -u | tr '\n' ' ')"
+  echo "largest programs (MB):"
+  ps -eo rss=,comm= --sort=-rss | head -n 10 | awk '{ printf "  %5d  %s\n", $1 / 1024, $2 }'
 }
 
 show_nginx() {
   echo "==> $SITE"
   redact <"$SITE"
   echo "==> sites-enabled/lindero -> $(readlink -f "$SITE_LINK")"
+  if [[ -f $TEST_SITE ]]; then
+    echo "==> $TEST_SITE"
+    redact <"$TEST_SITE"
+  fi
   echo "==> Lindero snippets (installed vs repository)"
   for snippet in /etc/nginx/snippets/lindero-*.conf; do
     [[ -e $snippet ]] || continue
@@ -155,7 +183,7 @@ show_nginx() {
 }
 
 show_logs() {
-  for unit in lindero-api:60 lindero-autodeploy:30 lindero-backup:15; do
+  for unit in lindero-api:60 lindero-autodeploy:30 lindero-backup:15 lindero-test-api:30 lindero-test-autodeploy:30; do
     echo "==> ${unit%%:*}"
     journalctl -u "${unit%%:*}" -n "${unit##*:}" --no-pager -o short-iso | redact
   done
