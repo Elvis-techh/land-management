@@ -31,6 +31,8 @@
   --slate-bg: #F0F0EA;
   --slate-dark: #707052;
 
+  --test-site: #C2410C;
+
   --shadow-card: 0 4px 12px rgba(61, 49, 42, 0.04);
   --font-display: 'Inter', sans-serif;
   --font-body: 'Inter', sans-serif;
@@ -958,6 +960,29 @@ tbody tr:hover {
   .update-banner {
     display: none;
   }
+}
+
+/*
+ * Above the dialogs (60) and below «Hay una versión nueva» (70). Floats over the
+ * page and lets every tap through, so the test site lays out and behaves exactly
+ * as the real one does. Left on when printing: a printed page from the test site
+ * should say so as well.
+ */
+.test-site-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 65;
+  padding: calc(2px + env(safe-area-inset-top, 0px)) 8px 2px;
+  background: var(--test-site);
+  color: #FFFFFF;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 1.3;
+  text-align: center;
+  pointer-events: none;
 }
 
 /* ---------- receipts ---------- */

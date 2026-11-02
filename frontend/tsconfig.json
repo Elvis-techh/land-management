@@ -25,7 +25,9 @@
     "skipLibCheck": true,
 
     /* Vite does the compiling. TypeScript only checks types, never emits files. */
-    "noEmit": true
+    "noEmit": true,
+    /* vite.config.ts is loaded by Node, which needs the real file name. */
+    "allowImportingTsExtensions": true
   },
   "include": ["src", "vite.config.ts"]
 }

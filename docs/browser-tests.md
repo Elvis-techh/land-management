@@ -14,6 +14,7 @@ a person would, on a desktop-sized screen and again on a phone-sized one.
 | `e2e/receipt-image.spec.ts` | The receipt image that «Ver» shows and WhatsApp sends has the logo, even when the logo file is slow to arrive. |
 | `e2e/settings.spec.ts` | Configuración: the supervisor changes a business detail, it stays after a reload and shows in Historial; the supervisor sets the mora with the switch, the tiles and the − / + buttons, and the sentence under the switch follows; the associate can read the mora rules but not change them. |
 | `e2e/sale.spec.ts` | A whole sale: new customer → new lot → credit contract → the lot shows *Financiado* with the customer → the prima is paid and appears in Recibos. |
+| `e2e/test-site.spec.ts` | The test site says «SITIO DE PRUEBA» before and after logging in, is hidden from search engines, lets taps through the banner, and opens WhatsApp with no recipient; the real site shows none of it. Runs against a second copy of the frontend started with `VITE_SITE=test`. |
 
 Every test also fails if the page crashes or the server answers any request
 with an error (5xx), even when the screen happened to look right

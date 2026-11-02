@@ -1,7 +1,11 @@
+import { readFileSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
+import { resolve } from "node:path";
 
 import react from "@vitejs/plugin-react";
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
+
+import { testSiteHtml, testSiteManifest } from "./src/lib/testSiteBuild.ts";
 
 /**
  * The hostname this dev server is being reached through, when that is not the
@@ -27,8 +31,36 @@ const codespaceHost =
 
 const publicHost = process.env.VITE_PUBLIC_HOST ?? codespaceHost;
 
+/**
+ * With VITE_SITE=test (the Deploy test workflow), marks the build as the test
+ * site in the two files read before the app runs. See src/lib/testSiteBuild.ts;
+ * the banner itself is components/TestSiteBanner.tsx.
+ *
+ * The manifest is rewritten after the build because it is copied from public/
+ * as it is, and Vite offers no step for changing those files on their way out.
+ */
+function testSite(): Plugin {
+  // Empty while serving: a dev server has no build folder, and it runs
+  // closeBundle as well, when it shuts down.
+  let manifestPath = "";
+  return {
+    name: "lindero-test-site",
+    configResolved(config) {
+      if (config.command === "build") {
+        manifestPath = resolve(config.root, config.build.outDir, "manifest.webmanifest");
+      }
+    },
+    transformIndexHtml: testSiteHtml,
+    closeBundle() {
+      if (manifestPath) {
+        writeFileSync(manifestPath, testSiteManifest(readFileSync(manifestPath, "utf8")));
+      }
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react()],
+  plugins: process.env.VITE_SITE === "test" ? [react(), testSite()] : [react()],
   server: {
     port: 5173,
     // Refuse to start rather than quietly moving to 5174 when 5173 is taken —
