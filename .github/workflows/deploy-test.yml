@@ -1,0 +1,121 @@
+# Send any branch to the test site, so a change can be tried on a phone before it
+# is merged. Run by hand (Actions → Deploy test → Run workflow), or by Claude
+# through the GitHub API. The droplet picks the build up within two minutes
+# (lindero-test-autodeploy.timer). See docs/github-actions-deploy.md.
+#
+# Two jobs on two machines, on purpose. The branch's code runs in the first,
+# during `npm ci` and the build, with read-only access to the repository. Only
+# the second can write, and it runs nothing from the branch. So code on a branch
+# can never reach `main` or the live site's `deploy-build`.
+
+name: Deploy test
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "The branch to send to the test site"
+        type: string
+        default: main
+      reset_data:
+        description: "Also put fresh demo data back (erases everything on the test site)"
+        type: boolean
+        default: false
+
+# One at a time; a second waits rather than racing the first.
+concurrency: deploy-test
+
+permissions: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.branch }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Without the Google Drive values: Google only allows the live site's
+      # address, so «Desde Google Drive» could not work here anyway.
+      # The tests are not run here: the branch's pull request already runs them,
+      # and a branch being tried out may not be finished.
+      - name: Build as the test site
+        env:
+          VITE_SITE: test
+        run: npm run build
+
+      # A build that looks like the real site must never go out as the test site.
+      - name: The build says it is the test site
+        run: |
+          if ! grep -q noindex frontend/dist/index.html \
+            || ! grep -q "PRUEBA Lindero" frontend/dist/manifest.webmanifest \
+            || ! grep -q "SITIO DE PRUEBA" frontend/dist/assets/*.js; then
+            echo "::error::This build does not show «SITIO DE PRUEBA». The branch is probably older than the banner: bring it up to date with main and run this again."
+            exit 1
+          fi
+
+      - name: Gather what the droplet needs
+        env:
+          BRANCH: ${{ inputs.branch }}
+          RESET_DATA: ${{ inputs.reset_data }}
+        run: |
+          SHA=$(git rev-parse --short HEAD)
+          OUT=build-output
+          mkdir -p "$OUT/frontend" "$OUT/backend"
+          cp -r frontend/dist "$OUT/frontend/dist"
+          cp -r backend/dist "$OUT/backend/dist"
+          cp package.json package-lock.json "$OUT/"
+          cp frontend/package.json "$OUT/frontend/"
+          cp backend/package.json "$OUT/backend/"
+          {
+            echo "# deploy-build-test"
+            echo
+            echo "Built output only, for the test site, by the Deploy test workflow."
+            echo "Do not edit by hand; it is replaced on each run."
+            echo
+            echo "Source branch: $BRANCH"
+            echo "Source commit: $SHA"
+            if [ "$RESET_DATA" = "true" ]; then
+              echo "Reset test data: yes"
+            fi
+          } > "$OUT/README.md"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: test-site-build
+          path: build-output/
+          retention-days: 1
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write # to publish the build to the deploy-build-test branch
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: test-site-build
+          path: build-output
+
+      - name: Publish to deploy-build-test
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ inputs.branch }}
+        run: |
+          cd build-output
+          git init -q -b deploy-build-test
+          git add -A -f
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -q -m "Test-site build of $BRANCH"
+          git push -q --force "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" deploy-build-test
+          echo "::notice::$BRANCH was sent to the test site. The droplet picks it up within two minutes."

@@ -14,18 +14,24 @@
 #   sudo bash deploy/autodeploy.sh --mark-current   # record the current build without deploying
 #   journalctl -u lindero-autodeploy -n 50          # what it last did
 #
+# `autodeploy.sh test` does the same for the test site, from `deploy-build-test`,
+# run by lindero-test-autodeploy.timer. See site-settings.sh for how the two differ.
+#
 # Wrapped in a block so bash has read all of it before `git pull` can replace
 # this file underneath it.
 {
   set -euo pipefail
 
-  REPO=/opt/lindero
-  STATE_DIR=/var/lib/lindero-autodeploy
-  STATE="$STATE_DIR/last-build"
+  WHICH=live
+  if [[ "${1:-}" == "test" ]]; then
+    WHICH=test
+    shift
+  fi
+  source "$(dirname "$(readlink -f "$0")")/site-settings.sh" "$WHICH"
 
   cd "$REPO"
-  sudo -u lindero -H git fetch --quiet origin deploy-build
-  NEW=$(sudo -u lindero -H git rev-parse FETCH_HEAD)
+  sudo -u "$SITE_USER" -H git fetch --quiet origin "$BUILD_BRANCH"
+  NEW=$(sudo -u "$SITE_USER" -H git rev-parse FETCH_HEAD)
   OLD=$(cat "$STATE" 2>/dev/null || true)
 
   mkdir -p "$STATE_DIR"
@@ -41,7 +47,10 @@
   fi
 
   echo "$NEW" > "$STATE"
-  echo "New build $NEW on deploy-build; deploying."
-  sudo -u lindero -H git pull --ff-only
+  echo "New build $NEW on $BUILD_BRANCH; deploying."
+  if [[ $SITE == test ]]; then
+    exec bash "$SCRIPTS/update-from-build.sh" test
+  fi
+  sudo -u "$SITE_USER" -H git pull --ff-only
   exec bash deploy/update-from-build.sh
 }

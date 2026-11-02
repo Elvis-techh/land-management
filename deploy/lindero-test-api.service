@@ -1,0 +1,50 @@
+# Lindero's test site: a second copy with fake data, at its own address.
+#
+# It shares a droplet with the real Lindero and with the scale stations, so it
+# is always the first to give way. update-from-build.sh installs this file.
+# Why each setting on the live site is what it is: lindero-api.service.
+
+[Unit]
+Description=Lindero test site API
+After=network-online.target
+Wants=network-online.target
+
+StartLimitIntervalSec=60
+StartLimitBurst=4
+
+[Service]
+Type=simple
+User=lindero-test
+Group=lindero-test
+WorkingDirectory=/opt/lindero-test/backend
+
+# No leading "-": without its own .env this copy has nothing that says it is the
+# test site, so it must not start.
+EnvironmentFile=/opt/lindero-test/backend/.env
+
+ExecStart=/opt/node22/bin/node dist/server.js
+Environment=NODE_OPTIONS=--max-old-space-size=96
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+
+# Runs at about 50 MB. If it ever reaches the cap it is stopped and restarted,
+# rather than slowing the machine by swapping to the disk the other programs use.
+MemoryHigh=120M
+MemoryMax=150M
+MemorySwapMax=0
+OOMScoreAdjust=800
+CPUQuota=50%
+CPUWeight=20
+IOWeight=20
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/lindero-test/backend/data
+# A test branch cannot read the real site's database, uploads or secrets.
+InaccessiblePaths=/opt/lindero
+
+[Install]
+WantedBy=multi-user.target

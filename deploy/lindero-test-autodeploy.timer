@@ -1,0 +1,13 @@
+# Checks GitHub for a new test-site build every two minutes, like
+# lindero-autodeploy.timer does for the live site.
+
+[Unit]
+Description=Lindero test site: check for a new build every two minutes
+
+[Timer]
+OnActiveSec=1min
+OnBootSec=2min
+OnUnitActiveSec=2min
+
+[Install]
+WantedBy=timers.target

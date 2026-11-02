@@ -160,3 +160,40 @@ If the live site has no Drive settings, or you mean to turn Drive off, tick
 **without_drive** when running the workflow. It then builds without the
 variables and tells the droplet (with the one word the key accepts,
 `allow-drop-drive`) that dropping the button is intended.
+
+## The test site
+
+A second Lindero with fake data, so a change can be tried on a phone before it
+is merged. **Actions → Deploy test → Run workflow**, or ask Claude to run it:
+
+- **branch**: the branch to send. It defaults to `main`.
+- **reset_data**: also erase everything on the test site and put fresh demo data
+  back. Tick it to start clean, or when the site does not come up after switching
+  to a branch with different database changes.
+
+It takes about a minute on GitHub, and the droplet picks the build up within two
+more (`lindero-test-autodeploy.timer`). What the droplet did:
+`journalctl -u lindero-test-autodeploy -n 50`.
+
+Like `deploy-build`, the `deploy-build-test` branch holds built files only. Never
+merge it into anything.
+
+What keeps a test deploy away from the live site and the scale stations:
+
+- **A branch's code cannot change what runs on the droplet as root.** The test
+  site's deploys run the live checkout's copy of the scripts
+  (`deploy/site-settings.sh`), so a change to those reaches the test site only
+  after it is merged and deployed to the live site.
+- **A branch's code cannot reach `main` or `deploy-build`.** The workflow builds on
+  one machine with read-only access to the repository and publishes from another
+  that runs nothing from the branch.
+- **It has its own of everything**: user, folder, database, port and service, and
+  that service cannot read the live site's folder (`lindero-test-api.service`).
+- **It gives way first.** A 150 MB memory cap, at most half a processor, first to be
+  ended if memory runs out, and every deploy on the droplet takes turns.
+- **It cannot be mistaken for the real site**, and a build that does not say
+  «SITIO DE PRUEBA» is refused before it is published.
+- **Its data can only be erased on the test site.** The droplet's script acts on
+  the request only for the test site, and `db:reset` and `db:seed` refuse without
+  `LINDERO_SITE=test`, which only that site's `.env` sets. Its logins come from the
+  same file, because the demo passwords are public in this repository.
