@@ -10,6 +10,8 @@ import { accounts, expect, goTo, logIn, test } from "./helpers";
  * workflow builds it: VITE_SITE=test (see playwright.config.ts).
  */
 const testSite = `http://localhost:${process.env.E2E_TEST_SITE_PORT ?? 5175}`;
+/** A branch as long as a cloud session's, so the phone test sees it cut short. */
+const branch = "ccr-9a01639b-hz7sp2";
 
 test.describe("the test site", () => {
   test("says so before anyone logs in, and is hidden from search engines", async ({ page }) => {
@@ -17,6 +19,23 @@ test.describe("the test site", () => {
     await expect(page.getByRole("note")).toHaveText(/SITIO DE PRUEBA/);
     await expect(page.locator('meta[name="robots"]')).toHaveAttribute("content", /noindex/);
     await expect(page).toHaveTitle(/PRUEBA/);
+  });
+
+  test("says which branch and commit it is running, so a phone can tell a change has arrived", async ({ page }) => {
+    // Set for this copy in playwright.config.ts, as the Deploy test workflow does.
+    await page.goto(testSite);
+    const strip = page.getByRole("note");
+    await expect(strip).toContainText("SITIO DE PRUEBA · No registre pagos reales");
+    await expect(strip.locator(".test-site-branch")).toHaveText(branch);
+    await expect(strip.locator(".test-site-commit")).toHaveText("abc1234");
+
+    // Still one line, even on a phone, so it covers no more of the page than
+    // before: the branch gives way, and the commit stays whole.
+    const box = await strip.boundingBox();
+    expect(box!.height).toBeLessThan(24);
+    const commit = await strip.locator(".test-site-commit").boundingBox();
+    expect(commit!.x + commit!.width).toBeLessThanOrEqual(box!.x + box!.width);
+    await page.screenshot({ path: test.info().outputPath("test-site-strip.png") });
   });
 
   test("keeps saying so on every screen, and never gets in the way of a tap", async ({ page }) => {

@@ -13,6 +13,19 @@ const environment: Record<string, string | undefined> =
 export const isTestSite = environment.VITE_SITE === "test";
 
 /**
+ * Which version the test site is running, as its strip shows it: the branch and
+ * the short commit. The Deploy test workflow passes both into the build
+ * (VITE_TEST_BRANCH, VITE_TEST_COMMIT), so a phone can tell whether the change
+ * it is waiting for has arrived. Empty when not known, as on a dev server.
+ */
+export function versionPart(value: string | undefined): string {
+  return (value ?? "").trim();
+}
+
+export const testSiteBranch = versionPart(environment.VITE_TEST_BRANCH);
+export const testSiteCommit = versionPart(environment.VITE_TEST_COMMIT);
+
+/**
  * Who a message goes to. On the test site, nobody: the demo customers' numbers
  * and addresses are made up, but a made-up number can still be a real stranger's.
  * WhatsApp then asks who to send it to, so a test message can go to yourself.

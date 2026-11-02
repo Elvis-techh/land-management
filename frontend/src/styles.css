@@ -985,6 +985,37 @@ tbody tr:hover {
   pointer-events: none;
 }
 
+/* One line, with or without a version: the warning, then the branch, which is cut
+   short with «…» on a narrow phone, then the commit, which always stays whole. */
+.test-site-banner {
+  display: flex;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.test-site-warning,
+.test-site-commit {
+  flex: none;
+}
+
+.test-site-branch {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.test-site-branch,
+.test-site-commit {
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.test-site-branch::before,
+.test-site-commit::before {
+  content: " · ";
+  white-space: pre;
+}
+
 /* ---------- receipts ---------- */
 .receipts-layout {
   display: grid;

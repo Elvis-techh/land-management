@@ -49,10 +49,13 @@ jobs:
       # address, so «Desde Google Drive» could not work here anyway.
       # The tests are not run here: the branch's pull request already runs them,
       # and a branch being tried out may not be finished.
+      # The branch and commit go into the build so the strip can show them: on
+      # a phone, that is how you see your change has arrived.
       - name: Build as the test site
         env:
           VITE_SITE: test
-        run: npm run build
+          VITE_TEST_BRANCH: ${{ inputs.branch }}
+        run: VITE_TEST_COMMIT=$(git rev-parse --short HEAD) npm run build
 
       # A build that looks like the real site must never go out as the test site.
       - name: The build says it is the test site
@@ -62,6 +65,11 @@ jobs:
             || ! grep -q "SITIO DE PRUEBA" frontend/dist/assets/*.js; then
             echo "::error::This build does not show «SITIO DE PRUEBA». The branch is probably older than the banner: bring it up to date with main and run this again."
             exit 1
+          fi
+          # Only a warning: a branch from before the strip showed its version is
+          # still safe to send, it just cannot say which one it is.
+          if ! grep -q "$(git rev-parse --short HEAD)" frontend/dist/assets/*.js; then
+            echo "::warning::The strip will not show which version this is. Bring the branch up to date with main to see it."
           fi
 
       - name: Gather what the droplet needs

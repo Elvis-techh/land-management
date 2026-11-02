@@ -172,7 +172,9 @@ is merged. **Actions → Deploy test → Run workflow**, or ask Claude to run it
   to a branch with different database changes.
 
 It takes about a minute on GitHub, and the droplet picks the build up within two
-more (`lindero-test-autodeploy.timer`). What the droplet did:
+more (`lindero-test-autodeploy.timer`). The orange strip ends with the branch and
+commit it is running («… · <branch> · <commit>»), so on a phone you can see when
+your change has arrived. A long branch name is cut short; the commit stays whole. What the droplet did:
 `journalctl -u lindero-test-autodeploy -n 50`.
 
 Like `deploy-build`, the `deploy-build-test` branch holds built files only. Never
