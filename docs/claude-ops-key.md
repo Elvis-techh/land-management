@@ -63,7 +63,7 @@ public half (which is safe to share) as a ready-made line for step 2.
 `deploy/claude-ops.sh` has been deployed:
 
 ```bash
-cd /opt/lindero && sudo -u lindero -H git pull --ff-only
+cd /opt/lindero && sudo -u lindero -H git fetch --quiet origin main && sudo -u lindero -H git merge --ff-only origin/main
 install -m 755 -o root -g root /opt/lindero/deploy/claude-ops.sh /usr/local/sbin/lindero-claude-ops
 install -d -m 700 /root/.ssh
 echo 'restrict,command="/usr/local/sbin/lindero-claude-ops" ssh-ed25519 AAAA…REPLACE… claude-ops' >> /root/.ssh/authorized_keys

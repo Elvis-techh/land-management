@@ -13,7 +13,7 @@ out of the droplet, which is what makes it workable from a phone. Paste into
 the droplet console once:
 
 ```bash
-cd /opt/lindero && sudo -u lindero -H git pull --ff-only
+cd /opt/lindero && sudo -u lindero -H git fetch --quiet origin main && sudo -u lindero -H git merge --ff-only origin/main
 sudo cp deploy/lindero-autodeploy.service deploy/lindero-autodeploy.timer /etc/systemd/system/
 sudo bash deploy/autodeploy.sh --mark-current
 sudo systemctl daemon-reload && sudo systemctl enable --now lindero-autodeploy.timer
@@ -71,7 +71,7 @@ sed -i '/github-deploy/d' /root/.ssh/authorized_keys
 **Bring the scripts up to date:**
 
 ```bash
-cd /opt/lindero && sudo -u lindero -H git pull --ff-only
+cd /opt/lindero && sudo -u lindero -H git fetch --quiet origin main && sudo -u lindero -H git merge --ff-only origin/main
 ```
 
 **Read the Google Drive settings off the live site.** They are baked into the

@@ -230,7 +230,6 @@ describe("setup-test-site.sh when all goes well", () => {
     const log = site.log();
     const steps = [
       /^useradd /m,
-      /^certbot certonly .*--dry-run/m,
       /^certbot certonly (?!.*--dry-run)/m,
       /^certbot renew --dry-run/m,
       /^install -m 644 .*lindero-test-api\.service/m,
@@ -267,6 +266,13 @@ describe("setup-test-site.sh when all goes well", () => {
     const site = droplet();
     assert.equal(site.run().status, 0);
     assert.match(site.log(), /^certbot certonly (?!.*--dry-run).*--webroot.*--deploy-hook systemctl reload nginx/m);
+  });
+
+  it("does not rehearse the certificate seconds before rehearsing its renewal", () => {
+    const site = droplet();
+    assert.equal(site.run().status, 0);
+    assert.doesNotMatch(site.log(), /^certbot certonly .*--dry-run/m);
+    assert.match(site.log(), /^certbot renew --dry-run/m);
   });
 
   it("writes its own secrets, readable only by its own user, and never prints them", () => {
@@ -390,12 +396,12 @@ describe("setup-test-site.sh when something goes wrong", () => {
     assert.doesNotMatch(site.log(), /lindero-test-autodeploy/);
   });
 
-  it("carries on from where it stopped if the certificate check fails", () => {
+  it("carries on from where it stopped if the certificate cannot be issued", () => {
     const site = droplet();
     site.mark("certbot-fails");
     const result = site.run();
     assert.equal(result.status, 1);
-    assert.match(result.stderr, /certificate check failed/);
+    assert.match(result.stderr, /certificate could not be issued/);
     assert.match(result.stderr, /carries on from here/);
     assert.match(result.stderr, /Challenge failed: connection refused/, "the screenshot says why");
     assert.ok(!site.exists(`etc/letsencrypt/live/${HOST}/fullchain.pem`));
