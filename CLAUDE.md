@@ -32,7 +32,36 @@ verified. If the build does not appear, they can run
 `journalctl -u lindero-autodeploy -n 50` and send a screenshot. Details:
 docs/github-actions-deploy.md.
 
-Never merge `deploy-build` into anything; it holds built files only.
+Never merge `deploy-build` or `deploy-build-test` into anything; they hold built
+files only.
+
+## The test site
+
+https://prueba-lindero.basculacentral.com is a second Lindero with fake data and
+an orange «SITIO DE PRUEBA» strip, so a change can be tried on a phone before it
+is merged.
+
+"Deploy test" means: run the **Deploy test** workflow
+(`.github/workflows/deploy-test.yml`, on `main`) with `branch` set to the branch,
+and confirm the run succeeded. It takes about a minute on GitHub, and the droplet
+picks it up within two more. Details: docs/github-actions-deploy.md.
+
+- It holds one version at a time, and the last run wins, so tell the owner which
+  branch is on it.
+- `reset_data` erases everything there and puts fresh demo data back. Use it to
+  start clean, or when the site will not start after switching to a branch with
+  different database changes. Warn the owner first: they may be midway through a
+  test.
+- It has no Google Drive button, and WhatsApp, SMS and mail open with no recipient.
+  Both are on purpose.
+- Changes under `deploy/` do not reach it until they are merged and deployed to the
+  live site, because its deploys run the live checkout's scripts. Deploy test
+  cannot prove those.
+- Its logins are in its `.env` on the droplet and the owner has them. Never ask for
+  them. Screens behind the login need the owner.
+- Proof a build is there: the `/assets/index-*.js` named in its page matches the one
+  on `deploy-build-test`, when the cloud environment allows
+  `prueba-lindero.basculacentral.com`. Otherwise ask the owner to look.
 
 ## Fixing things, one at a time
 
@@ -52,21 +81,28 @@ through fixes this way, and explain each step briefly the first time:
 3. **One pull request per fix.** Title starts with the review ID, e.g.
    "P3-1: Stop «Editar términos» from double-selling a lot". The description
    says what was wrong, what changed, how it was checked, and what the owner
-   should look at on the site. This is the permanent record of why the change
-   exists; the branch is temporary.
-4. **Merge, deploy, and ask the owner to check** (see Deploying). Do not start
-   the next fix until they confirm the site is fine.
-5. **If something broke, revert the pull request** (GitHub's Revert button on
+   should try. This is the permanent record of why the change exists; the branch
+   is temporary.
+4. **Try it on the test site first.** For anything the owner will see, Deploy test
+   the branch, then tell them it is there and what to try. If it is not right, the
+   fix goes on the same branch and pull request, and it goes to the test site
+   again. Wait until they say it is right. A change that shows nothing on screen
+   skips this step, and the pull request says so.
+5. **Merge when the owner asks for that pull request by number, deploy, and ask
+   them to check the real site** (see Deploying). Do not start the next fix until
+   they confirm it is fine.
+6. **If something broke, revert the pull request** (GitHub's Revert button on
    the merged PR, then merge that and deploy). It undoes that one fix and
    nothing else. Never rewrite `main`'s history.
-6. **Mark good versions with a release**, not a branch: once the owner has
+7. **Mark good versions with a release**, not a branch: once the owner has
    checked the site, suggest a GitHub release on `main` named by date, e.g.
    `v2026.10.09`. Releases are the "known-good" points to come back to.
    Make it with the **Release** workflow (`.github/workflows/release.yml`, on
    `main`, optional `title`); it picks the date name and refuses a red `main`.
 
 Branches are deleted after merge (the repository deletes them automatically
-once that setting is on), so the branch list stays `main` and `deploy-build`.
+once that setting is on), so the branch list stays `main`, `deploy-build` and
+`deploy-build-test`.
 Do not keep branches as backups: `main`'s history and the releases already are.
 
 ## Checks before pushing
