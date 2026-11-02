@@ -2,13 +2,23 @@ import { useMemo } from "react";
 import { useRememberedState } from "../../lib/viewMemory";
 
 import { IconArchive, IconEdit, IconRestore } from "../../components/Icons";
-import { formatAreaParts } from "../../lib/area";
+import { AREA_UNITS, formatAreaParts } from "../../lib/area";
 import type { MoneyView } from "../../lib/money";
 import { formatMoneyParts } from "../../lib/money";
 import type { User } from "../../lib/permissions";
 import { can } from "../../lib/permissions";
 import { buildProjectAccents } from "../../lib/projectAccent";
 import type { Project } from "../../types";
+import { ProjectToolbar } from "./ProjectToolbar";
+import type { ProjectFilters, ProjectSort } from "./projectView";
+import {
+  DEFAULT_PROJECT_SORT,
+  NO_PROJECT_FILTERS,
+  countActiveFilters,
+  filterProjects,
+  searchProjects,
+  sortProjects,
+} from "./projectView";
 
 interface ProjectsPageProps {
   projects: Project[];
@@ -45,7 +55,21 @@ export function ProjectsPage({
 
   const active = projects.filter((project) => project.archivedAt === null);
   const archived = projects.filter((project) => project.archivedAt !== null);
-  const visible = showArchived ? archived : active;
+  const shelf = showArchived ? archived : active;
+
+  // #5: search, filter and sort apply to whichever shelf is showing, and are
+  // remembered while moving between tabs, like every other list.
+  const [search, setSearch] = useRememberedState("projects.search", "");
+  const [filters, setFilters] = useRememberedState<ProjectFilters>(
+    "projects.filters",
+    NO_PROJECT_FILTERS,
+  );
+  const [sort, setSort] = useRememberedState<ProjectSort>("projects.sort", DEFAULT_PROJECT_SORT);
+
+  const visible = sortProjects(filterProjects(searchProjects(shelf, search), filters), sort);
+  // In the usual order (m² first), not the order the projects happen to be in.
+  const units = AREA_UNITS.filter((unit) => shelf.some((project) => project.areaUnit === unit));
+  const isNarrowed = search.trim() !== "" || countActiveFilters(filters) > 0;
 
   const accents = useMemo(
     () => buildProjectAccents(projects.map((project) => project.name)),
@@ -71,13 +95,43 @@ export function ProjectsPage({
         </button>
       </div>
 
+      {shelf.length > 0 && (
+        <ProjectToolbar
+          units={units}
+          filters={filters}
+          onFiltersChange={setFilters}
+          sort={sort}
+          onSortChange={setSort}
+          search={search}
+          onSearchChange={setSearch}
+          shownCount={visible.length}
+          totalCount={shelf.length}
+        />
+      )}
+
       {visible.length === 0 && (
         <div className="card">
           <p className="state-message">
-            {showArchived
-              ? "No hay proyectos archivados."
-              : "Todavía no hay proyectos. Crea el primero para poder registrar lotes."}
+            {shelf.length > 0 && isNarrowed
+              ? search.trim() !== ""
+                ? `Ningún proyecto coincide con «${search.trim()}».`
+                : "Ningún proyecto coincide con los filtros."
+              : showArchived
+                ? "No hay proyectos archivados."
+                : "Todavía no hay proyectos. Crea el primero para poder registrar lotes."}
           </p>
+          {shelf.length > 0 && isNarrowed && (
+            <button
+              type="button"
+              className="link-btn"
+              onClick={() => {
+                setSearch("");
+                setFilters(NO_PROJECT_FILTERS);
+              }}
+            >
+              Ver todos los proyectos
+            </button>
+          )}
         </div>
       )}
 
