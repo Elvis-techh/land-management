@@ -7378,6 +7378,13 @@ input:disabled {
   cursor: pointer;
 }
 
+/* Historial keeps the old page on screen while the next one loads (#6), so the
+   search box keeps its cursor; dimming it says the list is about to change. */
+.audit-loading {
+  opacity: 0.6;
+  transition: opacity .15s ease;
+}
+
 .table-search-clear:hover,
 .table-search-clear:focus-visible {
   background: var(--clay);

@@ -45,7 +45,12 @@ const SPOTS: Array<{ name: string; pattern: RegExp; known: Record<string, number
   {
     name: "LIKE, which is case-sensitive in PostgreSQL",
     pattern: /\bLIKE\b/g,
-    known: { "routes/contracts.ts": 2, "routes/dashboard.ts": 1 },
+    known: { "routes/audit.ts": 1, "routes/contracts.ts": 2, "routes/dashboard.ts": 1 },
+  },
+  {
+    name: "rowid, which PostgreSQL tables do not have",
+    pattern: /\browid\b/g,
+    known: { "db/migrations.ts": 2, "routes/audit.ts": 2 },
   },
   {
     name: "SUM( and COUNT(, which PostgreSQL's driver returns as text",

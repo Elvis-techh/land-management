@@ -174,7 +174,7 @@ export async function buildApp(config: AppConfig, db: Db) {
       await api.register(settingsRoutes, { timeZone: config.timeZone });
       await api.register(moraRoutes, { timeZone: config.timeZone });
       await api.register(dashboardRoutes, { timeZone: config.timeZone });
-      await api.register(auditRoutes);
+      await api.register(auditRoutes, { timeZone: config.timeZone });
       await api.register(eventRoutes);
     },
     { prefix: "/api" },

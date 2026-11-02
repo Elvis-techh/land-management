@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRememberedState } from "../../lib/viewMemory";
 
 import { businessTimeZone } from "../../lib/businessTime";
@@ -9,8 +9,10 @@ import type { ContractStatus } from "../../types";
 import { KIND_LABELS, STATUS_PRESENTATION } from "../contracts/contractPresentation";
 import { paymentTypeLabel } from "../receipts/paymentType";
 import { METHOD_LABELS } from "../receipts/transactionFilters";
-import type { AuditAction, AuditEvent, AuditPage as AuditPageData } from "./api";
-import { fetchAudit } from "./api";
+import type { AuditAction, AuditEvent, AuditFilters, AuditPage as AuditPageData } from "./api";
+import { NO_AUDIT_FILTERS, fetchAudit } from "./api";
+import type { AuditOrder } from "./AuditToolbar";
+import { AuditToolbar, countActiveAuditFilters } from "./AuditToolbar";
 import { formatAuditList } from "./auditLines";
 
 const PAGE_SIZE = 25;
@@ -220,74 +222,134 @@ function formatTimestamp(value: string): string {
   });
 }
 
-type State =
-  | { status: "loading" }
-  | { status: "ready"; data: AuditPageData }
-  | { status: "error"; message: string };
+/** How long typing has to pause before the server is asked, so each key is not a request. */
+const SEARCH_DELAY_MS = 300;
 
 interface AuditPageProps {
   money: MoneyView;
 }
 
 export function AuditPage({ money }: AuditPageProps) {
-  // The page being read survives a tab change, so checking something elsewhere
-  // does not send the reader back to page one of the history.
   const [offset, setOffset] = useRememberedState("audit.offset", 0);
-  const [state, setState] = useState<State>({ status: "loading" });
+  // #6: search, filters and sort, remembered while moving between tabs like
+  // every other list. They are sent to the server: see routes/audit.ts.
+  const [search, setSearch] = useRememberedState("audit.search", "");
+  const [filters, setFilters] = useRememberedState<AuditFilters>("audit.filters", NO_AUDIT_FILTERS);
+  const [order, setOrder] = useRememberedState<AuditOrder>("audit.order", "desc");
+  const [askedSearch, setAskedSearch] = useState(search);
 
-  const load = useCallback(async (nextOffset: number) => {
-    setState({ status: "loading" });
-    try {
-      setState({
-        status: "ready",
-        data: await fetchAudit({ limit: PAGE_SIZE, offset: nextOffset }),
-      });
-    } catch (caught) {
-      setState({
-        status: "error",
-        message: caught instanceof Error ? caught.message : "No se pudo cargar el historial.",
-      });
-    }
-  }, []);
+  const [data, setData] = useState<AuditPageData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  // Only the newest request may fill the screen: an answer to an older search
+  // that arrives late must not replace the one being typed now.
+  const latest = useRef(0);
 
   useEffect(() => {
-    void load(offset);
-  }, [load, offset]);
+    const timer = setTimeout(() => setAskedSearch(search), SEARCH_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [search]);
 
-  if (state.status === "loading") {
+  useEffect(() => {
+    const request = ++latest.current;
+    setLoading(true);
+
+    fetchAudit({ limit: PAGE_SIZE, offset, search: askedSearch, filters, order })
+      .then((page) => {
+        if (request === latest.current) {
+          setData(page);
+          setError(null);
+        }
+      })
+      .catch((caught: unknown) => {
+        if (request === latest.current) {
+          setError(caught instanceof Error ? caught.message : "No se pudo cargar el historial.");
+        }
+      })
+      .finally(() => {
+        if (request === latest.current) {
+          setLoading(false);
+        }
+      });
+  }, [offset, askedSearch, filters, order]);
+
+  // A new question starts again on its first page.
+  const changeSearch = (next: string) => {
+    setSearch(next);
+    setOffset(0);
+  };
+  const changeFilters = (next: AuditFilters) => {
+    setFilters(next);
+    setOffset(0);
+  };
+  const changeOrder = (next: AuditOrder) => {
+    setOrder(next);
+    setOffset(0);
+  };
+  const clearSearchAndFilters = () => {
+    changeSearch("");
+    setAskedSearch("");
+    changeFilters(NO_AUDIT_FILTERS);
+  };
+
+  const narrowed = search.trim() !== "" || countActiveAuditFilters(filters) > 0;
+
+  const toolbar = (
+    <AuditToolbar
+      filters={filters}
+      onFiltersChange={changeFilters}
+      order={order}
+      onOrderChange={changeOrder}
+      search={search}
+      onSearchChange={changeSearch}
+      total={data?.total ?? null}
+    />
+  );
+
+  if (data === null) {
     return (
       <section className="panel active">
+        {toolbar}
         <div className="card">
-          <p className="state-message">Cargando historial…</p>
+          {error === null ? (
+            <p className="state-message">Cargando historial…</p>
+          ) : (
+            <p className="form-error">{error}</p>
+          )}
         </div>
       </section>
     );
   }
 
-  if (state.status === "error") {
-    return (
-      <section className="panel active">
-        <div className="card">
-          <p className="form-error">{state.message}</p>
-        </div>
-      </section>
-    );
-  }
-
-  const { events, total } = state.data;
+  const { events, total } = data;
   const hasPrevious = offset > 0;
   const hasNext = offset + PAGE_SIZE < total;
 
   return (
     <section className="panel active">
-      <div className="card">
+      {toolbar}
+      {error !== null && <p className="form-error">{error}</p>}
+      <div className={loading ? "card audit-loading" : "card"} aria-busy={loading}>
         <div className="card-head">
           <h3>Historial de cambios</h3>
           <span className="tag">{total} registros</span>
         </div>
 
         {events.length === 0 ? (
-          <p className="state-message">Todavía no hay movimientos registrados.</p>
+          narrowed ? (
+            <div className="state-message">
+              <p>
+                {search.trim() !== ""
+                  ? `Ningún cambio coincide con «${search.trim()}».`
+                  : "Ningún cambio coincide con los filtros."}
+              </p>
+              <button type="button" className="link-btn" onClick={clearSearchAndFilters}>
+                Ver todo el historial
+              </button>
+            </div>
+          ) : (
+            <p className="state-message">Todavía no hay movimientos registrados.</p>
+          )
         ) : (
           <div className="audit-list">
             {events.map((event) => {

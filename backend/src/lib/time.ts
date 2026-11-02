@@ -48,3 +48,43 @@ export function businessToday(timeZone: string, now: Date = new Date()): string 
 
   return `${find("year")}-${find("month")}-${find("day")}`;
 }
+
+/**
+ * The instant a business day begins, as SQLite's own UTC format
+ * ("2026-08-31 06:00:00" for Tegucigalpa), so a date picked on screen can be
+ * compared against stored timestamps. `date` is "YYYY-MM-DD" in `timeZone`.
+ *
+ * The zone's offset is read for that very day rather than assumed, so a zone
+ * with summer time would still land on its own midnight.
+ */
+export function businessDayStartUtc(date: string, timeZone: string): string {
+  const guess = Date.parse(`${date}T00:00:00Z`);
+  const offsetAt = (instant: number): number => {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      hourCycle: "h23",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    }).formatToParts(instant);
+    const part = (type: Intl.DateTimeFormatPartTypes) =>
+      Number(parts.find((entry) => entry.type === type)?.value ?? 0);
+    const asLocal = Date.UTC(
+      part("year"),
+      part("month") - 1,
+      part("day"),
+      part("hour"),
+      part("minute"),
+      part("second"),
+    );
+    return asLocal - instant;
+  };
+
+  let start = guess - offsetAt(guess);
+  start = guess - offsetAt(start);
+
+  return new Date(start).toISOString().replace("T", " ").slice(0, 19);
+}
