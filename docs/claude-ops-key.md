@@ -9,9 +9,9 @@ list and refuses everything else:
 | Action | What it does | Changes anything? |
 |---|---|---|
 | `help` | Lists the actions | No |
-| `status` | Both apps' health, memory, disk, Lindero's service, which build is live, bascula's pm2 pid and restarts, and the step 13 guard rails (bascula's place in line when memory runs out, the journal's size and cap) | No |
-| `nginx` | Lindero's nginx site file, its snippets (installed vs repository), `nginx -t` | No |
-| `logs` | The last lines of Lindero's, the autodeploy's and the backup's logs, with secret-looking values masked | No |
+| `status` | Both apps' health, memory, disk, Lindero's service, which build is live, bascula's pm2 pid and restarts, the step 13 guard rails (bascula's place in line when memory runs out, the journal's size and cap), the test site, and what else runs on the machine (Nginx site names, listening ports, the largest programs by short name) | No |
+| `nginx` | Lindero's and its test site's nginx site files, their snippets (installed vs repository), `nginx -t` | No |
+| `logs` | The last lines of Lindero's, the test site's, the autodeploy's and the backup's logs, with secret-looking values masked | No |
 | `install-headers` | Runbook step 9d (browser security headers), with its checks | nginx: Lindero's site file and one snippet |
 | `undo-headers` | Takes the step 9d include lines out again | nginx: Lindero's site file |
 

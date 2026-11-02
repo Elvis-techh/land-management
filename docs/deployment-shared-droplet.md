@@ -788,6 +788,57 @@ CPU, each over 5 minutes, emailing you. They are free. Memory and disk alerts
 need the metrics agent; if the script reported it inactive, ask before
 installing it, since it is one more program on this machine.
 
+### 14. The test site
+
+A second Lindero with fake data at `prueba-lindero.basculacentral.com`, so a change
+can be tried on a phone before it is merged. How a build reaches it and what keeps
+it apart from the live site are in
+[github-actions-deploy.md](github-actions-deploy.md#the-test-site).
+
+**This droplet has more on it than this page's tables show.** Who has which port:
+
+| Port | Program | Memory cap | Ended when memory runs out |
+|---|---|---|---|
+| 3000 | bascula-central | none | Last |
+| 3001 | Lindero | 256 MB | Middle |
+| 3002 | Junta de Agua (planned) | | |
+| 3003 | Junta de Agua's test copy (`zoilabe-test`, its own repository) | 180 MB | Early |
+| 3101 | Lindero's test site (`lindero-test`) | 150 MB | First |
+
+Once, in the droplet console. In Cloudflare, `prueba-lindero` must already be an
+`A` record at the droplet's IP with the **grey cloud**. The `&&` stops it if the
+pull fails:
+
+```bash
+cd /opt/lindero && sudo -u lindero -H git pull --ff-only && bash /opt/lindero/deploy/setup-test-site.sh
+```
+
+It checks there is room and nothing in the way before changing anything. It then
+makes the site's user, folder and settings, adds its Nginx site and certificate,
+installs its services, runs the first deploy, adds the demo data, and proves
+bascula-central and the live site were not restarted. It stops at the first
+problem and says what state things are in. Running it again is safe and carries
+on from there, keeping the passwords.
+
+Its secrets are made on the droplet, in `/opt/lindero-test/backend/.env`, and never
+printed. To read the two passwords, in the console:
+
+```bash
+grep TEST_SITE /opt/lindero-test/backend/.env
+```
+
+Then, so `ssh lindero-ops status` can show the test site, copy the locked key's
+script in again (see [claude-ops-key.md](claude-ops-key.md)):
+
+```bash
+install -m 755 -o root -g root /opt/lindero/deploy/claude-ops.sh /usr/local/sbin/lindero-claude-ops
+sha256sum /opt/lindero/deploy/claude-ops.sh /usr/local/sbin/lindero-claude-ops   # the two must match
+```
+
+To take the test site out again, data and certificate included:
+`bash /opt/lindero/deploy/setup-test-site.sh --undo`. Browsers that visited it keep
+insisting on https for a year (HSTS), which only matters if the address is reused.
+
 ## Deploying again, later
 
 ```bash
