@@ -3,6 +3,7 @@ import { useMemo, useRef, useState } from "react";
 import { IconClose, IconFilter, IconSort } from "../../components/Icons";
 import { MenuSurface } from "../../components/MenuSurface";
 import { MoneyInput } from "../../components/MoneyInput";
+import { SearchBox } from "../../components/SearchBox";
 import { SortMenu } from "../../components/SortMenu";
 import { AREA_UNIT_INFO, fromSquareMetres, toSquareMetres } from "../../lib/area";
 import type { AreaUnit } from "../../lib/area";
@@ -35,13 +36,16 @@ interface LotToolbarProps {
   onFiltersChange: (filters: LotFilters) => void;
   sort: LotSort;
   onSortChange: (sort: LotSort) => void;
+  search: string;
+  onSearchChange: (search: string) => void;
   /** For the "Mostrando X de Y" count. */
   shownCount: number;
   totalCount: number;
 }
 
 /**
- * The Lotes toolbar: one sort menu, one filter panel.
+ * The Lotes toolbar: one search box, one sort menu, one filter panel — the
+ * same three as Contratos, Clientes and Recibos.
  *
  * Status used to sit outside as its own row of chips, which meant it could not
  * be combined with anything — picking a project threw away the status, and the
@@ -60,6 +64,8 @@ export function LotToolbar({
   onFiltersChange,
   sort,
   onSortChange,
+  search,
+  onSearchChange,
   shownCount,
   totalCount,
 }: LotToolbarProps) {
@@ -317,6 +323,14 @@ export function LotToolbar({
         </span>
 
         <div className="toolbar-spacer" />
+
+        <SearchBox
+          value={search}
+          onChange={onSearchChange}
+          placeholder="Buscar lote o cliente…"
+          label="Buscar lote"
+          title="Busca por lote, proyecto, cliente, teléfono o número de contrato"
+        />
 
         <div className="menu-anchor" ref={sortRef}>
           <button
