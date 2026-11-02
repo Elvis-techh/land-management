@@ -183,7 +183,7 @@ fi
 echo "==> 1. Checking there is room"
 [[ -x $NODE_BIN/node ]] || fail "$NODE_BIN/node is not there. Nothing was changed. Send Claude a screenshot."
 for needed in "$NGINX_SOURCE" "$UNIT_SOURCE" "$SCRIPTS/$UPDATER" "$SCRIPTS/$TIMER"; do
-  [[ -f $needed ]] || fail "$needed is not on the droplet yet: run 'cd $LIVE_REPO && sudo -u lindero -H git pull --ff-only' first. Nothing was changed."
+  [[ -f $needed ]] || fail "$needed is not on the droplet yet: run 'cd $LIVE_REPO && sudo -u lindero -H git fetch --quiet origin main && sudo -u lindero -H git merge --ff-only origin/main' first. Nothing was changed."
 done
 
 AVAILABLE_MB=$(free -m | awk '/^Mem:/ { print $7 }')
@@ -297,14 +297,12 @@ else
     certbot certonly --webroot -w "$WEBROOT" -d "$HOST" --non-interactive --agree-tos \
       --register-unsafely-without-email --keep-until-expiring --deploy-hook "systemctl reload nginx" "$@"
   }
-  # A rehearsal first: real failures count against Let's Encrypt's hourly limit.
-  if ! said=$(certificate --dry-run 2>&1); then
-    tail -n 15 <<<"$said" >&2
-    fail "The certificate check failed. Only the test site's plain-http part is in place, which harms nothing, and running this again carries on from here. Send Claude a screenshot."
-  fi
+  # No rehearsal before this one. With one, the renewal rehearsal below failed
+  # seconds later on the real droplet ("authorizations for these identifiers not
+  # valid"), and passed once the first was out of the way.
   if ! said=$(certificate 2>&1); then
     tail -n 15 <<<"$said" >&2
-    fail "The certificate could not be issued. Running this again carries on from here. Send Claude a screenshot."
+    fail "The certificate could not be issued. Only the test site's plain-http part is in place, which harms nothing, and running this again carries on from here. Send Claude a screenshot."
   fi
   echo "    certificate: issued"
 fi

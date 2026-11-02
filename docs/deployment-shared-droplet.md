@@ -806,11 +806,11 @@ it apart from the live site are in
 | 3101 | Lindero's test site (`lindero-test`) | 150 MB | First |
 
 Once, in the droplet console. In Cloudflare, `prueba-lindero` must already be an
-`A` record at the droplet's IP with the **grey cloud**. The `&&` stops it if the
-pull fails:
+`A` record at the droplet's IP with the **grey cloud**. The `&&` stops it if
+bringing in `main` fails:
 
 ```bash
-cd /opt/lindero && sudo -u lindero -H git pull --ff-only && bash /opt/lindero/deploy/setup-test-site.sh
+cd /opt/lindero && sudo -u lindero -H git fetch --quiet origin main && sudo -u lindero -H git merge --ff-only origin/main && bash /opt/lindero/deploy/setup-test-site.sh
 ```
 
 It checks there is room and nothing in the way before changing anything. It then
@@ -849,13 +849,19 @@ rsync -av --delete backend/dist/  root@<IP>:/opt/lindero/backend/dist/
 
 # droplet
 cd /opt/lindero
-sudo -u lindero -H git pull
+sudo -u lindero -H git fetch --quiet origin main && sudo -u lindero -H git merge --ff-only origin/main
 sudo -u lindero -H env "PATH=/opt/node22/bin:$PATH" /opt/node22/bin/npm ci --omit=dev
 sudo systemctl restart lindero-api        # migrations run on restart
 ```
 
-`git pull` is still needed: it brings `deploy/`, `docs/` and the `drizzle/`
+Bringing in `main` is still needed: it brings `deploy/`, `docs/` and the `drizzle/`
 migration sources, and keeps `package-lock.json` in step with `npm ci`.
+
+**Not `git pull` by hand on the droplet.** `lindero-autodeploy.timer` runs its own
+`git fetch` every two minutes in the same folder, and if the two overlap the pull
+stops with `fatal: Cannot fast-forward to multiple branches`. That does no harm:
+the code has already downloaded, so `sudo -u lindero -H git merge --ff-only origin/main`
+finishes the job. Fetching and merging as above cannot collide at all.
 
 ### Without a laptop
 
@@ -864,7 +870,7 @@ The `deploy-build` branch carries `frontend/dist` and `backend/dist` built from
 is two commands on the droplet — workable from a phone's SSH app:
 
 ```bash
-cd /opt/lindero && sudo -u lindero -H git pull --ff-only
+cd /opt/lindero && sudo -u lindero -H git fetch --quiet origin main && sudo -u lindero -H git merge --ff-only origin/main
 sudo bash deploy/update-from-build.sh
 ```
 
