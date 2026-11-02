@@ -54,7 +54,12 @@ export default defineConfig({
     {
       command: `npm run dev --workspace @lindero/frontend -- --port ${testSitePort}`,
       url: `http://localhost:${testSitePort}`,
-      env: { LINDERO_API_URL: `http://127.0.0.1:${apiPort}`, VITE_SITE: "test" },
+      env: {
+        LINDERO_API_URL: `http://127.0.0.1:${apiPort}`,
+        VITE_SITE: "test",
+        VITE_TEST_BRANCH: "ccr-9a01639b-hz7sp2",
+        VITE_TEST_COMMIT: "abc1234",
+      },
       reuseExistingServer: false,
       timeout: 60_000,
     },
