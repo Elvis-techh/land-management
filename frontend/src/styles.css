@@ -4390,6 +4390,36 @@ body.modal-open {
   color: var(--ink);
 }
 
+/* #4: in the toolbars, a button you tap has to look different from the box you
+   type in. The search box stays white with a thin line; the buttons are filled,
+   with a firmer border and a little depth, and darken when pressed or open.
+   «Filtros» with filters on keeps its dark fill and count (.chip.active). */
+.lots-toolbar .menu-trigger {
+  border-color: var(--line-strong);
+  background: #F3ECE3;
+  color: var(--ink-soft);
+  font-weight: 600;
+  box-shadow: 0 1px 0 rgba(61, 49, 42, 0.08);
+}
+
+.lots-toolbar .menu-trigger:hover,
+.lots-toolbar .menu-trigger[aria-expanded="true"] {
+  border-color: var(--ink-line);
+  background: #EADFD1;
+  color: var(--ink);
+}
+
+.lots-toolbar .menu-trigger:focus-visible {
+  outline: 2px solid var(--clay);
+  outline-offset: 2px;
+}
+
+.lots-toolbar .menu-trigger.active {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: #F7F5EE;
+}
+
 .menu-popover {
   position: absolute;
   top: calc(100% + 7px);
@@ -7322,6 +7352,42 @@ input:disabled {
 
 .table-search input:focus {
   outline: none;
+}
+
+/* The browser's own clear button only shows in some browsers, and not on a
+   phone: SearchBox draws one that always does. */
+.table-search input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.table-search-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  /* Pulled into the box's padding, so it does not make the box any taller. */
+  margin: -5px -8px -5px 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--line);
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.table-search-clear:hover,
+.table-search-clear:focus-visible {
+  background: var(--clay);
+  color: #FFF;
+  outline: none;
+}
+
+.table-search .table-search-clear svg {
+  width: 11px;
+  height: 11px;
 }
 
 /* Country code and national number, side by side and reading as one field. The

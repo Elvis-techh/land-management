@@ -1,7 +1,8 @@
 import { useMemo, useRef, useState } from "react";
 
-import { IconClose, IconFilter, IconSearch, IconSort } from "../../components/Icons";
+import { IconClose, IconFilter, IconSort } from "../../components/Icons";
 import { MenuSurface } from "../../components/MenuSurface";
+import { SearchBox } from "../../components/SearchBox";
 import { SortMenu } from "../../components/SortMenu";
 import { useDismiss } from "../../lib/useDismiss";
 import { useIsMobile } from "../../lib/viewport";
@@ -254,17 +255,13 @@ export function CustomerToolbar({
             it searches — teléfono, identidad, dirección, notas — is on the
             tooltip: a box wide enough to list all six would not fit beside the
             chips, and nobody reads a placeholder that long anyway. */}
-        <div className="table-search">
-          <IconSearch />
-          <input
-            type="search"
-            value={search}
-            placeholder="Buscar cliente o lote…"
-            aria-label="Buscar cliente"
-            title="Busca por nombre, teléfono, identidad, dirección, notas, lote o contrato"
-            onChange={(event) => onSearchChange(event.target.value)}
-          />
-        </div>
+        <SearchBox
+          value={search}
+          onChange={onSearchChange}
+          placeholder="Buscar cliente o lote…"
+          label="Buscar cliente"
+          title="Busca por nombre, teléfono, identidad, dirección, notas, lote o contrato"
+        />
 
         <div className="menu-anchor" ref={sortRef}>
           <button

@@ -1,7 +1,8 @@
 import { useMemo, useRef, useState } from "react";
 
-import { IconClose, IconFilter, IconSearch, IconSort } from "../../components/Icons";
+import { IconClose, IconFilter, IconSort } from "../../components/Icons";
 import { MenuSurface } from "../../components/MenuSurface";
+import { SearchBox } from "../../components/SearchBox";
 import { SortMenu } from "../../components/SortMenu";
 import { useDismiss } from "../../lib/useDismiss";
 import { useIsMobile } from "../../lib/viewport";
@@ -280,17 +281,13 @@ export function TransactionToolbar({
 
         <div className="toolbar-spacer" />
 
-        <div className="table-search">
-          <IconSearch />
-          <input
-            type="search"
-            value={search}
-            placeholder="Buscar recibo o cliente…"
-            aria-label="Buscar transacciones"
-            title="Busca por cliente, identidad, lote, contrato, recibo, referencia bancaria o nota"
-            onChange={(event) => onSearchChange(event.target.value)}
-          />
-        </div>
+        <SearchBox
+          value={search}
+          onChange={onSearchChange}
+          placeholder="Buscar recibo o cliente…"
+          label="Buscar transacciones"
+          title="Busca por cliente, identidad, lote, contrato, recibo, referencia bancaria o nota"
+        />
 
         <div className="menu-anchor" ref={sortRef}>
           <button
