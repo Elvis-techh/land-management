@@ -11,7 +11,7 @@ import type { User } from "../../lib/permissions";
 import { can } from "../../lib/permissions";
 import { buildProjectAccents } from "../../lib/projectAccent";
 import type { Customer, Lot, LotStatus } from "../../types";
-import { filterLots, hasActiveFilters, NO_FILTERS } from "./lotFilters";
+import { filterLots, hasActiveFilters, NO_FILTERS, searchLots } from "./lotFilters";
 import type { LotFilters } from "./lotFilters";
 import { lotStatus } from "./lotStatus";
 import { LotToolbar } from "./LotToolbar";
@@ -77,6 +77,7 @@ export function LotsPage({
   // remembered flavour also keeps it across a tab change; see `viewMemory`.
   const [filters, setFilters] = useRememberedState<LotFilters>("lots.filters", NO_FILTERS);
   const [sort, setSort] = useRememberedState<LotSort>("lots.sort", DEFAULT_SORT);
+  const [search, setSearch] = useRememberedState("lots.search", "");
   const [showArchived, setShowArchived] = useRememberedState("lots.showArchived", false);
 
   // Derived from state, recalculated when something it depends on changes.
@@ -84,8 +85,8 @@ export function LotsPage({
   // point of this approach: filter and sort are a VIEW of `activeLots`, not an
   // edit of it.
   const visibleLots = useMemo(
-    () => sortLots(filterLots(activeLots, filters), sort, customersById),
-    [activeLots, filters, sort, customersById],
+    () => sortLots(filterLots(searchLots(activeLots, search, customersById), filters), sort, customersById),
+    [activeLots, search, filters, sort, customersById],
   );
 
   // Offered in the filter panel, built from the inventory itself so a project
@@ -183,6 +184,8 @@ export function LotsPage({
             onFiltersChange={setFilters}
             sort={sort}
             onSortChange={setSort}
+            search={search}
+            onSearchChange={setSearch}
             shownCount={visibleLots.length}
             totalCount={activeLots.length}
           />
@@ -306,7 +309,11 @@ export function LotsPage({
                           "Todavía no hay lotes registrados."
                         ) : (
                           <>
-                            <p>Ningún lote coincide con lo que estás buscando.</p>
+                            <p>
+                              {search.trim() === ""
+                                ? "Ningún lote coincide con lo que estás buscando."
+                                : `Ningún lote coincide con «${search.trim()}».`}
+                            </p>
                             {/* An empty table is where a forgotten filter
                                 finally shows itself, so the way out is offered
                                 right here instead of leaving the user hunting

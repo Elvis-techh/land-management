@@ -2,13 +2,14 @@ import { expect, goTo, logIn, test } from "./helpers";
 
 /*
  * #4: the toolbars' buttons look like buttons, and the search box can be
- * emptied in one tap. Checked on Contratos, Clientes and Recibos, which share
- * the same SearchBox and the same button look.
+ * emptied in one tap. Checked on Contratos, Clientes, Recibos and Lotes, which
+ * share the same SearchBox and the same button look.
  */
 const screens = [
   { tab: "Contratos", search: "Buscar contrato" },
   { tab: "Clientes", search: "Buscar cliente" },
   { tab: "Recibos", search: "Buscar transacciones" },
+  { tab: "Lotes", search: "Buscar lote" },
 ] as const;
 
 for (const { tab, search } of screens) {
@@ -89,7 +90,7 @@ test.describe("Ctrl+F", () => {
 
   test("leaves a screen without a search box alone", async ({ page }) => {
     await logIn(page);
-    await goTo(page, "Lotes");
+    await goTo(page, "Panel general");
     expect(await pressFind(page)).toBe(false);
   });
 
@@ -102,4 +103,22 @@ test.describe("Ctrl+F", () => {
     expect(await pressFind(page)).toBe(false);
     await expect(page.getByRole("searchbox", { name: "Buscar contrato" })).not.toBeFocused();
   });
+});
+
+/* #5: Lotes has a search box like the other lists. */
+test("Lotes: the search narrows the list, and says so when nothing matches", async ({ page }) => {
+  await logIn(page);
+  await goTo(page, "Lotes");
+
+  const box = page.getByRole("searchbox", { name: "Buscar lote" });
+  const count = page.locator(".result-count");
+  const before = await count.textContent();
+
+  await box.fill("B-14");
+  await expect(page.locator(".code-badge", { hasText: "B-14" })).toBeVisible();
+  await expect(count).not.toHaveText(before!);
+  await expect(page.locator("tbody .code-badge")).toHaveCount(1);
+
+  await box.fill("zzz no existe");
+  await expect(page.getByText("Ningún lote coincide con «zzz no existe».")).toBeVisible();
 });
