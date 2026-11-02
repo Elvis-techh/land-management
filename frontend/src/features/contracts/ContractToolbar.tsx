@@ -1,7 +1,8 @@
 import { useMemo, useRef, useState } from "react";
 
-import { IconChevronDown, IconClose, IconFilter, IconSearch, IconSort } from "../../components/Icons";
+import { IconChevronDown, IconClose, IconFilter, IconSort } from "../../components/Icons";
 import { MenuSurface } from "../../components/MenuSurface";
+import { SearchBox } from "../../components/SearchBox";
 import { SortMenu } from "../../components/SortMenu";
 import { useDismiss } from "../../lib/useDismiss";
 import { useIsMobile } from "../../lib/viewport";
@@ -281,17 +282,13 @@ export function ContractToolbar({
           </button>
         )}
 
-        <div className="table-search">
-          <IconSearch />
-          <input
-            type="search"
-            value={search}
-            placeholder="Buscar contrato, cliente o lote…"
-            aria-label="Buscar contrato"
-            title="Busca por número de contrato, cliente, teléfono, lote, proyecto o notas"
-            onChange={(event) => onSearchChange(event.target.value)}
-          />
-        </div>
+        <SearchBox
+          value={search}
+          onChange={onSearchChange}
+          placeholder="Buscar contrato, cliente o lote…"
+          label="Buscar contrato"
+          title="Busca por número de contrato, cliente, teléfono, lote, proyecto o notas"
+        />
 
         <div className="menu-anchor" ref={sortRef}>
           <button
