@@ -122,3 +122,50 @@ test("Lotes: the search narrows the list, and says so when nothing matches", asy
   await box.fill("zzz no existe");
   await expect(page.getByText("Ningún lote coincide con «zzz no existe».")).toBeVisible();
 });
+
+/* #5: Proyectos gets the same search, sort and filters. */
+test.describe("Proyectos", () => {
+  const cards = (page: import("@playwright/test").Page) => page.locator(".project-card h3");
+
+  test("the search finds a project by name, and says so when nothing matches", async ({ page }) => {
+    await logIn(page);
+    await goTo(page, "Proyectos");
+
+    const box = page.getByRole("searchbox", { name: "Buscar proyecto" });
+    await box.fill("monte");
+    await expect(cards(page)).toHaveText(["Monte Real"]);
+
+    await box.fill("zzz no existe");
+    await expect(page.getByText("Ningún proyecto coincide con «zzz no existe».")).toBeVisible();
+    await page.getByRole("button", { name: "Ver todos los proyectos" }).click();
+    await expect(box).toHaveValue("");
+    await expect(cards(page)).not.toHaveCount(0);
+  });
+
+  test("sorts by name, A → Z to start with and Z → A on a second pick", async ({ page }) => {
+    await logIn(page);
+    await goTo(page, "Proyectos");
+
+    const shown = async () => (await cards(page).allTextContents()).map((name) => name.trim());
+    const ascending = await shown();
+    expect(ascending).toEqual([...ascending].sort((a, b) => a.localeCompare(b, "es")));
+
+    await page.locator(".lots-toolbar .menu-trigger", { hasText: "Nombre" }).click();
+    await page.getByRole("menuitemradio", { name: /^Nombre/ }).click();
+    await expect.poll(shown).toEqual([...ascending].reverse());
+  });
+
+  test("filters by area unit, with a chip that takes it off", async ({ page }) => {
+    await logIn(page);
+    await goTo(page, "Proyectos");
+
+    const total = await cards(page).count();
+    await page.locator(".lots-toolbar .menu-trigger", { hasText: "Filtros" }).click();
+    await page.getByRole("checkbox", { name: "Varas cuadradas (v²)" }).check();
+    await page.keyboard.press("Escape");
+    await expect(cards(page)).toHaveText(["Monte Real"]);
+
+    await page.locator(".filter-chip", { hasText: "En v²" }).click();
+    await expect(cards(page)).toHaveCount(total);
+  });
+});
