@@ -43,3 +43,63 @@ test("the toolbar's buttons are filled, unlike the white search box", async ({ p
   expect(buttonBackground).not.toBe(searchBackground);
   expect(buttonBackground).not.toBe("rgba(0, 0, 0, 0)");
 });
+
+/*
+ * #3: Ctrl+F jumps to the screen's own search box. A keyboard shortcut, so only
+ * on the computer-sized run.
+ */
+test.describe("Ctrl+F", () => {
+  test.skip(({ isMobile }) => isMobile, "a keyboard shortcut");
+
+  /** Whether the page kept the browser's own search from opening. */
+  async function pressFind(page: import("@playwright/test").Page): Promise<boolean> {
+    await page.evaluate(() => {
+      // The F, not the Ctrl pressed before it. Bubbles here after the page's
+      // own listener on document has had its say.
+      const onKey = (event: KeyboardEvent) => {
+        if (event.key.toLowerCase() === "f") {
+          (window as unknown as { lastFind: boolean }).lastFind = event.defaultPrevented;
+          window.removeEventListener("keydown", onKey);
+        }
+      };
+      window.addEventListener("keydown", onKey);
+    });
+    await page.keyboard.press("Control+f");
+    return page.evaluate(() => (window as unknown as { lastFind: boolean }).lastFind);
+  }
+
+  test("jumps to the search box and selects what is in it; again opens the browser's search", async ({ page }) => {
+    await logIn(page);
+    await goTo(page, "Contratos");
+
+    const box = page.getByRole("searchbox", { name: "Buscar contrato" });
+    await box.fill("Carlos");
+    await page.locator("body").click({ position: { x: 5, y: 300 } });
+    await expect(box).not.toBeFocused();
+
+    expect(await pressFind(page)).toBe(true);
+    await expect(box).toBeFocused();
+    // Selected, so typing replaces the old search.
+    await page.keyboard.type("Elena");
+    await expect(box).toHaveValue("Elena");
+
+    // Already in the box: the browser's own search is let through.
+    expect(await pressFind(page)).toBe(false);
+  });
+
+  test("leaves a screen without a search box alone", async ({ page }) => {
+    await logIn(page);
+    await goTo(page, "Lotes");
+    expect(await pressFind(page)).toBe(false);
+  });
+
+  test("does not reach behind an open window", async ({ page }) => {
+    await logIn(page);
+    await goTo(page, "Contratos");
+    await page.getByRole("banner").getByRole("button", { name: "Nuevo contrato" }).click();
+    await expect(page.getByRole("dialog")).toBeVisible();
+
+    expect(await pressFind(page)).toBe(false);
+    await expect(page.getByRole("searchbox", { name: "Buscar contrato" })).not.toBeFocused();
+  });
+});
