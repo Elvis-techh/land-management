@@ -225,6 +225,7 @@ export const moraRoutes: FastifyPluginAsync<MoraRouteOptions> = async (app, opti
         .map((entry) => ({
           ...entry,
           pendingCents: account?.pendingByCharge[`mora:manual:${entry.id}`] ?? 0,
+          forgivenCents: account?.forgivenByCharge[`mora:manual:${entry.id}`] ?? 0,
         }));
 
       const clearedById = new Map((account?.forgiven ?? []).map((entry) => [entry.forgivenessId, entry.amountCents]));

@@ -181,6 +181,14 @@ describe("«Perdonar»", async () => {
     assert.equal((await forgive({ amountCents: 1 })).statusCode, 400);
   });
 
+  it("tells the charge how much of it was forgiven: nothing unpaid is not the same as paid", async () => {
+    const [entry] = (await moraOf()).manual;
+
+    assert.equal(entry.amountCents, 50_000);
+    assert.equal(entry.pendingCents, 0);
+    assert.equal(entry.forgivenCents, 20_000);
+  });
+
   it("is taken back with «Quitar», with a reason, and filed in the Historial", async () => {
     const entry = (await moraOf()).forgiven[0];
     const remove = (reason: string) =>

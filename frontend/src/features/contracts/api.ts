@@ -360,8 +360,10 @@ export interface ManualMora {
   /** YYYY-MM-DD, the day it was charged or agreed. */
   incurredOn: string;
   amountCents: number;
-  /** What is still unpaid of it. 0 once a payment has covered it. */
+  /** What is still unpaid of it. 0 once payments and «Perdonar» have covered it. */
   pendingCents: number;
+  /** What «Perdonar» cleared of it. */
+  forgivenCents: number;
   reason: string;
   recordedBy: string;
   recordedAt: string;
