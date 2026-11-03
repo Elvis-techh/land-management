@@ -1,5 +1,5 @@
 import type { Contract, ContractStatus, PaymentHealth, SaleType } from "../../types";
-import { formatPhone } from "../../lib/phone";
+import { searchRows } from "../../lib/textSearch";
 
 /**
  * Everything the Contratos list can be narrowed by.
@@ -133,34 +133,18 @@ export function filterContracts(
  *
  * The contract number and the lot number are both in here because "¿quién es
  * CT-2026-014?" and "¿quién tiene el A-07?" are asked as often as the
- * customer's name, and all three should land on the same row.
+ * customer's name, and all three should land on the same row. The rule itself
+ * is in lib/textSearch.ts, the same on every list.
  */
-function haystack(contract: Contract): string {
-  return [
-    contract.code,
-    contract.customer.fullName,
-    contract.customer.phone ? formatPhone(contract.customer.phone) : "",
-    contract.lot.code,
-    contract.lot.projectName,
-    contract.notes ?? "",
-  ]
-    .join(" ")
-    .toLowerCase();
-}
-
 export function searchContracts(contracts: Contract[], search: string): Contract[] {
-  const query = search.trim().toLowerCase();
-
-  if (query === "") {
-    return contracts;
-  }
-
-  // Every word has to match something, so "elena valle" narrows rather than
-  // widening — how people expect a search box to behave.
-  const words = query.split(/\s+/);
-
-  return contracts.filter((contract) => {
-    const text = haystack(contract);
-    return words.every((word) => text.includes(word));
-  });
+  return searchRows(contracts, search, (contract) => ({
+    text: [
+      contract.code,
+      contract.customer.fullName,
+      contract.lot.code,
+      contract.lot.projectName,
+      contract.notes,
+    ],
+    phones: [contract.customer.phone],
+  }));
 }

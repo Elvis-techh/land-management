@@ -252,15 +252,14 @@ export function CustomerToolbar({
         <div className="toolbar-spacer" />
 
         {/* The placeholder names the two things people actually type. What else
-            it searches — teléfono, identidad, dirección, notas — is on the
-            tooltip: a box wide enough to list all six would not fit beside the
-            chips, and nobody reads a placeholder that long anyway. */}
+            it searches appears under the box while it has the cursor: a box wide
+            enough to list everything would not fit beside the chips. */}
         <SearchBox
           value={search}
           onChange={onSearchChange}
           placeholder="Buscar cliente o lote…"
           label="Buscar cliente"
-          title="Busca por nombre, teléfono, identidad, dirección, notas, lote o contrato"
+          title="Busca por nombre, teléfono, identidad, correo, dirección, notas, lote, proyecto o contrato"
         />
 
         <div className="menu-anchor" ref={sortRef}>

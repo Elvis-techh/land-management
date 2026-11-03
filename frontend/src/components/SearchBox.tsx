@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useId, useRef } from "react";
 
 import { IconClose, IconSearch } from "./Icons";
 
@@ -8,7 +8,7 @@ interface SearchBoxProps {
   placeholder: string;
   /** What the box searches, for screen readers and the browser tests. */
   label: string;
-  /** The longer list of what it looks through, shown on hover. */
+  /** The longer list of what it looks through, shown under the box while it has the cursor. */
   title?: string;
 }
 
@@ -23,6 +23,10 @@ interface SearchBoxProps {
  * (see .table-search in styles.css), since Chrome and Safari show it only
  * sometimes, and Firefox never.
  *
+ * With the cursor in the empty box, the full list of what it looks through
+ * appears under it. A placeholder has no room for it, and a phone has no hover
+ * to show a tooltip. It leaves with the first letter, so it never covers a result.
+ *
  * #3: Ctrl+F (⌘F on a Mac) jumps to this box and selects what is in it, ready
  * to type over. Pressed again while already in the box, it opens the browser's
  * own search as usual. A screen without a search box is left alone, and so is
@@ -30,6 +34,7 @@ interface SearchBoxProps {
  */
 export function SearchBox({ value, onChange, placeholder, label, title }: SearchBoxProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const hintId = useId();
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -65,7 +70,7 @@ export function SearchBox({ value, onChange, placeholder, label, title }: Search
         value={value}
         placeholder={placeholder}
         aria-label={label}
-        title={title}
+        aria-describedby={title ? hintId : undefined}
         onChange={(event) => onChange(event.target.value)}
       />
       {value !== "" && (
@@ -81,6 +86,11 @@ export function SearchBox({ value, onChange, placeholder, label, title }: Search
         >
           <IconClose />
         </button>
+      )}
+      {title && (
+        <p id={hintId} className="table-search-hint">
+          {title}
+        </p>
       )}
     </div>
   );

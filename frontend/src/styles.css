@@ -7316,6 +7316,7 @@ input:disabled {
    Height is left to the padding instead of being fixed, so it tracks the chips
    when the root font size grows on a wide screen. */
 .table-search {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 7px;
@@ -7395,6 +7396,31 @@ input:disabled {
 .table-search .table-search-clear svg {
   width: 11px;
   height: 11px;
+}
+
+/* What the box looks through: there while the box has the cursor and nothing
+   typed, gone with the first letter, so it never covers a result. */
+.table-search-hint {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 12%);
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.35;
+  pointer-events: none;
+}
+
+.table-search input:focus:placeholder-shown ~ .table-search-hint {
+  display: block;
 }
 
 /* Country code and national number, side by side and reading as one field. The

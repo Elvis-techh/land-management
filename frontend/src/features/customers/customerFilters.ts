@@ -1,3 +1,4 @@
+import { searchRows } from "../../lib/textSearch";
 import type { CustomerRecord } from "../../types";
 
 /**
@@ -103,4 +104,31 @@ export function filterCustomers(
   filters: CustomerFilters,
 ): CustomerRecord[] {
   return customers.filter((customer) => matchesFilters(customer, filters));
+}
+
+/**
+ * Everything about one customer that somebody might type into the search box:
+ * the rows left after it, before the filter panel has its say.
+ *
+ * Contract and lot numbers are in here deliberately: "who is CT-2026-014?" is
+ * asked as often as "what does José have?", and both should land on the same
+ * row rather than sending the user to a different screen to translate first.
+ * The rule itself is in lib/textSearch.ts, the same on every list.
+ */
+export function searchCustomers(customers: CustomerRecord[], search: string): CustomerRecord[] {
+  return searchRows(customers, search, (customer) => ({
+    text: [
+      customer.fullName,
+      customer.email,
+      customer.address,
+      customer.notes,
+      ...customer.contracts.flatMap((contract) => [
+        contract.contractCode,
+        contract.lotCode,
+        contract.projectName,
+      ]),
+    ],
+    phones: [customer.phone],
+    identities: [customer.identification],
+  }));
 }

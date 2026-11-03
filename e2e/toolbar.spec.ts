@@ -31,6 +31,35 @@ for (const { tab, search } of screens) {
   });
 }
 
+test("the search box says what it looks through until something is typed", async ({ page }, testInfo) => {
+  await logIn(page);
+  await goTo(page, "Lotes");
+
+  const box = page.getByRole("searchbox", { name: "Buscar lote" });
+  const hint = page.locator(".table-search-hint:visible");
+  await expect(hint).toHaveCount(0);
+
+  await box.focus();
+  await expect(hint).toContainText("Busca por lote, proyecto, cliente, teléfono");
+  await page.screenshot({ path: testInfo.outputPath("lotes-pista-busqueda.png"), animations: "disabled" });
+
+  await box.fill("A");
+  await expect(hint).toHaveCount(0);
+});
+
+test("Lotes: a number finds that number, not every lot with that digit somewhere", async ({ page }, testInfo) => {
+  await logIn(page);
+  await goTo(page, "Lotes");
+
+  const box = page.getByRole("searchbox", { name: "Buscar lote" });
+
+  await box.fill("Etapa 1");
+  await expect(page.getByText(/Mostrando \d+ de \d+ lote/).first()).toBeVisible();
+  await expect(page.getByText("A-07").first()).toBeVisible();
+  await expect(page.getByText("B-03")).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath("lotes-etapa-1.png"), animations: "disabled" });
+});
+
 test("the toolbar's buttons are filled, unlike the white search box", async ({ page }) => {
   await logIn(page);
   await goTo(page, "Clientes");

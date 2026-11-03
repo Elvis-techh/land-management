@@ -286,7 +286,7 @@ export function TransactionToolbar({
           onChange={onSearchChange}
           placeholder="Buscar recibo o cliente…"
           label="Buscar transacciones"
-          title="Busca por cliente, identidad, lote, contrato, recibo, referencia bancaria o nota"
+          title="Busca por cliente, identidad, lote, proyecto, contrato, recibo, referencia bancaria o nota"
         />
 
         <div className="menu-anchor" ref={sortRef}>
