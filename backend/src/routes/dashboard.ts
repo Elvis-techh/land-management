@@ -17,7 +17,7 @@ import { roleCan } from "../lib/capabilities.js";
 import { DASHBOARD_LAYOUT, clearPreference, readPreference, writePreference } from "../lib/preferences.js";
 import type { MoraAccount } from "../lib/mora.js";
 import { moraEverOn, moraPaidThrough, moraPendingThrough } from "../lib/mora.js";
-import { loadMoraAccounts } from "../lib/moraAccounts.js";
+import { closedOnOf, isClosedContract, loadMoraAccounts } from "../lib/moraAccounts.js";
 import { healthRulesOf, readMoraHistory, readSettings } from "../lib/settings.js";
 import { businessToday } from "../lib/time.js";
 import type { ContractTerms, HealthRules, PaymentHealth, SaleType } from "../lib/contracts.js";
@@ -28,6 +28,7 @@ import {
   expectedByMonth,
   isBehind,
   monthEnd,
+  moraOfMonth,
   monthOf,
   monthsAfter,
   monthsEndingAt,
@@ -602,12 +603,23 @@ export const dashboardRoutes: FastifyPluginAsync<DashboardRoutesOptions> = async
       (entry) => entry.expectedThroughMonthCents > entry.paidCents,
     ).length;
 
+    /**
+     * The day a contract stopped counting towards «Mora pendiente», `null` while
+     * it counts. A closed one with no date (a hand fix) was never counted.
+     */
+    const moraStoppedOn = (row: ContractRow) =>
+      isClosedContract(row.status)
+        ? closedOnOf(row, options.timeZone) ?? row.createdAt.slice(0, 10)
+        : null;
+
     // Its own line, beside what is due, never mixed into it: «Mora pendiente»
-    // is fees, «Por cobrar» is cuotas. Over every open contract, including one
-    // whose cuotas are complete and whose mora is not.
-    const owingMora = assessed.filter(
-      (entry) => entry.row.status === "active" && entry.moraPendingCents > 0,
-    );
+    // is fees, «Por cobrar» is cuotas. Over every contract open at the position
+    // shown, including one whose cuotas are complete and whose mora is not.
+    const owingMora = assessed.filter((entry) => {
+      const stoppedOn = moraStoppedOn(entry.row);
+
+      return entry.moraPendingCents > 0 && (stoppedOn === null || stoppedOn > asOf);
+    });
     const moraCollectedCents = [...moraAccounts.values()].reduce(
       (total, account) =>
         total +
@@ -618,6 +630,52 @@ export const dashboardRoutes: FastifyPluginAsync<DashboardRoutesOptions> = async
         ),
       0,
     );
+
+    /*
+     * «Mora por mes»: one line per month with something to say, and the contracts
+     * behind it. Each line is summed from those same contracts, so it adds up to
+     * them by construction, and its pending is the tile's when that month is the
+     * one shown. Never past the month being reported, like the chart.
+     */
+    const moraByMonth = history
+      .map((target) => {
+        const lines = assessed.flatMap((entry) => {
+          const account = moraAccounts.get(entry.row.id);
+
+          if (!account) {
+            return [];
+          }
+
+          const figures = moraOfMonth(account, target, moraStoppedOn(entry.row));
+
+          return Object.values(figures).some((amount) => amount !== 0)
+            ? [
+                {
+                  contractId: entry.row.id,
+                  contractCode: entry.row.code,
+                  customerName: entry.row.customerName,
+                  lotCode: entry.row.lotCode,
+                  ...figures,
+                },
+              ]
+            : [];
+        });
+        const total = (key: keyof ReturnType<typeof moraOfMonth>) =>
+          lines.reduce((sum, line) => sum + line[key], 0);
+
+        return {
+          month: target,
+          chargedCents: total("chargedCents"),
+          collectedCents: total("collectedCents"),
+          forgivenCents: total("forgivenCents"),
+          pendingCents: total("pendingCents"),
+          leftOnCloseCents: total("leftOnCloseCents"),
+          contracts: lines.sort(
+            (a, b) => b.pendingCents - a.pendingCents || a.contractCode.localeCompare(b.contractCode),
+          ),
+        };
+      })
+      .filter((line) => line.contracts.length > 0);
 
     /* ---------------------------------------------------------------------- */
     /* Band 2 — collections                                                    */
@@ -942,6 +1000,8 @@ export const dashboardRoutes: FastifyPluginAsync<DashboardRoutesOptions> = async
           card: byMethod.get("card"),
         },
       },
+
+      moraByMonth,
 
       history: history.map((target) => ({
         month: target,
