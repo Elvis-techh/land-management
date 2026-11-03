@@ -130,6 +130,18 @@ describe("the test site's demo data", () => {
     });
   }
 
+  it("gets the mora cases, with mora switched on", () => {
+    const { env, databasePath } = site(testSite);
+    assert.equal(run("migrate", env).status, 0);
+    const result = run("seed", env);
+    assert.equal(result.status, 0, result.stderr);
+
+    const db = new Database(databasePath, { readonly: true });
+    assert.deepEqual(db.prepare("select count(*) as n from contracts where code like 'CM-%'").get(), { n: 21 });
+    assert.deepEqual(db.prepare("select count(*) as n from mora_rules").get(), { n: 1 });
+    db.close();
+  });
+
   it("is removed whole by a reset: the database and every uploaded file", () => {
     const { env, databasePath, uploadsPath } = site(testSite);
     assert.equal(run("migrate", env).status, 0);
@@ -179,5 +191,16 @@ describe("on a developer's laptop", () => {
     const { hash } = db.prepare("select password_hash as hash from users where email = ?").get("gerencia@lindero.hn") as { hash: string };
     db.close();
     assert.equal(await verifyPassword(PUBLISHED.owner, hash), true);
+  });
+
+  it("db:seed leaves mora off and adds no mora cases: the browser tests assume it", () => {
+    const { env, databasePath } = site({ NODE_ENV: "development" });
+    assert.equal(run("migrate", env).status, 0);
+    assert.equal(run("seed", env).status, 0);
+
+    const db = new Database(databasePath, { readonly: true });
+    assert.deepEqual(db.prepare("select count(*) as n from contracts where code like 'CM-%'").get(), { n: 0 });
+    assert.deepEqual(db.prepare("select count(*) as n from mora_rules").get(), { n: 0 });
+    db.close();
   });
 });

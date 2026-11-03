@@ -2,8 +2,10 @@ import { randomUUID } from "node:crypto";
 
 import { loadConfig } from "../config/env.js";
 import { hashPassword } from "../lib/password.js";
+import { businessToday } from "../lib/time.js";
 import { createDb } from "./client.js";
 import { demoPasswords } from "./demoLogins.js";
+import { seedMoraCases } from "./moraCases.js";
 import { contracts, customers, lots, payments, projects, users } from "./schema.js";
 
 /**
@@ -353,6 +355,12 @@ db.transaction((tx) => {
         })
         .run();
     }
+  }
+
+  // Mora switched on, and fake contracts for every situation «Perdonar» can
+  // meet. Only there: everything else that seeds assumes mora is off.
+  if (config.site === "test") {
+    seedMoraCases(tx, { actorId: ownerId, today: businessToday(config.timeZone), timeZone: config.timeZone });
   }
 });
 
