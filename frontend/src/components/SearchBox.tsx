@@ -13,7 +13,8 @@ interface SearchBoxProps {
 }
 
 /**
- * The search box of every toolbar (Contratos, Clientes, Recibos, Lotes, Proyectos).
+ * The search box of every toolbar (Contratos, Clientes, Recibos, Lotes, Proyectos,
+ * Historial).
  *
  * It stays white, like the other boxes you type in, while the buttons beside it
  * are filled: a box you type in and a button you tap should never look alike.

@@ -169,3 +169,77 @@ test.describe("Proyectos", () => {
     await expect(cards(page)).toHaveCount(total);
   });
 });
+
+/*
+ * #6: Historial gets the same search, sort and filters. They run on the server,
+ * so the test makes a change of its own to find: a project with a unique name.
+ */
+test.describe("Historial", () => {
+  /** A project created and then renamed to `name`: the rename is filed in Historial. */
+  async function renamedProject(page: import("@playwright/test").Page, name: string) {
+    const status = await page.evaluate(async (finalName) => {
+      const send = (method: string, url: string, body: unknown) =>
+        fetch(url, {
+          method,
+          headers: { "Content-Type": "application/json" },
+          credentials: "same-origin",
+          body: JSON.stringify(body),
+        });
+      const created = await send("POST", "/api/projects", { name: `${finalName} (nuevo)`, areaUnit: "m2" });
+      const body = (await created.json()) as { project?: { id: string }; id?: string };
+      const id = body.project?.id ?? body.id;
+      const renamed = await send("PATCH", `/api/projects/${id}`, { name: finalName, areaUnit: "m2" });
+      return renamed.status;
+    }, name);
+    expect(status).toBe(200);
+  }
+
+  test("finds a change by name and kind, and says so when nothing matches", async ({ page }) => {
+    await logIn(page);
+    const name = `Historial ${Date.now()}`;
+    await renamedProject(page, name);
+
+    await goTo(page, "Historial");
+    const items = page.locator(".audit-item");
+    await page.getByRole("searchbox", { name: "Buscar en el historial" }).fill(name);
+    await expect(items).toHaveCount(1);
+    await expect(items.first()).toContainText(name);
+    await expect(page.locator(".result-count")).toHaveText("1 cambio coincide");
+
+    // The same search, but only changes to customers: nothing.
+    await page.locator(".lots-toolbar .menu-trigger", { hasText: "Filtros" }).click();
+    await page.getByRole("checkbox", { name: "Clientes" }).check();
+    await page.keyboard.press("Escape");
+    await expect(page.getByText("Ningún cambio coincide con")).toBeVisible();
+
+    // Projects instead: found again, and its chip says what is applied.
+    await page.locator(".filter-chip", { hasText: "Clientes" }).click();
+    await page.locator(".lots-toolbar .menu-trigger", { hasText: "Filtros" }).click();
+    await page.getByRole("checkbox", { name: "Proyectos" }).check();
+    await page.keyboard.press("Escape");
+    await expect(items).toHaveCount(1);
+    await expect(page.locator(".filter-chip", { hasText: "Proyectos" })).toBeVisible();
+
+    await page.getByRole("button", { name: "Limpiar filtros" }).first().click();
+    await page.getByRole("button", { name: "Borrar la búsqueda" }).click();
+    await expect(items.first()).toBeVisible();
+    await expect(page.locator(".result-count")).not.toContainText("coincide");
+  });
+
+  test("turns the order around, oldest first", async ({ page }) => {
+    await logIn(page);
+    const stamp = Date.now();
+    await renamedProject(page, `Orden ${stamp} A`);
+    await renamedProject(page, `Orden ${stamp} B`);
+    await goTo(page, "Historial");
+    await page.getByRole("searchbox", { name: "Buscar en el historial" }).fill(`Orden ${stamp}`);
+
+    const labels = page.locator(".audit-item .code-badge");
+    await expect(labels).toHaveText([`Orden ${stamp} B`, `Orden ${stamp} A`]);
+
+    await page.locator(".lots-toolbar .menu-trigger", { hasText: "Más recientes primero" }).click();
+    await page.getByRole("menuitemradio", { name: /^Fecha/ }).click();
+    await expect(page.locator(".lots-toolbar .menu-trigger", { hasText: "Más antiguos primero" })).toBeVisible();
+    await expect(labels).toHaveText([`Orden ${stamp} A`, `Orden ${stamp} B`]);
+  });
+});
