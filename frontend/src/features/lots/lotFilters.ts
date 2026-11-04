@@ -1,5 +1,5 @@
 import type { Cents } from "../../lib/money";
-import { formatPhone } from "../../lib/phone";
+import { searchRows } from "../../lib/textSearch";
 import type { Customer, Lot, LotStatus } from "../../types";
 import { lotStatus } from "./lotStatus";
 
@@ -99,33 +99,15 @@ export function filterLots(lots: Lot[], filters: LotFilters): Lot[] {
  * Everything about a lot somebody might type into the search box: its code,
  * its project, and who holds it (name, phone and contract number), so
  * "¿quién tiene el A-07?" and "¿qué lote tiene Elena?" land on the same row.
- * The same rules as Contratos: not case-sensitive, and every word has to match.
+ * The rule itself is in lib/textSearch.ts, the same on every list.
  */
-function haystack(lot: Lot, customersById: Map<string, Customer>): string {
-  const holder = lot.holding ? customersById.get(lot.holding.customerId) : undefined;
-
-  return [
-    lot.code,
-    lot.projectName,
-    lot.holding?.contractCode ?? "",
-    holder?.fullName ?? "",
-    holder?.phone ? formatPhone(holder.phone) : "",
-  ]
-    .join(" ")
-    .toLowerCase();
-}
-
 export function searchLots(lots: Lot[], search: string, customersById: Map<string, Customer>): Lot[] {
-  const query = search.trim().toLowerCase();
+  return searchRows(lots, search, (lot) => {
+    const holder = lot.holding ? customersById.get(lot.holding.customerId) : undefined;
 
-  if (query === "") {
-    return lots;
-  }
-
-  const words = query.split(/\s+/);
-
-  return lots.filter((lot) => {
-    const text = haystack(lot, customersById);
-    return words.every((word) => text.includes(word));
+    return {
+      text: [lot.code, lot.projectName, lot.holding?.contractCode, holder?.fullName],
+      phones: [holder?.phone],
+    };
   });
 }

@@ -1,3 +1,4 @@
+import { searchRows } from "../../lib/textSearch";
 import type { Transaction } from "../../types";
 
 /** How the money arrived. Matches `payments.method` on the server. */
@@ -153,36 +154,25 @@ export function filterTransactions(
   return transactions.filter((transaction) => matchesFilters(transaction, filters));
 }
 
-/** Everything about a transaction somebody might type into the search box. */
+/**
+ * Everything about a transaction somebody might type into the search box. The
+ * rule itself is in lib/textSearch.ts, the same on every list.
+ */
 export function searchTransactions(
   transactions: Transaction[],
   search: string,
 ): Transaction[] {
-  const query = search.trim().toLowerCase();
-
-  if (query === "") {
-    return transactions;
-  }
-
-  // Every word has to match something, so "ana valle" narrows rather than
-  // widening — which is how people expect a search box to behave.
-  const words = query.split(/\s+/);
-
-  return transactions.filter((transaction) => {
-    const text = [
+  return searchRows(transactions, search, (transaction) => ({
+    text: [
       transaction.customerName,
-      transaction.customerIdentification,
       transaction.lotCode,
       transaction.projectName,
       transaction.contractCode,
-      transaction.receiptCode ?? "",
-      transaction.reference ?? "",
-      transaction.notes ?? "",
-      transaction.receiptNote ?? "",
-    ]
-      .join(" ")
-      .toLowerCase();
-
-    return words.every((word) => text.includes(word));
-  });
+      transaction.receiptCode,
+      transaction.reference,
+      transaction.notes,
+      transaction.receiptNote,
+    ],
+    identities: [transaction.customerIdentification],
+  }));
 }

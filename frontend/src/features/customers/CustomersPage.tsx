@@ -9,7 +9,7 @@ import type { User } from "../../lib/permissions";
 import { can } from "../../lib/permissions";
 import { buildProjectAccents } from "../../lib/projectAccent";
 import type { CustomerRecord } from "../../types";
-import { filterCustomers, hasActiveFilters, NO_CUSTOMER_FILTERS } from "./customerFilters";
+import { filterCustomers, hasActiveFilters, NO_CUSTOMER_FILTERS, searchCustomers } from "./customerFilters";
 import type { CustomerFilters } from "./customerFilters";
 import { DEFAULT_SORT, sortCustomers } from "./customerSort";
 import type { CustomerSort } from "./customerSort";
@@ -20,50 +20,6 @@ interface CustomersPageProps {
   user: User;
   onEditCustomer: (customer: CustomerRecord) => void;
   onDeleteCustomer: (customer: CustomerRecord) => void;
-}
-
-/**
- * Everything about one customer that somebody might type into the search box.
- *
- * Contract and lot numbers are in here deliberately: "who is CT-2026-014?" is
- * asked as often as "what does José have?", and both should land on the same
- * row rather than sending the user to a different screen to translate first.
- */
-function haystack(customer: CustomerRecord): string {
-  return [
-    customer.fullName,
-    customer.identification ?? "",
-    customer.phone ?? "",
-    customer.phone ? formatPhone(customer.phone) : "",
-    customer.email ?? "",
-    customer.address ?? "",
-    customer.notes ?? "",
-    ...customer.contracts.flatMap((contract) => [
-      contract.contractCode,
-      contract.lotCode,
-      contract.projectName,
-    ]),
-  ]
-    .join(" ")
-    .toLowerCase();
-}
-
-/** The rows left after the search box, before the filter panel has its say. */
-function searchCustomers(customers: CustomerRecord[], search: string): CustomerRecord[] {
-  const query = search.trim().toLowerCase();
-
-  if (query === "") {
-    return customers;
-  }
-
-  // Every word has to match something, so "jose valle" narrows rather than
-  // widening — which is how people expect a search box to behave.
-  const words = query.split(/\s+/);
-
-  return customers.filter((customer) => {
-    const text = haystack(customer);
-    return words.every((word) => text.includes(word));
-  });
 }
 
 export function CustomersPage({
