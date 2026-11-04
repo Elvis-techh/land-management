@@ -18,6 +18,29 @@ import type { DashboardLayout } from "./dashboardSections";
  * number stand in for money.
  */
 
+/** What one month's mora came to, or one contract's part of it. */
+export interface MoraFigures {
+  chargedCents: Cents;
+  collectedCents: Cents;
+  forgivenCents: Cents;
+  /** Still owed at the end of the month, on open contracts. */
+  pendingCents: Cents;
+  /** What was unpaid when a contract closed this month, and so stopped being pending. */
+  leftOnCloseCents: Cents;
+}
+
+export interface MoraMonth extends MoraFigures {
+  month: string;
+  contracts: Array<
+    MoraFigures & {
+      contractId: string;
+      contractCode: string;
+      customerName: string;
+      lotCode: string;
+    }
+  >;
+}
+
 /** One month of the history chart, or of the forward projection. */
 export interface DashboardMonth {
   month: string;
@@ -168,6 +191,9 @@ export interface Dashboard {
 
   history: DashboardMonth[];
 
+  /** One line per month with any mora, oldest first. Empty until there is some. */
+  moraByMonth: MoraMonth[];
+
   collections: {
     buckets: HealthBucket[];
     /** Active contracts that owe nothing. Kept apart so the buckets add up. */
@@ -249,6 +275,14 @@ type Raw<T> = T extends Cents
 /** Brand a plain JSON number as centavos. */
 const c = (value: number): Cents => cents(value);
 
+const brandMoraFigures = (raw: Raw<MoraFigures>): MoraFigures => ({
+  chargedCents: c(raw.chargedCents),
+  collectedCents: c(raw.collectedCents),
+  forgivenCents: c(raw.forgivenCents),
+  pendingCents: c(raw.pendingCents),
+  leftOnCloseCents: c(raw.leftOnCloseCents),
+});
+
 export async function fetchDashboard(month?: string): Promise<Dashboard> {
   const raw = await api.get<Raw<Dashboard>>(
     month ? `/api/dashboard?month=${month}` : "/api/dashboard",
@@ -298,6 +332,12 @@ export async function fetchDashboard(month?: string): Promise<Dashboard> {
       ...row,
       collectedCents: c(row.collectedCents),
       expectedCents: c(row.expectedCents),
+    })),
+
+    moraByMonth: raw.moraByMonth.map((row) => ({
+      ...row,
+      ...brandMoraFigures(row),
+      contracts: row.contracts.map((line) => ({ ...line, ...brandMoraFigures(line) })),
     })),
 
     collections: {

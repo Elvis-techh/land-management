@@ -55,6 +55,26 @@ export interface MoraAccountsOptions {
 
 const CLOSED = new Set(["cancelled", "defaulted", "replaced"]);
 
+/** Cancelled, defaulted or replaced by an adenda: it owes nothing new from then on. */
+export function isClosedContract(status: string): boolean {
+  return CLOSED.has(status);
+}
+
+/**
+ * The day a closed contract was closed on, `null` for any other. Written as an
+ * instant by the close actions; a bare date (seed data, a hand fix) is already
+ * the day.
+ */
+export function closedOnOf(row: { status: string; closedAt: string | null }, timeZone: string): string | null {
+  if (!CLOSED.has(row.status) || !row.closedAt) {
+    return null;
+  }
+
+  return row.closedAt.length === 10
+    ? row.closedAt
+    : businessToday(timeZone, new Date(parseTimestamp(row.closedAt)));
+}
+
 export function loadMoraAccounts(
   db: Pick<Db, "select">,
   options: MoraAccountsOptions,
@@ -170,14 +190,7 @@ export function loadMoraAccounts(
   }
 
   for (const row of rows) {
-    // Written as an instant by the close actions; a bare date (seed data, a
-    // hand fix) is already the day.
-    const closedOn =
-      CLOSED.has(row.status) && row.closedAt
-        ? row.closedAt.length === 10
-          ? row.closedAt
-          : businessToday(options.timeZone, new Date(parseTimestamp(row.closedAt)))
-        : null;
+    const closedOn = closedOnOf(row, options.timeZone);
 
     accounts.set(
       row.id,

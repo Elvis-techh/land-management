@@ -9711,6 +9711,68 @@ button.dash-tile.is-open {
   font-size: 0.6875rem;
 }
 
+/* «Mora por mes»: the month's contracts under its line. Each one lists only the
+   figures it has, so it wraps instead of needing four more columns on a phone. */
+.dash-mora-contracts {
+  display: flex;
+  flex-direction: column;
+}
+
+.dash-mora-contract {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 10px 14px;
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.8125rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.dash-mora-contract:hover,
+.dash-mora-contract:focus-visible {
+  background: var(--slate-bg);
+}
+
+.dash-mora-figures {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  color: var(--text-secondary);
+}
+
+.dash-mora-figure strong {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+  /* Five columns have to fit a phone without sliding sideways: the Panel's
+     other tables have fewer figures to lose. */
+  .dash-table.is-mora {
+    font-size: 0.75rem;
+  }
+
+  .dash-table.is-mora th,
+  .dash-table.is-mora > tbody > tr > td {
+    padding-left: 6px;
+    padding-right: 6px;
+    white-space: nowrap;
+  }
+
+  .dash-table.is-mora > tbody > tr.dash-subrow > td {
+    padding: 0 0 10px;
+    white-space: normal;
+  }
+}
+
 /* The per-customer total shown under the name. Only ever visible at the width
    where the column it belongs to has been dropped, so the figure is never on
    screen twice. */

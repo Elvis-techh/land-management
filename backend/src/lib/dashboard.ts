@@ -23,6 +23,8 @@
 
 import type { ContractTerms, PaymentHealth } from "./contracts.js";
 import { buildSchedule } from "./contracts.js";
+import type { MoraAccount } from "./mora.js";
+import { moraPendingThrough } from "./mora.js";
 
 /* -------------------------------------------------------------------------- */
 /* Calendar                                                                    */
@@ -66,6 +68,58 @@ export function monthsEndingAt(month: string, count: number): string[] {
 /** `count` consecutive months starting the month AFTER `month`, soonest first. */
 export function monthsAfter(month: string, count: number): string[] {
   return Array.from({ length: count }, (_, index) => shiftMonth(month, index + 1));
+}
+
+/* -------------------------------------------------------------------------- */
+/* «Mora por mes»                                                              */
+/* -------------------------------------------------------------------------- */
+
+/** One contract's mora in one month. */
+export interface MoraOfMonth {
+  chargedCents: number;
+  collectedCents: number;
+  forgivenCents: number;
+  /** Still owed at the end of the month. An open contract's only, as on the «Mora pendiente» tile. */
+  pendingCents: number;
+  /** What was unpaid when the contract closed this month, and so stopped counting as pending. */
+  leftOnCloseCents: number;
+}
+
+/**
+ * What happened counts in the month it happened: a mora charged in October and
+ * paid in November is charged on one line and collected on the next. Month by
+ * month, last month's pending plus what was charged, less what was collected,
+ * forgiven or left on closing, is this month's pending.
+ *
+ * `closedOn` is `null` while the contract is open.
+ */
+export function moraOfMonth(account: MoraAccount, month: string, closedOn: string | null): MoraOfMonth {
+  const end = monthEnd(month);
+  const owed = moraPendingThrough(account, end);
+  const closed = closedOn !== null && closedOn <= end;
+  let chargedCents = 0;
+  let collectedCents = 0;
+  let forgivenCents = 0;
+
+  for (const charge of account.charges) {
+    chargedCents += monthOf(charge.incurredOn) === month ? charge.amountCents : 0;
+  }
+
+  for (const split of account.splits) {
+    collectedCents += monthOf(split.paidOn) === month ? split.toMoraCents : 0;
+  }
+
+  for (const entry of account.forgiven) {
+    forgivenCents += monthOf(entry.forgivenOn) === month ? entry.amountCents : 0;
+  }
+
+  return {
+    chargedCents,
+    collectedCents,
+    forgivenCents,
+    pendingCents: closed ? 0 : owed,
+    leftOnCloseCents: closed && monthOf(closedOn) === month ? owed : 0,
+  };
 }
 
 /* -------------------------------------------------------------------------- */

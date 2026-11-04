@@ -10,7 +10,7 @@ import { buildProjectAccents } from "../../lib/projectAccent";
 import { HEALTH_PRESENTATION } from "../contracts/contractPresentation";
 import { BEHIND_HEALTH } from "../contracts/contractFilters";
 import type { ContractFilterPreset } from "../contracts/contractFilters";
-import type { Dashboard, Debtor, MonthPayment, SignedContract } from "./api";
+import type { Dashboard, Debtor, MonthPayment, MoraMonth, SignedContract } from "./api";
 import { resetDashboardLayout, saveDashboardLayout } from "./api";
 import { MonthlyBars } from "./MonthlyBars";
 import type { DashboardLayout, SectionId } from "./dashboardSections";
@@ -30,6 +30,7 @@ import {
   describeExpiry,
   formatDate,
   formatMonth,
+  formatMonthAxis,
   formatMonthName,
   groupPayers,
   pluralise,
@@ -183,6 +184,12 @@ export function DashboardPage({
     null,
   );
 
+  /** Which month of «Mora por mes» is open, "2026-10". `null` for none. */
+  const [openMoraMonth, setOpenMoraMonth] = useRememberedState<string | null>(
+    "dashboard.openMoraMonth",
+    null,
+  );
+
   const [layout, setLayout] = useState<DashboardLayout>(() => resolveLayout(data.layout));
   const [draft, setDraft] = useState<DashboardLayout | null>(null);
   const [dragging, setDragging] = useState<SectionId | null>(null);
@@ -226,8 +233,9 @@ export function DashboardPage({
 
     setOpenTile(null);
     setOpenProject(null);
+    setOpenMoraMonth(null);
     setPanelsMonth(data.month);
-  }, [data.month, panelsMonth, setOpenTile, setOpenProject, setPanelsMonth]);
+  }, [data.month, panelsMonth, setOpenTile, setOpenProject, setOpenMoraMonth, setPanelsMonth]);
 
   const visible = draft ?? layout;
   const hiddenIds = useMemo(() => new Set(visible.hidden), [visible.hidden]);
@@ -633,6 +641,85 @@ export function DashboardPage({
                 Ver {behindTotal === 1 ? "el contrato atrasado" : `los ${behindTotal} atrasados`} en
                 Contratos
               </button>
+            </div>
+          )}
+        </div>
+    ),
+
+    // Absent until mora has ever been switched on, like its tile above.
+    mora: income.mora && (
+        <div className="card dash-card">
+          <div className="card-head">
+            <h3>Mora por mes</h3>
+            <span className="tag">últimos 12 meses</span>
+          </div>
+
+          {data.moraByMonth.length === 0 ? (
+            <p className="state-message">Todavía no se ha cargado mora en ningún contrato.</p>
+          ) : (
+            <div className="table-wrap">
+              <table className="dash-table is-mora">
+                <thead>
+                  <tr>
+                    <th>Mes</th>
+                    <th className="col-money">Cargada</th>
+                    <th className="col-money">Cobrada</th>
+                    <th className="col-money">Perdonada</th>
+                    <th className="col-money">Pendiente</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...data.moraByMonth].reverse().map((row) => {
+                    const isOpen = openMoraMonth === row.month;
+
+                    return (
+                      <Fragment key={row.month}>
+                        <tr
+                          className={`is-clickable${isOpen ? " is-open" : ""}`}
+                          onClick={() =>
+                            setOpenMoraMonth((current) => (current === row.month ? null : row.month))
+                          }
+                          aria-expanded={isOpen}
+                        >
+                          <td>
+                            <span className={`dash-row-caret${isOpen ? " is-open" : ""}`}>
+                              <IconChevronDown />
+                            </span>
+                            {formatMonthAxis(row.month, true)}
+                          </td>
+                          <td className="col-money">{moneyCell(row.chargedCents)}</td>
+                          <td className="col-money">{moneyCell(row.collectedCents)}</td>
+                          <td className="col-money">{moneyCell(row.forgivenCents)}</td>
+                          <td className="col-money">{moneyCell(row.pendingCents, "is-balance")}</td>
+                        </tr>
+
+                        {isOpen && (
+                          <tr className="dash-subrow">
+                            <td colSpan={5}>
+                              <MoraMonthContracts
+                                row={row}
+                                money={money}
+                                onOpenContract={onOpenContract}
+                              />
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {data.moraByMonth.length > 0 && (
+            <div className="dash-card-body">
+              <p className="dash-note">
+                Toca un mes para ver los contratos. Cada monto cuenta en el mes en que pasó: mora
+                cargada en octubre y cobrada en noviembre sale en las dos líneas. Pendiente es lo que
+                quedaba sin cobrar al cerrar el mes, en contratos abiertos; el mes en curso llega
+                hasta hoy.
+              </p>
             </div>
           )}
         </div>
@@ -1381,6 +1468,61 @@ function StatTile({
     >
       {body}
     </button>
+  );
+}
+
+/** The contracts behind one line of «Mora por mes»: only the figures each one has. */
+function MoraMonthContracts({
+  row,
+  money,
+  onOpenContract,
+}: {
+  row: MoraMonth;
+  money: MoneyView;
+  onOpenContract: (contractId: string) => void;
+}) {
+  return (
+    <div className="dash-mora-contracts">
+      {row.contracts.map((line) => (
+        <button
+          key={line.contractId}
+          type="button"
+          className="dash-mora-contract"
+          onClick={() => onOpenContract(line.contractId)}
+          title={`Abrir ${line.contractCode}`}
+        >
+          <span className="holder-text">
+            <span className="holder-name">{line.customerName}</span>
+            <span className="holder-contract">
+              {line.contractCode} · {line.lotCode}
+            </span>
+          </span>
+          <span className="dash-mora-figures">
+            {(
+              [
+                ["Cargada", line.chargedCents],
+                ["Cobrada", line.collectedCents],
+                ["Perdonada", line.forgivenCents],
+                ["Pendiente", line.pendingCents],
+              ] as const
+            ).map(
+              ([label, amount]) =>
+                amount > 0 && (
+                  <span key={label} className="dash-mora-figure">
+                    {label} <strong>{formatMoney(amount, money)}</strong>
+                  </span>
+                ),
+            )}
+          </span>
+          {line.leftOnCloseCents > 0 && (
+            <span className="cell-sub">
+              Contrato cerrado este mes: {formatMoney(line.leftOnCloseCents, money)} sin cobrar ya no
+              cuentan como pendiente.
+            </span>
+          )}
+        </button>
+      ))}
+    </div>
   );
 }
 
