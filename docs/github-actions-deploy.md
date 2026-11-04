@@ -169,7 +169,10 @@ is merged. **Actions → Deploy test → Run workflow**, or ask Claude to run it
 - **branch**: the branch to send. It defaults to `main`.
 - **reset_data**: also erase everything on the test site and put fresh demo data
   back. Tick it to start clean, or when the site does not come up after switching
-  to a branch with different database changes.
+  to a branch with different database changes. The demo data has mora switched on
+  and 20 fake «Caso» customers for trying «Perdonar» (search «Caso» in Contratos,
+  and Filtros → Cancelado for the two cancelled ones; each contract's notes say
+  what to try). See `backend/src/db/moraCases.ts`.
 
 It takes about a minute on GitHub, and the droplet picks the build up within two
 more (`lindero-test-autodeploy.timer`). The orange strip ends with the branch and
