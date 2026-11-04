@@ -191,6 +191,12 @@ export interface MoraAccount {
   pendingByCharge: Record<string, number>;
   /** The same, added up by cuota (0 for the prima): what «Perdonar» can clear. */
   pendingByInstallment: Record<number, number>;
+  /**
+   * What «Perdonar» cleared of each charge, by charge id, for the ones it
+   * touched. Tells a charge that was forgiven from one that was paid: both end
+   * with nothing unpaid.
+   */
+  forgivenByCharge: Record<string, number>;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -489,6 +495,7 @@ export function moraAccount(
   const charges: MoraCharge[] = [];
   const splits: MoraSplit[] = [];
   const forgiven: MoraForgiven[] = [];
+  const forgivenByCharge: Record<string, number> = {};
   const owed: Owed[] = [];
   let pricePaid = 0;
   let moraOwed = 0;
@@ -641,6 +648,7 @@ export function moraAccount(
       unpaid.remainingCents -= share;
       left -= share;
       cleared += share;
+      forgivenByCharge[unpaid.chargeId] = (forgivenByCharge[unpaid.chargeId] ?? 0) + share;
 
       if (unpaid.remainingCents === 0) {
         owed.splice(index, 1);
@@ -705,6 +713,7 @@ export function moraAccount(
     pendingCents: chargedCents - moraPaidTotal - moraForgivenTotal,
     pendingByCharge: Object.fromEntries(owed.map((entry) => [entry.chargeId, entry.remainingCents])),
     pendingByInstallment,
+    forgivenByCharge,
   };
 }
 

@@ -128,4 +128,16 @@ test("«Perdonar» takes part of a cuota's unpaid mora off the saldo, and «Quit
   await expect(remove).toHaveCount(0);
   await expect(panel.locator(".contract-progress-balance")).toContainText("L. 120,500");
   await expect(section).toContainText("Ninguna");
+
+  // All of it forgiven: the entry says so. Nobody paid it, so not «Pagada».
+  const handMade = panel.locator(".cp-section", { hasText: "Mora cargada a mano" });
+  await expect(handMade).toContainText("Pendiente");
+  await section.getByRole("button", { name: "Perdonar" }).click();
+  await form.getByLabel("Motivo *").fill("Se acordó perdonarle toda la mora.");
+  await form.getByRole("button", { name: "Perdonar mora" }).click();
+  await expect(form).toHaveCount(0);
+  await expect(handMade).toContainText("Perdonada");
+  await expect(handMade).not.toContainText("Pagada");
+  await handMade.scrollIntoViewIfNeeded();
+  await handMade.screenshot({ path: testInfo.outputPath("perdonada-a-mano.png") });
 });

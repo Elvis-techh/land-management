@@ -27,6 +27,7 @@ import {
   unforgiveContractMora,
 } from "./api";
 import { formatDate } from "./contractPresentation";
+import { manualMoraStatus } from "./manualMoraStatus";
 
 interface ContractMoraProps {
   contract: Contract;
@@ -218,12 +219,7 @@ export function ContractMora({ contract, money, user, onChanged }: ContractMoraP
                       {formatMoney(cents(entry.amountCents), money)}
                     </span>
                     <span className="cp-doc-sub is-prose">
-                      {entry.pendingCents === 0
-                        ? "Pagada"
-                        : entry.pendingCents === entry.amountCents
-                          ? "Pendiente"
-                          : `Faltan ${formatMoney(cents(entry.pendingCents), money)}`}{" "}
-                      · {entry.reason} · {entry.recordedBy}
+                      {manualMoraStatus(entry, money)} · {entry.reason} · {entry.recordedBy}
                     </span>
                   </span>
                   {canCharge && (
