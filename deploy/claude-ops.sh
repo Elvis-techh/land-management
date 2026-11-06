@@ -136,6 +136,9 @@ show_status() {
     pm2=$(cat /root/.pm2/pm2.pid)
     echo "oom_score_adj:   pm2 $(cat "/proc/$pm2/oom_score_adj")$(for child in $(ps -o pid= --ppid "$pm2"); do printf ', %s %s' "$(cat "/proc/$child/comm")" "$(cat "/proc/$child/oom_score_adj")"; done)   expect -500"
     echo "after a reboot:  $(grep -hs '^OOMScoreAdjust=' /etc/systemd/system/pm2-root.service.d/*.conf | tail -n 1 || echo 'not set')   expect OOMScoreAdjust=-500"
+    # Which Node each really runs on. PM2 renames both, so `pgrep -x node` misses them.
+    echo "node:            pm2 $(readlink "/proc/$pm2/exe")$(for child in $(ps -o pid= --ppid "$pm2"); do printf ', %s %s' "$(cat "/proc/$child/comm")" "$(readlink "/proc/$child/exe")"; done)"
+    echo "backup runs on:  $(systemctl show bascula-backup.service -p ExecStart --value 2>/dev/null | grep -o 'path=[^ ;]*' | head -n 1 | cut -d= -f2 || echo unknown)"
   else
     echo "pm2: daemon not running (not started from here)"
   fi

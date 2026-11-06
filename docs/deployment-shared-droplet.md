@@ -161,6 +161,11 @@ Install Node 22 to a path of its own and leave `/usr/bin/node` exactly as
 bascula-central found it (step 3). Nothing on `PATH` changes; the systemd unit
 names the interpreter absolutely.
 
+The warning is about replacing Node underneath it. bascula-central's own move off
+Node 20 is step 15, which does not replace anything either. Its `sqlite3` 6.0.1
+turned out not to be tied to one Node version, but that step proves it on the
+droplet instead of trusting it.
+
 ## The steps
 
 ### 0. Inventory, before changing anything
@@ -838,6 +843,93 @@ sha256sum /opt/lindero/deploy/claude-ops.sh /usr/local/sbin/lindero-claude-ops  
 To take the test site out again, data and certificate included:
 `bash /opt/lindero/deploy/setup-test-site.sh --undo`. Browsers that visited it keep
 insisting on https for a year (HSTS), which only matters if the address is reused.
+
+### 15. Moving bascula-central off Node 20
+
+Security updates for Node 20 ended on 2026-04-30. It keeps running, but nothing fixes
+it any more. Three things on this droplet use it: bascula-central's server, PM2, and
+the hourly backup. The scale stations are Electron apps that carry their own copy, so
+nothing changes on them. Lindero, its test site and the Junta's test copy are on
+`/opt/node22`, which is a separate job before 2027-04-30.
+
+**Why Node 24.** It is supported until 2028-04-30, and has been a long-term version for
+a year. Node 26 became one on 2026-10-28 and lasts a year longer, until 2029-04-30. It
+passed the same rehearsal, so it is a fair choice too. Node 24 was picked because
+bascula-central has no test suite, which is the wrong place to be early. Moving again
+later means changing three lines at the top of the script and rehearsing again.
+
+**The steps.** Each is safe to run twice. Send Claude a screenshot of each.
+
+```bash
+# Reads only, any time:
+bash /opt/lindero/deploy/bascula-node-move.sh --check
+
+# Any time: installs /opt/node24 and runs a real backup on it. Nothing restarts.
+bash /opt/lindero/deploy/bascula-node-move.sh --prepare
+
+# After 7 p.m., bascula-central's own rule for a deploy (its DESARROLLO.md). A backup,
+# then two restarts of bascula-central, a few seconds each.
+bash /opt/lindero/deploy/bascula-node-move.sh --move
+```
+
+Then weigh something on a scale station. That is the proof that counts, because
+bascula-central has no tests. After that, copy the locked key's script in again, so
+`ssh lindero-ops status` shows which Node each one runs on
+(see [claude-ops-key.md](claude-ops-key.md)):
+
+```bash
+install -m 755 -o root -g root /opt/lindero/deploy/claude-ops.sh /usr/local/sbin/lindero-claude-ops
+sha256sum /opt/lindero/deploy/claude-ops.sh /usr/local/sbin/lindero-claude-ops   # the two must match
+```
+
+**Going back.** `--move` goes back by itself if bascula-central does not settle on the
+new Node, or if any later step fails. That case costs about half a minute without
+service. To go back later, by choice, run the same script with `--undo`, which takes the
+same two short restarts and leaves `/opt/node24` in place. `/usr/bin/node` is never
+touched, so there is always something to go back to.
+
+**What the rehearsal found.** On a laptop, 2026-11-04: bascula-central's real code at
+commit `d532bbb` with its real `sqlite3`, under real PM2 (5.4.3, 6.0.14 and 7.1.2) and a
+real systemd unit shaped like the one `pm2 startup` writes. This is what shaped the script:
+
+- **Changing only PM2's service moves PM2 and not bascula-central, silently.** PM2 saves
+  the old `PATH` along with the program, and that is what finds `node`. The program has
+  to be told the new Node's full path with `pm2 restart --interpreter`, then `pm2 save`.
+  After that it stays on the new Node through a crash, `pm2 restart`, `pm2 reload`,
+  `pm2 stop` and `pm2 start`, and a reboot.
+- **`pm2 delete` followed by a fresh `pm2 start` puts it back on Node 20.** If it ever
+  needs a fresh start, add `--interpreter /opt/node24/bin/node`, then `pm2 save`.
+- **`pgrep -x node` cannot see them.** PM2 renames itself and the program (`PM2 v…: God`
+  and `node /root/weig`), so a search by name lists only Lindero's programs and looks like
+  bascula-central is on Node 22. Read `/proc/PID/exe`, as `--check` and `status` do.
+- **`sqlite3` is fine.** The same installed files, put there by Node 20, load on 24 and
+  26. Records written on any version read back on the others, including going back to
+  20. Every read route with no parameters gave the same answer on all three, and the
+  backup ran on each, including the real AWS upload code against a stand-in for Spaces.
+- **It takes more memory.** bascula-central, idle, went from 72 MB to 90 MB on Node 24
+  (92 MB on 26). The droplet has about 430 MB available.
+- **The outage is short.** The longest gap in answers was 0.33 s for the first restart
+  and 0.78 s for the second, on a fast idle laptop. Expect a few seconds on one shared CPU.
+- **The failure paths work.** A Node that cannot run the server, and one that starts and
+  then crashes, both put it back on the old Node by themselves. A bad download leaves
+  nothing behind. A PM2 that its service does not own stops the script before it changes
+  anything, because restarting the service then would start a second copy.
+
+**What a laptop cannot prove,** which is why `--prepare` and `--move` check these on the
+droplet itself: nginx in front of it, the real Spaces bucket, the place in line when memory
+runs out (-500, which needs root), and the droplet's real database.
+
+**After the move.** The `pm2` command itself, and any bascula-central script run by hand
+(`node scripts/enroll-terminal.js`), still use `/usr/bin/node`, because root's `PATH` does
+not change. That is harmless: the rehearsal shows the `pm2` command talks to a PM2 on
+Node 24 without trouble, and the plain `pm2 restart bascula-backend` in its deploy routine
+stays on the new Node. `backend/deploy/bascula-backup.service` in bascula-central's own
+repository still names `/usr/bin/node`, and copying it in again changes nothing, because
+the drop-in wins. `/usr/bin/node` stays installed. Removing it is a later decision, and
+`deploy/claude-ops.sh` uses it to read PM2's list, so that would have to change first.
+
+A rehearsal on a laptop points the script at a scratch copy through one setting,
+`BASCULA_MOVE_REHEARSAL`, a file sourced after its defaults. It is never set on the droplet.
 
 ## Deploying again, later
 
