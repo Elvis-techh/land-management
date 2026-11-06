@@ -9906,6 +9906,40 @@ button.dash-tile.is-open {
   }
 }
 
+/*
+ * «Registrar un pago»: the duplicate warning and the buttons, pinned together
+ * to the bottom of the dialog (QI-7).
+ *
+ * The dialog panel (`.entity-modal`) is the scroll container, so `sticky` with
+ * `bottom: 0` keeps this in view wherever the form is scrolled, and lets it
+ * settle in its normal place once the form is scrolled to the end. Opaque, and
+ * above the fields, because the form scrolls behind it.
+ */
+.receipt-dialog-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  background: var(--card);
+  border-radius: 0 0 16px 16px;
+}
+
+.receipt-duplicate-warning {
+  margin: 0 26px 12px;
+  box-shadow: 0 -6px 14px rgba(61, 49, 42, 0.08);
+}
+
+/* A long list of matches must not push the buttons off a phone screen. */
+.receipt-duplicate-warning .duplicate-matches {
+  max-height: 6.5em;
+  overflow-y: auto;
+}
+
+@media (max-width: 760px) {
+  .receipt-duplicate-warning {
+    margin: 0 18px 10px;
+  }
+}
+
 /* The receipts that may already be this payment, listed inside the duplicate
    warning. Compact and unbulleted: it is evidence to scan, not prose to read,
    and it sits inside a box that has already said what it means. */
