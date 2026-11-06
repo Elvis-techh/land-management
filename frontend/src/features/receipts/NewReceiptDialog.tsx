@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { Dialog } from "../../components/Dialog";
+import { DiscardDraftDialog } from "../../components/DiscardDraftDialog";
 import { DraftNotice } from "../../components/DraftNotice";
 import { useFormDraft } from "../../lib/formDrafts";
 import { IconClose } from "../../components/Icons";
@@ -664,6 +665,10 @@ export function NewReceiptDialog({
         // failed payment. The receipt stands; the file can be added again from
         // the receipt itself.
         if (failures.length > 0) {
+          // Saved, so there is nothing to recover and nothing to discard:
+          // closing now must neither offer it back nor ask about it.
+          receiptSavedRef.current = true;
+          formDraft.clear();
           setProofNotice(
             `El pago quedó registrado como ${receipt.code}, pero no se pudo subir ` +
               `${failures.join(", ")}. Puedes adjuntarlo de nuevo desde el recibo.`,
@@ -755,6 +760,9 @@ export function NewReceiptDialog({
    * deactivated since yesterday would otherwise come back selected in a list
    * that no longer contains them.
    */
+  const [askingDiscard, setAskingDiscard] = useState(false);
+  /** The receipt exists although a comprobante failed to upload; see `submit`. */
+  const receiptSavedRef = useRef(false);
   const formDraft = useFormDraft(
     "receipt-create",
     {
@@ -825,6 +833,19 @@ export function NewReceiptDialog({
 
   const customerName = customers.find((row) => row.id === customerId)?.fullName ?? null;
 
+  /*
+   * «Cancelar» and the X ask first once something is typed, and «Descartar»
+   * erases the draft: see `DiscardDraftDialog` (QI-6).
+   */
+  const requestClose = () => {
+    if (hasEnteredAnything && !receiptSavedRef.current) {
+      setAskingDiscard(true);
+      return;
+    }
+
+    onClose();
+  };
+
   return (
     /*
      * Wider once the receipt is about more than one lot.
@@ -851,7 +872,7 @@ export function NewReceiptDialog({
        * Dialog.tsx.
        */
       dismissible={!hasEnteredAnything && !isSaving && proofBusy === null}
-      onClose={onClose}
+      onClose={requestClose}
     >
       <div className="modal-header">
         <div>
@@ -868,7 +889,7 @@ export function NewReceiptDialog({
         <button
           type="button"
           className="modal-close"
-          onClick={onClose}
+          onClick={requestClose}
           disabled={proofBusy !== null}
           title={proofBusy ?? undefined}
           aria-label="Cerrar"
@@ -1372,7 +1393,7 @@ export function NewReceiptDialog({
         <button
           type="button"
           className="btn-secondary"
-          onClick={onClose}
+          onClick={requestClose}
           disabled={isSaving || proofBusy !== null}
         >
           Cancelar
@@ -1397,6 +1418,17 @@ export function NewReceiptDialog({
           {proofBusy ?? savingStep ?? "Registrar y emitir recibo"}
         </button>
       </div>
+
+      {askingDiscard && (
+        <DiscardDraftDialog
+          what="el pago"
+          onKeep={() => setAskingDiscard(false)}
+          onDiscard={() => {
+            formDraft.discard();
+            onClose();
+          }}
+        />
+      )}
     </Dialog>
   );
 }

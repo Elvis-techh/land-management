@@ -2,6 +2,7 @@ import type { FormEvent } from "react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { Dialog } from "../../components/Dialog";
+import { DiscardDraftDialog } from "../../components/DiscardDraftDialog";
 import { DraftNotice } from "../../components/DraftNotice";
 import { useFormDraft } from "../../lib/formDrafts";
 import { IconClose } from "../../components/Icons";
@@ -520,11 +521,29 @@ export function ContractCreateDialog({
    */
   const close = () => {
     if (created === null) {
-      onCancel();
+      requestCancel();
       return;
     }
 
     onCreated();
+  };
+
+  /*
+   * «Cancelar», and the X before the contract exists.
+   *
+   * With anything typed, it asks first, and «Descartar» erases the draft too:
+   * cancelling is a decision, and the next «Nuevo contrato» must not offer
+   * back what was just thrown away (QI-6). The draft is only for what nobody
+   * decided — a reload, a phone that slept. See `DiscardDraftDialog`.
+   */
+  const [askingDiscard, setAskingDiscard] = useState(false);
+  const requestCancel = () => {
+    if (hasEnteredAnything) {
+      setAskingDiscard(true);
+      return;
+    }
+
+    onCancel();
   };
 
   const submitParties = () => {
@@ -1279,7 +1298,7 @@ export function ContractCreateDialog({
             <button
               type="button"
               className="btn-secondary"
-              onClick={onCancel}
+              onClick={requestCancel}
               disabled={isWorking}
             >
               Cancelar
@@ -1312,6 +1331,17 @@ export function ContractCreateDialog({
           </button>
         </div>
       </form>
+
+      {askingDiscard && (
+        <DiscardDraftDialog
+          what="el contrato"
+          onKeep={() => setAskingDiscard(false)}
+          onDiscard={() => {
+            draft.discard();
+            onCancel();
+          }}
+        />
+      )}
     </Dialog>
   );
 }
