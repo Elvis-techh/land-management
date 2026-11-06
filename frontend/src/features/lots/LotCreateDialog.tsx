@@ -2,6 +2,7 @@ import type { FormEvent } from "react";
 import { useMemo, useState } from "react";
 
 import { Dialog } from "../../components/Dialog";
+import { DiscardDraftDialog } from "../../components/DiscardDraftDialog";
 import { DraftNotice } from "../../components/DraftNotice";
 import { useFormDraft } from "../../lib/formDrafts";
 import { IconClose } from "../../components/Icons";
@@ -82,6 +83,20 @@ export function LotCreateDialog({
     prefixOverride !== null ||
     numberOverride !== null ||
     manualCode !== null;
+
+  /*
+   * «Cancelar» and the X ask first once something is typed, and «Descartar»
+   * erases the draft: see `DiscardDraftDialog` (QI-6).
+   */
+  const [askingDiscard, setAskingDiscard] = useState(false);
+  const requestCancel = () => {
+    if (hasEnteredAnything) {
+      setAskingDiscard(true);
+      return;
+    }
+
+    onCancel();
+  };
 
   /*
    * The same values, kept across a reload. Nothing here is a file, so a
@@ -179,7 +194,7 @@ export function LotCreateDialog({
       /* The X and Cancelar stay; the backdrop and Escape stop closing once
          there is something to lose. See `dismissible` in Dialog.tsx. */
       dismissible={!hasEnteredAnything && !isSaving}
-      onClose={onCancel}
+      onClose={requestCancel}
     >
       <form onSubmit={handleSubmit}>
         <div className="modal-header">
@@ -191,7 +206,7 @@ export function LotCreateDialog({
               registra un contrato.
             </p>
           </div>
-          <button type="button" className="modal-close" onClick={onCancel} aria-label="Cerrar">
+          <button type="button" className="modal-close" onClick={requestCancel} aria-label="Cerrar">
             <IconClose />
           </button>
         </div>
@@ -370,7 +385,7 @@ export function LotCreateDialog({
         </div>
 
         <div className="modal-actions">
-          <button type="button" className="btn-secondary" onClick={onCancel} disabled={isSaving}>
+          <button type="button" className="btn-secondary" onClick={requestCancel} disabled={isSaving}>
             Cancelar
           </button>
           <button
@@ -382,6 +397,17 @@ export function LotCreateDialog({
           </button>
         </div>
       </form>
+
+      {askingDiscard && (
+        <DiscardDraftDialog
+          what="el lote"
+          onKeep={() => setAskingDiscard(false)}
+          onDiscard={() => {
+            draft.discard();
+            onCancel();
+          }}
+        />
+      )}
     </Dialog>
   );
 }

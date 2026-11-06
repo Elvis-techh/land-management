@@ -17,6 +17,8 @@ interface ConfirmDialogProps {
   confirmLabel: string;
   /** What that button says while the request is in flight. */
   busyLabel: string;
+  /** The way back without acting. "Cancelar" unless that would be ambiguous. */
+  cancelLabel?: string;
   onCancel: () => void;
   /** Rejects when the server refuses; the message is shown in the dialog. */
   onConfirm: () => Promise<void>;
@@ -48,6 +50,7 @@ export function ConfirmDialog({
   children,
   confirmLabel,
   busyLabel,
+  cancelLabel = "Cancelar",
   onCancel,
   onConfirm,
 }: ConfirmDialogProps) {
@@ -88,7 +91,7 @@ export function ConfirmDialog({
 
       <div className="modal-actions">
         <button type="button" className="btn-secondary" onClick={onCancel} disabled={isWorking}>
-          Cancelar
+          {cancelLabel}
         </button>
         <button
           type="button"
