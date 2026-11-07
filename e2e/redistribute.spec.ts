@@ -19,7 +19,8 @@ test("«Repartir» moves money with centavos from one lot to another", async ({ 
   await dialog.getByLabel("Monto *").fill("1000.50");
   // The proposed split puts it all on the lot whose cuota is due first, C-02.
   await dialog.getByRole("button", { name: "Repartir el monto entre los lotes" }).click();
-  await expect(dialog.locator(".split-table tbody tr")).toHaveCount(3);
+  // The lots, not the mora line a late lot has under it (moraAtPayment.ts).
+  await expect(dialog.locator(".split-table tbody tr:not(.split-mora-row)")).toHaveCount(3);
   await dialog.getByRole("button", { name: "Registrar y emitir recibo" }).click();
   await expect(dialog).toHaveCount(0);
 

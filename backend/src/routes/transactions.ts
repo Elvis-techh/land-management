@@ -16,7 +16,9 @@ import { syncContractLifecycle } from "../lib/contractLifecycle.js";
 import { roleCan } from "../lib/capabilities.js";
 import { openContract } from "../lib/holding.js";
 import { replayContract } from "../lib/ledger.js";
-import { ledgerChargesOf, loadMoraAccount, loadMoraAccounts } from "../lib/moraAccounts.js";
+import type { MoraAccountsOptions } from "../lib/moraAccounts.js";
+import { ledgerChargesOf, loadMoraAccount, loadMoraAccounts, loadPaymentMora } from "../lib/moraAccounts.js";
+import { changeRows, justBefore, planMoraChange } from "../lib/moraAtPayment.js";
 import { businessToday } from "../lib/time.js";
 
 const PAYMENT_METHODS = ["cash", "transfer", "card"] as const;
@@ -223,7 +225,7 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
    * person currently owes on, which is what somebody paying at a window
    * actually means when they hand over a lump sum.
    */
-  app.get<{ Params: { id: string }; Querystring: { amountCents?: string } }>(
+  app.get<{ Params: { id: string }; Querystring: { amountCents?: string; mora?: string } }>(
     "/customers/:id/split",
     { onRequest: app.requireUser },
     async (request, reply) => {
@@ -234,6 +236,22 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
           error: "invalid_amount",
           message: "Indica el monto a repartir, en centavos.",
         });
+      }
+
+      // Lots whose mora was changed in the form: «id:centavos,id:centavos».
+      // Divided with the mora each is to owe, so «Repartir» gives a lot whose
+      // mora went to zero just its cuota. See lib/moraAtPayment.ts.
+      const moraTargets = new Map<string, number>();
+
+      for (const pair of (request.query.mora ?? "").split(",").filter(Boolean)) {
+        const [id, value] = pair.split(":");
+        const target = Number(value);
+
+        if (!id || !Number.isInteger(target) || target < 0) {
+          return reply.code(400).send({ error: "invalid_mora", message: "Indica la mora de cada lote, en centavos." });
+        }
+
+        moraTargets.set(id, target);
       }
 
       const customer = app.db
@@ -287,11 +305,13 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
         timeZone: options.timeZone,
         contractIds: open.map((contract) => contract.id),
       });
+      // The mora each lot owes now, or is to owe once changed in the form.
+      const pendingOf = (id: string) => moraTargets.get(id) ?? mora.get(id)?.pendingCents ?? 0;
       // What each lot owes now: the rest of its price, plus its pending mora.
       const owedNow = (contract: (typeof open)[number]) => {
         const account = mora.get(contract.id);
         const pricePaid = contract.paidToDateCents - (account?.paidCents ?? 0);
-        return Math.max(0, contract.salePriceCents - pricePaid) + (account?.pendingCents ?? 0);
+        return Math.max(0, contract.salePriceCents - pricePaid) + pendingOf(contract.id);
       };
 
       const targets: AllocationTarget[] = open.map((contract) => {
@@ -318,7 +338,7 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
           // too: without it, the cuota is not what the money would complete.
           minimumDueCents:
             assessContract(terms, contract.paidToDateCents - (account?.paidCents ?? 0), asOf)
-              .nextDueAmountCents + (account?.pendingCents ?? 0),
+              .nextDueAmountCents + pendingOf(contract.id),
         };
       });
 
@@ -374,8 +394,12 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
    * With mora owed, the preview divides the money as lib/mora.ts will once it
    * is saved: `mora` is the part that pays mora, and the cuotas named are the
    * ones the rest of it reaches.
+   *
+   * `moraCents`, when given, is the mora the lot is to owe right before this
+   * payment, changed in the form (lib/moraAtPayment.ts): the preview replays
+   * the same «Perdonar» or «Cargar mora» rows the receipt would write.
    */
-  app.get<{ Params: { id: string }; Querystring: { amountCents?: string } }>(
+  app.get<{ Params: { id: string }; Querystring: { amountCents?: string; moraCents?: string } }>(
     "/contracts/:id/after-payment",
     { onRequest: app.requireUser },
     async (request, reply) => {
@@ -428,10 +452,41 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
         firstDueOn: contract.firstDueOn,
       };
       const asOf = today();
+      let adjusting: NonNullable<MoraAccountsOptions["adjusting"]> | undefined;
+
+      if (request.query.moraCents !== undefined) {
+        const target = Number(request.query.moraCents);
+
+        if (!Number.isInteger(target) || target < 0) {
+          return reply.code(400).send({ error: "invalid_mora", message: "Indica la mora, en centavos." });
+        }
+
+        const lot = loadPaymentMora(app.db, [request.params.id], { asOf, timeZone: options.timeZone }).get(
+          request.params.id,
+        );
+
+        if (!lot?.carriesMora) {
+          return reply.code(409).send({ error: "not_chargeable", message: "Este contrato no lleva mora." });
+        }
+
+        const plan = planMoraChange(lot.account, target, lot.late?.installment ?? null);
+
+        if ("problem" in plan) {
+          return reply.code(400).send({ error: "nothing_late", message: plan.problem });
+        }
+
+        let next = 0;
+        adjusting = {
+          contractId: request.params.id,
+          ...changeRows(plan, asOf, justBefore(new Date().toISOString()), () => `preview-${(next += 1)}`),
+        };
+      }
+
       const preview = loadMoraAccount(app.db, request.params.id, {
         asOf,
         timeZone: options.timeZone,
         adding: { id: "preview", contractId: request.params.id, amountCents, paidOn: asOf },
+        ...(adjusting ? { adjusting } : {}),
       })?.splits.find((split) => split.creditId === "preview");
 
       const before = preview ? preview.pricePaidBeforeCents : (paid?.total ?? 0);
