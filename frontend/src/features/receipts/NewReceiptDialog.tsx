@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { Dialog } from "../../components/Dialog";
 import { DiscardDraftDialog } from "../../components/DiscardDraftDialog";
@@ -22,15 +22,29 @@ import {
 } from "./paymentType";
 import type { PendingProof, ProofLot } from "./ProofDropzone";
 import { MAX_PROOFS, ProofDropzone, acceptProofFiles } from "./ProofDropzone";
-import type { AfterPayment, ReceiptDraft, ReceiptDraftLine } from "./api";
+import type { AfterPayment, PaymentMoraLot, ReceiptDraft, ReceiptDraftLine } from "./api";
 import {
   createReceipt,
   fetchLastPayer,
   fetchAfterPayment,
   fetchCustomerSplit,
   fetchDuplicates,
+  fetchPaymentMora,
   uploadAttachment,
 } from "./api";
+import type { MoraEdit } from "./moraAtPayment";
+import {
+  DATE_FIELD,
+  MIN_REASON,
+  chargeSentences,
+  draftMora,
+  itemName,
+  moraBlocker,
+  moraChanged,
+  moraFieldId,
+  moraReasonFieldId,
+  shortDate,
+} from "./moraAtPayment";
 import { afterPaymentLabel } from "./afterPaymentLabel";
 import type { DuplicateMatch } from "./api";
 import { AMOUNT_FIELD, CUSTOMER_FIELD, receiptBlocker } from "./receiptBlocker";
@@ -60,6 +74,12 @@ interface NewReceiptDialogProps {
    * an empty dropzone needs the explanation where they are already looking.
    */
   initialNotice?: string;
+  /**
+   * May this user change a lot's mora with the payment («Cargar, perdonar o
+   * quitar mora», `mora:charge`)? Everyone sees why a lot has mora; only they
+   * get «Cambiar» and «Cobrar mora». See moraAtPayment.ts.
+   */
+  canChangeMora?: boolean;
 }
 
 type Method = "cash" | "transfer" | "card";
@@ -130,6 +150,7 @@ export function NewReceiptDialog({
   onIssued,
   initialFiles,
   initialNotice,
+  canChangeMora = false,
 }: NewReceiptDialogProps) {
   const [customerId, setCustomerId] = useState("");
   /* The customer the amounts on screen were typed for. "Cambiar" clears the
@@ -184,6 +205,14 @@ export function NewReceiptDialog({
    * map is emptied when the customer changes, so both hold on their own.
    */
   const [typeByContract, setTypeByContract] = useState<Record<string, PaymentType>>({});
+  /*
+   * Each lot's mora as the server counts it before this payment, with why
+   * (moraAtPayment.ts), and the lots whose mora is being changed, as typed.
+   * A lot with no entry in `moraEdits` keeps its mora as it is; that absence,
+   * not a value equal to it, is what "nobody touched it" means.
+   */
+  const [moraLots, setMoraLots] = useState<Record<string, PaymentMoraLot>>({});
+  const [moraEdits, setMoraEdits] = useState<Record<string, MoraEdit>>({});
   const [proofs, setProofs] = useState<PendingProof[]>([]);
   const [error, setError] = useState<string | null>(null);
   /**
@@ -389,15 +418,73 @@ export function NewReceiptDialog({
         continue;
       }
 
+      const mora = draftMora(moraLots[contract.id], moraEdits[contract.id]);
+
       drafts.push({
         contractId: contract.id,
         amountCents,
         type: typeFor(contract),
+        ...(mora ? { mora } : {}),
       });
     }
 
     return drafts;
-  }, [payable, isMultiLot, amountByContract, amountText, typeByContract, paidOn]);
+  }, [payable, isMultiLot, amountByContract, amountText, typeByContract, paidOn, moraLots, moraEdits]);
+
+  /*
+   * The lots' mora, read again whenever their balances move (a payment
+   * entered elsewhere, live). A failure only means no explanation shows; the
+   * payment itself is unaffected, and without it no change can be made.
+   */
+  const balancesKey = payable.map((contract) => `${contract.id}:${contract.balance}`).join("|");
+
+  useEffect(() => {
+    if (customerId === "") {
+      setMoraLots({});
+      return;
+    }
+
+    let live = true;
+
+    fetchPaymentMora(customerId)
+      .then((found) => {
+        if (live) {
+          setMoraLots(Object.fromEntries(found.map((lot) => [lot.contractId, lot])));
+        }
+      })
+      .catch(() => {
+        if (live) {
+          setMoraLots({});
+        }
+      });
+
+    return () => {
+      live = false;
+    };
+  }, [customerId, balancesKey]);
+
+  /* Changing the mora is only for a payment dated today: see moraAtPayment.ts. */
+  const isToday = paidOn === businessToday();
+  const canEditMoraNow = canChangeMora && isToday;
+
+  const startMoraEdit = (contract: Contract) => {
+    const lot = moraLots[contract.id];
+    setMoraEdits((current) => ({
+      ...current,
+      [contract.id]: { amount: lot && lot.pending > 0 ? toMoneyInput(lot.pending) : "", reason: "" },
+    }));
+    // After the render that puts the field there.
+    window.setTimeout(() => document.getElementById(moraFieldId(contract.id))?.focus(), 0);
+  };
+
+  const editMora = (contractId: string, patch: Partial<MoraEdit>) =>
+    setMoraEdits((current) => ({ ...current, [contractId]: { ...current[contractId]!, ...patch } }));
+
+  const dropMoraEdit = (contractId: string) =>
+    setMoraEdits((current) => {
+      const { [contractId]: _dropped, ...rest } = current;
+      return rest;
+    });
 
   const total = lines.reduce((sum, line) => sum + line.amountCents, 0);
 
@@ -408,8 +495,14 @@ export function NewReceiptDialog({
    * never shown against the new one.
    */
   const [afterByContract, setAfterByContract] = useState<
-    Record<string, { amountCents: number; after: AfterPayment }>
+    Record<string, { amountCents: number; moraCents: number | undefined; after: AfterPayment }>
   >({});
+
+  /* What the previews depend on: the amount and the changed mora of each line,
+     not the reason being typed for it. */
+  const previewKey = lines
+    .map((line) => `${line.contractId}:${line.amountCents}:${line.mora?.amountCents ?? ""}`)
+    .join("|");
 
   useEffect(() => {
     if (lines.length === 0) {
@@ -419,12 +512,14 @@ export function NewReceiptDialog({
     let current = true;
     const timer = window.setTimeout(() => {
       for (const line of lines) {
-        fetchAfterPayment(line.contractId, line.amountCents)
+        const moraCents = line.mora?.amountCents;
+
+        fetchAfterPayment(line.contractId, line.amountCents, moraCents)
           .then((after) => {
             if (current) {
               setAfterByContract((known) => ({
                 ...known,
-                [line.contractId]: { amountCents: line.amountCents, after },
+                [line.contractId]: { amountCents: line.amountCents, moraCents, after },
               }));
             }
           })
@@ -437,12 +532,16 @@ export function NewReceiptDialog({
       current = false;
       window.clearTimeout(timer);
     };
-  }, [lines]);
+  }, [previewKey]);
 
   /** The preview for this lot, only while it still matches what is typed. */
   const afterFor = (contract: Contract): AfterPayment | null => {
     const known = afterByContract[contract.id];
-    return known !== undefined && known.amountCents === amountCentsFor(contract) ? known.after : null;
+    const moraCents = draftMora(moraLots[contract.id], moraEdits[contract.id])?.amountCents;
+
+    return known !== undefined && known.amountCents === amountCentsFor(contract) && known.moraCents === moraCents
+      ? known.after
+      : null;
   };
 
   /**
@@ -456,10 +555,14 @@ export function NewReceiptDialog({
     const balances = new Map<string, number>(payable.map((contract) => [contract.id, contract.balance]));
 
     return lines.reduce(
-      (sum, line) => sum + ((balances.get(line.contractId) ?? 0) - line.amountCents),
+      (sum, line) =>
+        sum +
+        ((balances.get(line.contractId) ?? 0) - line.amountCents) +
+        // The balance carries the mora owed; a changed mora moves it.
+        (line.mora ? line.mora.amountCents - (moraLots[line.contractId]?.pending ?? 0) : 0),
       0,
     );
-  }, [payable, lines]);
+  }, [payable, lines, moraLots]);
 
   /*
    * Is this payment already in the ledger?
@@ -542,7 +645,15 @@ export function NewReceiptDialog({
     setSplitting(true);
 
     try {
-      const result = await fetchCustomerSplit(customerId, Math.round(typed * 100));
+      // Divided with each lot's mora as changed here, so a lot whose mora went
+      // to zero is given just what its cuota needs.
+      const moraTargets = Object.fromEntries(
+        payable.flatMap((contract) => {
+          const mora = draftMora(moraLots[contract.id], moraEdits[contract.id]);
+          return mora ? [[contract.id, mora.amountCents] as const] : [];
+        }),
+      );
+      const result = await fetchCustomerSplit(customerId, Math.round(typed * 100), moraTargets);
       const next: Record<string, string> = {};
 
       for (const line of result.lines) {
@@ -712,8 +823,16 @@ export function NewReceiptDialog({
         lineCount: lines.length,
         amountByContract,
         amountText,
+      }) ??
+      moraBlocker({
+        lots: payable.map((contract) => ({ id: contract.id, code: contract.lot.code })),
+        mora: moraLots,
+        edits: moraEdits,
+        receiving: new Set(lines.map((line) => line.contractId)),
+        paidOn,
+        today: businessToday(),
       }),
-    [customerId, payable, lines, amountByContract, amountText],
+    [customerId, payable, lines, amountByContract, amountText, moraLots, moraEdits, paidOn],
   );
 
   /*
@@ -743,6 +862,7 @@ export function NewReceiptDialog({
     note.trim() !== "" ||
     (paidByTouchedRef.current && paidBy.trim() !== "") ||
     proofs.length > 0 ||
+    Object.keys(moraEdits).length > 0 ||
     Object.values(amountByContract).some((amount) => amount.trim() !== "");
 
   /*
@@ -775,6 +895,7 @@ export function NewReceiptDialog({
       amountText,
       amountByContract,
       typeByContract,
+      moraEdits,
     },
     hasEnteredAnything,
   );
@@ -796,6 +917,8 @@ export function NewReceiptDialog({
       // Same for a type chosen by hand: "Prima" was decided about the lot that
       // is no longer on screen.
       setTypeByContract({});
+      // And a mora being changed: it was about the previous person's lot.
+      setMoraEdits({});
       setAmountText("");
       setSplitNote(null);
       setOverpaymentPrompt(null);
@@ -832,6 +955,133 @@ export function NewReceiptDialog({
   }, [customerId]);
 
   const customerName = customers.find((row) => row.id === customerId)?.fullName ?? null;
+
+  /*
+   * The line under a lot about its mora: why it has it, and, for whoever may,
+   * «Cambiar» it or «Cobrar mora» on a late lot that has none. Null when
+   * there is nothing to say: no mora, and nothing this user could do about it.
+   */
+  const moraRow = (contract: Contract) => {
+    const lot = moraLots[contract.id];
+    const edit = moraEdits[contract.id];
+
+    if (!lot || !lot.carriesMora) {
+      return null;
+    }
+
+    const offerCharge = lot.pending === 0 && lot.late !== null && canEditMoraNow;
+
+    if (lot.pending === 0 && !offerCharge && !edit) {
+      return null;
+    }
+
+    const changed = edit !== undefined && moraChanged(lot, edit);
+    const code = contract.lot.code;
+
+    return (
+      <tr className="split-mora-row">
+        <td colSpan={isMultiLot ? 4 : 2}>
+          <div className="lot-mora">
+            {lot.pending > 0 ? (
+              <>
+                <p className="lot-mora-head">
+                  <strong>Mora {formatMoney(lot.pending, money)}</strong>
+                  {canEditMoraNow && !edit && (
+                    <button
+                      type="button"
+                      className="link-btn"
+                      aria-label={`Cambiar la mora de ${code}`}
+                      onClick={() => startMoraEdit(contract)}
+                    >
+                      Cambiar
+                    </button>
+                  )}
+                </p>
+                <ul className="lot-mora-why">
+                  {chargeSentences(lot, money).map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                </ul>
+                {canChangeMora && !isToday && (
+                  <p className="field-hint">Para cambiar la mora, registra el pago con la fecha de hoy.</p>
+                )}
+              </>
+            ) : (
+              !edit &&
+              lot.late && (
+                <p className="lot-mora-head">
+                  <span>
+                    Atrasado: {itemName(lot.late.installment)} venció el {shortDate(lot.late.dueOn)}.
+                  </span>
+                  <button
+                    type="button"
+                    className="link-btn"
+                    aria-label={`Cobrar mora a ${code}`}
+                    onClick={() => startMoraEdit(contract)}
+                  >
+                    Cobrar mora
+                  </button>
+                </p>
+              )
+            )}
+
+            {edit && (
+              <div className="lot-mora-edit">
+                <div className="form-field">
+                  <label htmlFor={moraFieldId(contract.id)}>Mora a cobrar a {code}</label>
+                  <MoneyInput
+                    id={moraFieldId(contract.id)}
+                    value={edit.amount}
+                    onChange={(amount) => editMora(contract.id, { amount })}
+                    placeholder="0"
+                    invalid={invalidField === moraFieldId(contract.id)}
+                  />
+                  <span className="field-hint">
+                    {lot.pending > 0
+                      ? `Antes ${formatMoney(lot.pending, money)}. Pon 0 para no cobrarla.`
+                      : "Se carga hoy, por el atraso."}
+                  </span>
+                </div>
+                {/* The owner's rule: a reason only when the mora changes. */}
+                {changed && (
+                  <div className="form-field">
+                    <label htmlFor={moraReasonFieldId(contract.id)}>
+                      {lot.pending > 0 ? "Por qué la cambias" : "Por qué la cobras"}{" "}
+                      <span className="required-mark">*</span>
+                    </label>
+                    <textarea
+                      id={moraReasonFieldId(contract.id)}
+                      rows={2}
+                      maxLength={500}
+                      value={edit.reason}
+                      aria-invalid={invalidField === moraReasonFieldId(contract.id) ? true : undefined}
+                      onChange={(event) => editMora(contract.id, { reason: event.target.value })}
+                      placeholder="Ej. Contrato migrado de Airtable, sin mora pactada."
+                    />
+                    <span className="field-hint">
+                      {edit.reason.trim().length < MIN_REASON
+                        ? `Al menos ${MIN_REASON} caracteres. `
+                        : ""}
+                      Queda en el Historial con tu nombre. Si se anula el recibo, el cambio se anula con
+                      él.
+                    </span>
+                  </div>
+                )}
+                {!isToday && (
+                  <p className="form-blocked">
+                    La mora solo se cambia en un pago con la fecha de hoy.
+                  </p>
+                )}
+                <button type="button" className="link-btn" onClick={() => dropMoraEdit(contract.id)}>
+                  Dejar la mora como estaba
+                </button>
+              </div>
+            )}
+          </div>
+        </td>
+      </tr>
+    );
+  };
 
   /*
    * «Cancelar» and the X ask first once something is typed, and «Descartar»
@@ -930,6 +1180,8 @@ export function NewReceiptDialog({
               setAmountText(saved.amountText);
               setAmountByContract(saved.amountByContract);
               setTypeByContract(saved.typeByContract);
+              // Drafts saved before the mora could be changed here have none.
+              setMoraEdits(saved.moraEdits ?? {});
               formDraft.dismiss();
             }}
             onDiscard={formDraft.discard}
@@ -1055,7 +1307,7 @@ export function NewReceiptDialog({
             Fecha del pago <span className="required-mark">*</span>
           </label>
           <input
-            id="receipt-date"
+            id={DATE_FIELD}
             type="date"
             value={paidOn}
             onChange={(event) => setPaidOn(event.target.value)}
@@ -1177,7 +1429,8 @@ export function NewReceiptDialog({
             </thead>
             <tbody>
               {payable.map((contract) => (
-                <tr key={contract.id}>
+                <Fragment key={contract.id}>
+                <tr className={moraRow(contract) ? "has-mora-row" : undefined}>
                   <td>
                     <span className="code-badge">{contract.lot.code}</span>
                     {/* Truncated by CSS when the column is tight, so the whole
@@ -1257,6 +1510,8 @@ export function NewReceiptDialog({
                     </td>
                   )}
                 </tr>
+                {moraRow(contract)}
+                </Fragment>
               ))}
             </tbody>
             </table>

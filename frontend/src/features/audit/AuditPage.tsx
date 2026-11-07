@@ -85,6 +85,8 @@ const fieldLabels: Record<string, string> = {
   type: "Tipo",
   reference: "Referencia",
   receiptNumber: "Número de recibo",
+  // The receipt a mora change came with, from «Registrar un pago».
+  receiptCode: "Recibo",
   customerName: "Cliente",
   // Mora put on a contract by hand, «Cargar mora» — see routes/mora.ts.
   moraInstallment: "Cuota",

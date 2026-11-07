@@ -19,7 +19,8 @@ test("each lot shows its balance whole, with the amount and type below it", asyn
   await dialog.getByLabel("Monto *").fill("30000");
   await dialog.getByRole("button", { name: "Repartir el monto entre los lotes" }).click();
 
-  const rows = dialog.locator(".split-table tbody tr");
+  // The lots, not the mora line a late lot has under it (moraAtPayment.ts).
+  const rows = dialog.locator(".split-table tbody tr:not(.split-mora-row)");
   await expect(rows).toHaveCount(3);
   // Each lot's "después:" line arrives a moment after the split and adds a line
   // to the row; measure once it is there, not while the row is still growing.

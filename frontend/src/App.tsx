@@ -1337,6 +1337,7 @@ export default function App() {
           customers={customersState.customers}
           contracts={contractsState.contracts}
           money={money}
+          canChangeMora={can(user, "mora:charge")}
           initialFiles={intakeFiles ?? undefined}
           initialNotice={intakeNotice ?? undefined}
           onClose={() => {

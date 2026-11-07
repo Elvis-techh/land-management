@@ -237,6 +237,13 @@ export const moraManualCharges = sqliteTable(
     removedAt: text("removed_at"),
     removedBy: text("removed_by").references(() => users.id),
     removalReason: text("removal_reason"),
+    /**
+     * The receipt it was entered with, when it came from «Registrar un pago»
+     * (the mora changed there, with that payment); null when entered on the
+     * contract. Voiding that receipt removes it too: it was decided for that
+     * payment. See POST /receipts and POST /receipts/:id/void.
+     */
+    receiptId: text("receipt_id").references(() => receipts.id),
   },
   (table) => [index("mora_manual_charges_contract_idx").on(table.contractId)],
 );
@@ -314,6 +321,8 @@ export const moraForgiveness = sqliteTable(
     removedAt: text("removed_at"),
     removedBy: text("removed_by").references(() => users.id),
     removalReason: text("removal_reason"),
+    /** As on `moraManualCharges`: the receipt it was entered with, if any. */
+    receiptId: text("receipt_id").references(() => receipts.id),
   },
   (table) => [index("mora_forgiveness_contract_idx").on(table.contractId)],
 );
