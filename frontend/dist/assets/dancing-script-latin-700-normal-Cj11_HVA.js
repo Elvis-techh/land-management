@@ -1,0 +1,1 @@
+var e=`/assets/dancing-script-latin-700-normal-CX8AaSVl.woff2`;export{e as default};
