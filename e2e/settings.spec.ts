@@ -40,7 +40,9 @@ test("the supervisor sets the mora with the switch, the tiles and the steppers",
   const mora = page.getByRole("switch", { name: "Cobrar mora" });
   const summary = screen(page).locator(".cfg-summary");
   await expect(mora).toHaveAttribute("aria-checked", "false");
-  await expect(summary).toHaveText("Apagada. Ningún contrato lleva mora.");
+  await expect(summary).toHaveText(
+    "Apagada. La mora ya cargada sigue pendiente hasta que se pague o se perdone.",
+  );
   await expect(page.getByText("¿Cuándo se cobra?")).toBeHidden();
 
   await mora.click();
@@ -75,10 +77,20 @@ test("the supervisor sets the mora with the switch, the tiles and the steppers",
   await expect(summary).toContainText("cada mes que siga atrasada, después de 5 días de gracia");
   await expect(page.getByLabel(/Sin mora si falta menos de/)).toHaveValue("100.00");
 
+  // Flipped off but not saved: the sentence says from when, and that the mora
+  // already charged is still owed (it once said no contract carried any).
   await mora.click();
+  await expect(summary).toHaveText(
+    "Apagada desde mañana, al guardar. La mora ya cargada sigue pendiente hasta que se pague o se perdone.",
+  );
+  await expect(mora).toHaveAttribute("aria-checked", "false");
+  // Without this the picture catches the switch halfway through its slide.
+  await page.screenshot({ path: testInfo.outputPath("configuracion-mora-apagada.png"), animations: "disabled" });
   await page.getByRole("button", { name: "Guardar cambios" }).click();
   await expect(screen(page)).toContainText("Cambios guardados.");
-  await expect(summary).toHaveText("Apagada. Ningún contrato lleva mora.");
+  await expect(summary).toHaveText(
+    "Apagada. La mora ya cargada sigue pendiente hasta que se pague o se perdone.",
+  );
 });
 
 test("the associate cannot change the mora", async ({ page }, testInfo) => {
