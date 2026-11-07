@@ -24,10 +24,18 @@ export interface MoraForm {
  * them sees what they add up to before pressing Guardar.
  *
  * It reads the form, not what is stored: the sentence follows every tap.
+ * `savedOn` is what is stored, and only tells the two «Apagada» apart.
+ *
+ * Switched off, it never says that no contract owes mora: the mora charged
+ * while it was on stays owed until it is paid or forgiven (lib/mora.ts keeps
+ * the rules as a history). Saying «Ningún contrato lleva mora» there made a
+ * supervisor think the switch had failed.
  */
-export function moraSummary(mora: MoraForm): string {
+export function moraSummary(mora: MoraForm, savedOn = false): string {
   if (!mora.enabled) {
-    return "Apagada. Ningún contrato lleva mora.";
+    const pending = "La mora ya cargada sigue pendiente hasta que se pague o se perdone.";
+    // Flipped but not saved yet: a save files it from tomorrow, like any change.
+    return savedOn ? `Apagada desde mañana, al guardar. ${pending}` : `Apagada. ${pending}`;
   }
 
   const amount =
