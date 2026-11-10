@@ -1358,6 +1358,18 @@ export function NewReceiptDialog({
         )}
       </div>
 
+      {/*
+       * The duplicate warning and the buttons, pinned to the bottom of the
+       * window together (QI-7).
+       *
+       * The warning used to sit in the flow of the form, under «Nota», so on a
+       * phone it appeared below the screen while the user was still choosing
+       * the customer and the amount up top — the warning about a second
+       * payment was exactly the one nobody saw before pressing «Registrar».
+       * Pinned here it shows wherever the form is scrolled, beside the button
+       * it is a warning about. See `.receipt-dialog-footer`.
+       */}
+      <div className="receipt-dialog-footer">
       {duplicates.length > 0 && (
         /*
          * Red when the bank's own confirmation number matches, amber when it is
@@ -1366,7 +1378,10 @@ export function NewReceiptDialog({
          * — but it is also how a customer paying the same installment twice in
          * a day looks, so it must not shout as loudly as near-proof does.
          */
-        <div className={hasReferenceMatch ? "form-warning" : "form-blocked"}>
+        <div
+          className={`receipt-duplicate-warning ${hasReferenceMatch ? "form-warning" : "form-blocked"}`}
+          role="status"
+        >
           <strong>
             {hasReferenceMatch
               ? "Ese número de confirmación ya está registrado."
@@ -1417,6 +1432,7 @@ export function NewReceiptDialog({
         >
           {proofBusy ?? savingStep ?? "Registrar y emitir recibo"}
         </button>
+      </div>
       </div>
 
       {askingDiscard && (
