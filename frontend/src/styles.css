@@ -8005,6 +8005,65 @@ input:disabled {
 }
 
 /*
+ * The mora under a lot: why it has it, and the change somebody with the
+ * permission may make with the payment (receipts/moraAtPayment.ts). A row of
+ * its own across the whole table, joined to its lot: the lot's row gives up
+ * its rule so the two read as one thing. Sentences, so they wrap.
+ */
+.split-table tr.has-mora-row td {
+  border-bottom: none;
+}
+
+.split-table .split-mora-row td {
+  padding-top: 0;
+  white-space: normal;
+}
+
+.lot-mora {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--clay);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+.lot-mora-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 12px;
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.lot-mora-why {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+.lot-mora-why li + li {
+  margin-top: 2px;
+}
+
+.lot-mora .field-hint {
+  display: block;
+  margin-top: 4px;
+}
+
+.lot-mora-edit {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.lot-mora-edit .link-btn {
+  justify-self: start;
+}
+
+/*
  * On a phone the three columns stop being three columns.
  *
  * 264px cannot hold a lot code, "L. 164,000.00" and an editable amount side by
@@ -8091,6 +8150,16 @@ input:disabled {
 
   .split-table .col-type .cell-sub {
     margin-top: 4px;
+  }
+
+  /* A lot and its mora are one card: no rule between them. */
+  .split-table tr.has-mora-row {
+    padding-bottom: 6px;
+    border-bottom: none;
+  }
+
+  .split-table .split-mora-row {
+    padding-top: 0;
   }
 }
 

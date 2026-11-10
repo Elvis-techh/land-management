@@ -2,7 +2,7 @@ import { and, eq, inArray, isNull } from "drizzle-orm";
 
 import type { Db } from "../db/client.js";
 import { contracts, moraContractRules, moraForgiveness, moraManualCharges, payments } from "../db/schema.js";
-import type { SaleType } from "./contracts.js";
+import type { ContractTerms, SaleType } from "./contracts.js";
 import type { LedgerCharge } from "./ledger.js";
 import type {
   ContractMoraRule,
@@ -13,7 +13,8 @@ import type {
   MoraRuleVersion,
 } from "./mora.js";
 import { contractHistory, moraAccount, moraEverOn } from "./mora.js";
-import { ownMoraSchema, readMoraHistory } from "./settings.js";
+import { oldestLate } from "./moraAtPayment.js";
+import { ownMoraSchema, readMoraHistory, readSettings } from "./settings.js";
 import { businessToday, parseTimestamp } from "./time.js";
 
 /**
@@ -51,6 +52,12 @@ export interface MoraAccountsOptions {
    * payment already on its day, as it would be if it were saved now.
    */
   adding?: { id: string; contractId: string; amountCents: number; paidOn: string };
+  /**
+   * Mora changes not entered yet, for "what would this payment do with its mora
+   * changed": the same preview, with the rows POST /receipts would write
+   * («Cargar mora» for more, «Perdonar» for less). See lib/moraAtPayment.ts.
+   */
+  adjusting?: { contractId: string; manual: MoraManualCharge[]; forgiveness: MoraForgiveness[] };
 }
 
 const CLOSED = new Set(["cancelled", "defaulted", "replaced"]);
@@ -105,13 +112,13 @@ export function loadMoraAccounts(
     )
     .all();
 
-  if (!moraEverOn(history) && manualRows.length === 0) {
-    return accounts;
-  }
-
   const manualByContract = new Map<string, MoraManualCharge[]>();
+  const adjustingManual = (options.adjusting?.manual ?? []).map((entry) => ({
+    ...entry,
+    contractId: options.adjusting!.contractId,
+  }));
 
-  for (const { contractId, ...entry } of manualRows) {
+  for (const { contractId, ...entry } of [...manualRows, ...adjustingManual]) {
     const list = manualByContract.get(contractId);
 
     if (list) {
@@ -119,6 +126,10 @@ export function loadMoraAccounts(
     } else {
       manualByContract.set(contractId, [entry]);
     }
+  }
+
+  if (!moraEverOn(history) && manualByContract.size === 0) {
+    return accounts;
   }
 
   // Mora never switched on: only the contracts with mora put on by hand.
@@ -173,6 +184,11 @@ export function loadMoraAccounts(
 
   const rulesByContract = readContractRules(db, contractIds ? rows.map((row) => row.id) : undefined);
   const forgivenessByContract = readForgiveness(db, contractIds ? rows.map((row) => row.id) : undefined);
+
+  if (options.adjusting && options.adjusting.forgiveness.length > 0) {
+    const { contractId, forgiveness } = options.adjusting;
+    forgivenessByContract.set(contractId, [...(forgivenessByContract.get(contractId) ?? []), ...forgiveness]);
+  }
   const creditsByContract = new Map<string, typeof credits>();
 
   for (const credit of credits) {
@@ -323,6 +339,18 @@ function readForgiveness(
   return byContract;
 }
 
+/**
+ * The rule history one contract's mora is worked out with: the general one
+ * with its own rule laid over it. For saying which rule charged a mora.
+ */
+export function loadContractHistory(
+  db: Pick<Db, "select">,
+  contractId: string,
+  history: readonly MoraRuleVersion[] = readMoraHistory(db),
+): readonly MoraRuleVersion[] {
+  return contractHistory(history, readContractRules(db, [contractId]).get(contractId) ?? []);
+}
+
 /** One contract's account, or `undefined` when it owes no mora and never did. */
 export function loadMoraAccount(
   db: Pick<Db, "select">,
@@ -362,4 +390,98 @@ export function ledgerChargesOf(account: MoraAccount | undefined): LedgerCharge[
 /** Mora charged and not forgiven: what price + this − paid counts as owed. */
 export function moraOwedOf(account: MoraAccount | undefined): number {
   return (account?.chargedCents ?? 0) - (account?.forgivenCents ?? 0);
+}
+
+/** What «Registrar un pago» needs about one lot's mora. See lib/moraAtPayment.ts. */
+export interface PaymentMora {
+  contractId: string;
+  /** A signed contract paid in cuotas, still open: its mora can be changed with a payment. */
+  carriesMora: boolean;
+  terms: ContractTerms;
+  /** Undefined when it owes no mora and never did. */
+  account: MoraAccount | undefined;
+  /** Its own rule history, for saying which rule charged each mora. */
+  history: readonly MoraRuleVersion[];
+  /** The oldest prima or cuota past its grace days and not fully paid: where «Cobrar mora» goes. */
+  late: { installment: number; dueOn: string } | null;
+}
+
+/** Statuses whose mora can still change: open, or paid off (a charge may reopen it). */
+const MORA_OPEN = new Set(["active", "paid_off"]);
+
+/**
+ * The mora of these lots as «Registrar un pago» shows and changes it, as of
+ * `asOf` and before any payment being typed. A few queries however many lots.
+ */
+export function loadPaymentMora(
+  db: Pick<Db, "select">,
+  contractIds: readonly string[],
+  options: { asOf: string; timeZone: string },
+): Map<string, PaymentMora> {
+  const result = new Map<string, PaymentMora>();
+
+  if (contractIds.length === 0) {
+    return result;
+  }
+
+  const rows = db
+    .select({
+      id: contracts.id,
+      kind: contracts.kind,
+      status: contracts.status,
+      saleType: contracts.saleType,
+      salePriceCents: contracts.salePriceCents,
+      downPaymentCents: contracts.downPaymentCents,
+      termMonths: contracts.termMonths,
+      monthlyPaymentCents: contracts.monthlyPaymentCents,
+      dueDay: contracts.dueDay,
+      signedOn: contracts.signedOn,
+      firstDueOn: contracts.firstDueOn,
+      createdAt: contracts.createdAt,
+    })
+    .from(contracts)
+    .where(inArray(contracts.id, [...contractIds]))
+    .all();
+
+  const paidByContract = new Map<string, number>();
+
+  for (const payment of db
+    .select({ contractId: payments.contractId, amountCents: payments.amountCents })
+    .from(payments)
+    .where(and(isNull(payments.reversedAt), inArray(payments.contractId, [...contractIds])))
+    .all()) {
+    paidByContract.set(payment.contractId, (paidByContract.get(payment.contractId) ?? 0) + payment.amountCents);
+  }
+
+  const general = readMoraHistory(db);
+  const graceDays = readSettings(db).mora.graceDays;
+  const accounts = loadMoraAccounts(db, { ...options, contractIds, history: general });
+  const rules = readContractRules(db, contractIds);
+
+  for (const row of rows) {
+    const terms: ContractTerms = {
+      saleType: row.saleType as SaleType,
+      salePriceCents: row.salePriceCents,
+      downPaymentCents: row.downPaymentCents,
+      termMonths: row.termMonths,
+      monthlyPaymentCents: row.monthlyPaymentCents,
+      dueDay: row.dueDay,
+      signedOn: row.signedOn ?? row.createdAt.slice(0, 10),
+      firstDueOn: row.firstDueOn,
+    };
+    const account = accounts.get(row.id);
+    const pricePaid = (paidByContract.get(row.id) ?? 0) - (account?.paidCents ?? 0);
+    const carriesMora = row.kind === "contract" && row.saleType === "financed" && MORA_OPEN.has(row.status);
+
+    result.set(row.id, {
+      contractId: row.id,
+      carriesMora,
+      terms,
+      account,
+      history: contractHistory(general, rules.get(row.id) ?? []),
+      late: carriesMora ? oldestLate(terms, pricePaid, options.asOf, graceDays) : null,
+    });
+  }
+
+  return result;
 }

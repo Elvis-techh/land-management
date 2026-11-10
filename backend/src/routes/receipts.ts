@@ -12,6 +12,8 @@ import {
   contracts,
   customers,
   lots,
+  moraForgiveness,
+  moraManualCharges,
   payments,
   projects,
   receipts,
@@ -28,12 +30,15 @@ import {
   sendStoredFile,
 } from "../lib/storedFiles.js";
 import { recordAudit } from "../lib/audit.js";
+import { roleCan } from "../lib/capabilities.js";
 import { moneyRefusal, syncContractLifecycle } from "../lib/contractLifecycle.js";
 import type { ContractTerms, SaleType } from "../lib/contracts.js";
 import { appliedInstallments, assessContract, buildSchedule } from "../lib/contracts.js";
 import type { LedgerCharge } from "../lib/ledger.js";
 import { orderLedger, receiptFigures, replayContract } from "../lib/ledger.js";
-import { ledgerChargesOf, loadMoraAccount, loadMoraAccounts } from "../lib/moraAccounts.js";
+import { ledgerChargesOf, loadMoraAccount, loadMoraAccounts, loadPaymentMora } from "../lib/moraAccounts.js";
+import type { MoraChange } from "../lib/moraAtPayment.js";
+import { changeRows, justBefore, planMoraChange } from "../lib/moraAtPayment.js";
 import { businessToday } from "../lib/time.js";
 import {
   allocateReceiptCode,
@@ -499,6 +504,23 @@ const receiptBody = z.object({
         amountCents: z.number().int().positive(),
         type: z.enum(PAYMENT_TYPES),
         notes: z.string().trim().max(300).nullish(),
+        /**
+         * The lot's mora, changed in the form: what it is to owe right before
+         * this payment (0 = none), and why. Only when it was changed. On
+         * `mora:charge` and only on a payment dated today; written as
+         * «Perdonar» or «Cargar mora» linked to this receipt. See
+         * lib/moraAtPayment.ts.
+         */
+        mora: z
+          .object({
+            amountCents: z.number().int().min(0),
+            reason: z
+              .string()
+              .trim()
+              .min(10, "Escribe por qué cambias la mora (al menos 10 caracteres).")
+              .max(500),
+          })
+          .nullish(),
       }),
     )
     .min(1, "Un recibo necesita al menos una transacción."),
@@ -980,6 +1002,65 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
 
       const byId = new Map(contractRows.map((row) => [row.id, row]));
 
+      /*
+       * Mora changed in the form, lot by lot. Checked before anything is
+       * written: who may change it, that the payment is dated today (so no
+       * receipt already issued changes), that the lot carries mora, and that
+       * charging more has a late cuota to go on.
+       */
+      const moraPlans = new Map<
+        string,
+        { pendingCents: number; targetCents: number; reason: string; change: MoraChange }
+      >();
+      const moraLines = body.lines.filter((line) => line.mora && byId.has(line.contractId));
+
+      if (moraLines.length > 0) {
+        if (!roleCan(app.db, actor.role, "mora:charge")) {
+          return reply.code(403).send({
+            error: "forbidden",
+            message: "Tu usuario no tiene permiso para cambiar la mora.",
+          });
+        }
+
+        if (body.paidOn !== asOf) {
+          return reply.code(400).send({
+            error: "mora_needs_today",
+            message:
+              "La mora solo se cambia en un pago con la fecha de hoy, para que ningún recibo ya emitido cambie.",
+          });
+        }
+
+        const lots = loadPaymentMora(
+          app.db,
+          moraLines.map((line) => line.contractId),
+          moraAt(),
+        );
+
+        for (const line of moraLines) {
+          const lot = lots.get(line.contractId);
+          const code = byId.get(line.contractId)!.code;
+
+          if (!lot?.carriesMora) {
+            return reply
+              .code(409)
+              .send({ error: "not_chargeable", message: `El contrato ${code} no lleva mora.` });
+          }
+
+          const change = planMoraChange(lot.account, line.mora!.amountCents, lot.late?.installment ?? null);
+
+          if ("problem" in change) {
+            return reply.code(400).send({ error: "nothing_late", message: `${code}: ${change.problem}` });
+          }
+
+          moraPlans.set(line.contractId, {
+            pendingCents: lot.account?.pendingCents ?? 0,
+            targetCents: line.mora!.amountCents,
+            reason: line.mora!.reason,
+            change,
+          });
+        }
+      }
+
       for (const line of body.lines) {
         const contract = byId.get(line.contractId);
 
@@ -1007,12 +1088,11 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
         }
 
         if (!body.allowOverpayment) {
-          const balance = contractBalanceCents(
-            app.db,
-            contract.id,
-            contract.salePriceCents,
-            moraAt(),
-          );
+          const plan = moraPlans.get(contract.id);
+          // With the mora as changed in the form, which the payment will meet.
+          const balance =
+            contractBalanceCents(app.db, contract.id, contract.salePriceCents, moraAt()) +
+            (plan ? plan.targetCents - plan.pendingCents : 0);
 
           if (line.amountCents > balance) {
             return reply.code(409).send({
@@ -1081,6 +1161,69 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
               createdAt: now,
             })
             .run();
+
+          /*
+           * The mora changed in the form, before the payments: one
+           * millisecond before their instant, so the replay puts it ahead of
+           * them and after anything entered earlier today. The same rows the
+           * contract's own mora panel writes, linked to this receipt.
+           */
+          for (const [contractId, plan] of moraPlans) {
+            const rows = changeRows(plan.change, asOf, justBefore(now), randomUUID);
+
+            for (const entry of rows.forgiveness) {
+              tx.insert(moraForgiveness)
+                .values({
+                  ...entry,
+                  contractId,
+                  reason: plan.reason,
+                  recordedBy: actor.id,
+                  receiptId,
+                })
+                .run();
+
+              recordAudit(tx, {
+                actorId: actor.id,
+                entityType: "contract",
+                entityId: contractId,
+                action: "mora_forgive",
+                reason: plan.reason,
+                after: {
+                  moraInstallment: entry.installment,
+                  moraForgivenOn: entry.forgivenOn,
+                  amountCents: entry.amountCents,
+                  receiptCode: code,
+                },
+              });
+            }
+
+            for (const entry of rows.manual) {
+              tx.insert(moraManualCharges)
+                .values({
+                  ...entry,
+                  contractId,
+                  reason: plan.reason,
+                  recordedBy: actor.id,
+                  recordedAt: justBefore(now),
+                  receiptId,
+                })
+                .run();
+
+              recordAudit(tx, {
+                actorId: actor.id,
+                entityType: "contract",
+                entityId: contractId,
+                action: "mora_charge",
+                reason: plan.reason,
+                after: {
+                  moraInstallment: entry.installment,
+                  moraIncurredOn: entry.incurredOn,
+                  amountCents: entry.amountCents,
+                  receiptCode: code,
+                },
+              });
+            }
+          }
 
           body.lines.forEach((line, index) => {
             tx.insert(payments)
@@ -1366,6 +1509,23 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
       // the amount and the type belong to the line.
       const [anchor] = affected;
 
+      /*
+       * Mora changed with this payment in «Registrar un pago»: it was decided
+       * for that payment, so it goes with it. Removed like a «Quitar» on the
+       * contract (the rows stay, marked), each with its own Historial line.
+       */
+      const linkedForgiveness = app.db
+        .select()
+        .from(moraForgiveness)
+        .where(and(eq(moraForgiveness.receiptId, existing.id), isNull(moraForgiveness.removedAt)))
+        .all();
+      const linkedCharges = app.db
+        .select()
+        .from(moraManualCharges)
+        .where(and(eq(moraManualCharges.receiptId, existing.id), isNull(moraManualCharges.removedAt)))
+        .all();
+      const moraRemoval = `Anulado con el recibo ${existing.code}: ${parsed.data.reason}`;
+
       app.db.transaction((tx) => {
         tx.update(receipts)
           .set({
@@ -1375,6 +1535,48 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
           })
           .where(eq(receipts.id, existing.id))
           .run();
+
+        for (const entry of linkedForgiveness) {
+          tx.update(moraForgiveness)
+            .set({ removedAt: now, removedBy: actor.id, removalReason: moraRemoval })
+            .where(eq(moraForgiveness.id, entry.id))
+            .run();
+
+          recordAudit(tx, {
+            actorId: actor.id,
+            entityType: "contract",
+            entityId: entry.contractId,
+            action: "mora_unforgive",
+            reason: moraRemoval,
+            before: {
+              moraInstallment: entry.installment,
+              moraForgivenOn: entry.forgivenOn,
+              amountCents: entry.amountCents,
+              receiptCode: existing.code,
+            },
+          });
+        }
+
+        for (const entry of linkedCharges) {
+          tx.update(moraManualCharges)
+            .set({ removedAt: now, removedBy: actor.id, removalReason: moraRemoval })
+            .where(eq(moraManualCharges.id, entry.id))
+            .run();
+
+          recordAudit(tx, {
+            actorId: actor.id,
+            entityType: "contract",
+            entityId: entry.contractId,
+            action: "mora_remove",
+            reason: moraRemoval,
+            before: {
+              moraInstallment: entry.installment,
+              moraIncurredOn: entry.incurredOn,
+              amountCents: entry.amountCents,
+              receiptCode: existing.code,
+            },
+          });
+        }
 
         // The payments keep their amount, their date and their rate. They
         // simply stop counting — every balance in the app already filters on

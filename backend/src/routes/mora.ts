@@ -11,7 +11,8 @@ import { syncContractLifecycle } from "../lib/contractLifecycle.js";
 import type { ContractTerms, SaleType } from "../lib/contracts.js";
 import { buildSchedule, shiftDays } from "../lib/contracts.js";
 import type { ContractMoraRule } from "../lib/mora.js";
-import { contractRuleOf, loadMoraAccount } from "../lib/moraAccounts.js";
+import { contractRuleOf, loadMoraAccount, loadPaymentMora } from "../lib/moraAccounts.js";
+import { chargesToExplain } from "../lib/moraAtPayment.js";
 import { amountProblem, ownMoraSchema, readSettings } from "../lib/settings.js";
 import { businessToday } from "../lib/time.js";
 
@@ -265,6 +266,35 @@ export const moraRoutes: FastifyPluginAsync<MoraRouteOptions> = async (app, opti
         // the general rule it is laid over, so the panel can say both.
         rules: readRuleVersions(app.db, row.id),
         general: readSettings(app.db).mora,
+      };
+    },
+  );
+
+  /**
+   * The mora of each lot a customer is paying on, for «Registrar un pago»:
+   * what is owed, each charge with why it was made, and the oldest late cuota
+   * (where «Cobrar mora» would go). Read-only, for anyone signed in; changing
+   * it is POST /receipts, on `mora:charge`. See lib/moraAtPayment.ts.
+   */
+  app.get<{ Params: { id: string } }>(
+    "/customers/:id/payment-mora",
+    { onRequest: app.requireUser },
+    async (request) => {
+      const ids = app.db
+        .select({ id: contracts.id })
+        .from(contracts)
+        .where(and(eq(contracts.customerId, request.params.id), eq(contracts.status, "active")))
+        .all()
+        .map((row) => row.id);
+
+      return {
+        contracts: [...loadPaymentMora(app.db, ids, at()).values()].map((lot) => ({
+          contractId: lot.contractId,
+          carriesMora: lot.carriesMora,
+          pendingCents: lot.account?.pendingCents ?? 0,
+          charges: chargesToExplain(lot.account, lot.terms, lot.history),
+          late: lot.late,
+        })),
       };
     },
   );

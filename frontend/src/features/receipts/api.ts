@@ -166,8 +166,109 @@ export interface SplitLine {
 export async function fetchCustomerSplit(
   customerId: string,
   amountCents: number,
+  /** Lots whose mora was changed in the form: the mora each is to owe, in centavos. */
+  moraTargets: Record<string, number> = {},
 ): Promise<{ lines: SplitLine[]; unallocatedCents: number }> {
-  return api.get(`/api/customers/${customerId}/split?amountCents=${amountCents}`);
+  const mora = Object.entries(moraTargets)
+    .map(([contractId, target]) => `${contractId}:${target}`)
+    .join(",");
+
+  return api.get(
+    `/api/customers/${customerId}/split?amountCents=${amountCents}${mora ? `&mora=${encodeURIComponent(mora)}` : ""}`,
+  );
+}
+
+/** One mora charged and still owed, with what is needed to say why. See lib/moraAtPayment.ts. */
+export interface PaymentMoraCharge {
+  /** 0 for the prima, otherwise the cuota's number. */
+  installment: number;
+  dueOn: string;
+  incurredOn: string;
+  amount: Cents;
+  /** Still owed of it: 0 once paid or forgiven. */
+  pending: Cents;
+  /** What «Perdonar» cleared of it. The rest of `amount − pending` was paid. */
+  forgiven: Cents;
+  /** What was unpaid of the cuota that day: the base of a percentage. */
+  unpaid: Cents;
+  /** Put on by hand («Cargar mora»). */
+  manual: boolean;
+  /** Charged again a month later: «cada mes que siga atrasada». */
+  repeat: boolean;
+  rule: {
+    calculation: "percent" | "fixed";
+    percent: number;
+    fixed: Cents;
+    cap: Cents | null;
+    graceDays: number;
+  } | null;
+}
+
+/** One lot's mora, as «Registrar un pago» shows and changes it. */
+export interface PaymentMoraLot {
+  contractId: string;
+  /** A signed contract paid in cuotas, still open: its mora can be changed. */
+  carriesMora: boolean;
+  pending: Cents;
+  /** Every charge of each cuota that still owes mora, oldest first, paid and forgiven ones too. */
+  charges: PaymentMoraCharge[];
+  /** The oldest late cuota: where «Cobrar mora» goes. Null when not late. */
+  late: { installment: number; dueOn: string } | null;
+}
+
+/** The mora of each lot this customer is paying on. Read-only. */
+export async function fetchPaymentMora(customerId: string): Promise<PaymentMoraLot[]> {
+  const raw = await api.get<{
+    contracts: Array<{
+      contractId: string;
+      carriesMora: boolean;
+      pendingCents: number;
+      late: { installment: number; dueOn: string } | null;
+      charges: Array<{
+        installment: number;
+        dueOn: string;
+        incurredOn: string;
+        amountCents: number;
+        pendingCents: number;
+        forgivenCents: number;
+        unpaidCents: number;
+        manual: boolean;
+        repeat: boolean;
+        rule: {
+          calculation: "percent" | "fixed";
+          percent: number;
+          fixedCents: number;
+          capCents: number | null;
+          graceDays: number;
+        } | null;
+      }>;
+    }>;
+  }>(`/api/customers/${customerId}/payment-mora`);
+
+  return raw.contracts.map((lot) => ({
+    contractId: lot.contractId,
+    carriesMora: lot.carriesMora,
+    pending: cents(lot.pendingCents),
+    late: lot.late,
+    charges: lot.charges.map((charge) => ({
+      installment: charge.installment,
+      dueOn: charge.dueOn,
+      incurredOn: charge.incurredOn,
+      amount: cents(charge.amountCents),
+      pending: cents(charge.pendingCents),
+      forgiven: cents(charge.forgivenCents),
+      unpaid: cents(charge.unpaidCents),
+      manual: charge.manual,
+      repeat: charge.repeat,
+      rule: charge.rule && {
+        calculation: charge.rule.calculation,
+        percent: charge.rule.percent,
+        fixed: cents(charge.rule.fixedCents),
+        cap: charge.rule.capCents === null ? null : cents(charge.rule.capCents),
+        graceDays: charge.rule.graceDays,
+      },
+    })),
+  }));
 }
 
 /**
@@ -312,6 +413,11 @@ export interface ReceiptDraftLine {
   amountCents: number;
   type: PaymentType;
   notes?: string | null;
+  /**
+   * The lot's mora, changed in the form: what it is to owe right before this
+   * payment (0 = none), and why. Only when changed. See lib/moraAtPayment.ts.
+   */
+  mora?: { amountCents: number; reason: string };
 }
 
 export interface ReceiptDraft {
@@ -523,7 +629,12 @@ export interface AfterPayment {
  * and what is owed after. Computed by the same server code that writes the
  * receipt, so the preview and the receipt agree. Nothing is recorded.
  */
-export async function fetchAfterPayment(contractId: string, amountCents: number): Promise<AfterPayment> {
+export async function fetchAfterPayment(
+  contractId: string,
+  amountCents: number,
+  /** The mora as changed in the form, when it was. */
+  moraCents?: number,
+): Promise<AfterPayment> {
   const raw = await api.get<{
     appliedTo: Array<{
       number: number;
@@ -542,7 +653,10 @@ export async function fetchAfterPayment(contractId: string, amountCents: number)
     nextInstallment: number;
     nextDueCredit: number;
     nextDueIsDownPayment: boolean;
-  }>(`/api/contracts/${contractId}/after-payment?amountCents=${amountCents}`);
+  }>(
+    `/api/contracts/${contractId}/after-payment?amountCents=${amountCents}` +
+      (moraCents === undefined ? "" : `&moraCents=${moraCents}`),
+  );
 
   return {
     ...raw,
