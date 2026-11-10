@@ -82,8 +82,8 @@ export interface ChargeRule {
   graceDays: number;
 }
 
-/** One mora charged and not yet paid or forgiven, with what is needed to say why. */
-export interface PendingCharge {
+/** One mora charge of a cuota that still owes mora, with what is needed to say why. */
+export interface ExplainedCharge {
   /** 0 for the prima, otherwise the cuota's number. */
   installment: number;
   /** When that prima or cuota fell due. */
@@ -91,8 +91,10 @@ export interface PendingCharge {
   /** When the mora was charged. */
   incurredOn: string;
   amountCents: number;
-  /** What is still owed of it. Less than `amountCents` when part was paid or forgiven. */
+  /** What is still owed of it: 0 once it is paid or forgiven. */
   pendingCents: number;
+  /** What «Perdonar» cleared of it. The rest of `amountCents − pendingCents` was paid. */
+  forgivenCents: number;
   /** What was unpaid of the cuota that day: the base of a percentage. */
   unpaidCents: number;
   /** Put on by hand («Cargar mora»), not by the rule. */
@@ -104,21 +106,25 @@ export interface PendingCharge {
 }
 
 /**
- * The charges still owed, oldest first, each with the rule that made it.
- * `history` is the contract's own (see `loadContractHistory`).
+ * Every charge of each cuota that still owes mora, oldest first, each with the
+ * rule that made it. `history` is the contract's own (see `loadContractHistory`).
+ *
+ * A cuota's charges come whole, the ones already paid or forgiven too, so the
+ * form can add them up: L. 200 + L. 200 + L. 100 reaching a L. 500 maximum,
+ * of which L. 200 is already paid. A cuota with nothing left to pay stays out.
  */
-export function pendingCharges(
+export function chargesToExplain(
   account: MoraAccount | undefined,
   terms: ContractTerms,
   history: readonly MoraRuleVersion[],
-): PendingCharge[] {
+): ExplainedCharge[] {
   if (!account) {
     return [];
   }
 
   const items = itemsOf(terms);
   const seen = new Set<number>();
-  const result: PendingCharge[] = [];
+  const result: ExplainedCharge[] = [];
 
   for (const charge of account.charges) {
     const manual = charge.manualId !== undefined;
@@ -128,9 +134,7 @@ export function pendingCharges(
       seen.add(charge.installment);
     }
 
-    const pending = account.pendingByCharge[charge.id] ?? 0;
-
-    if (pending <= 0) {
+    if ((account.pendingByInstallment[charge.installment] ?? 0) <= 0) {
       continue;
     }
 
@@ -141,7 +145,8 @@ export function pendingCharges(
       dueOn: items.find((item) => item.installment === charge.installment)?.dueOn ?? charge.incurredOn,
       incurredOn: charge.incurredOn,
       amountCents: charge.amountCents,
-      pendingCents: pending,
+      pendingCents: account.pendingByCharge[charge.id] ?? 0,
+      forgivenCents: account.forgivenByCharge[charge.id] ?? 0,
       unpaidCents: charge.unpaidCents,
       manual,
       repeat,

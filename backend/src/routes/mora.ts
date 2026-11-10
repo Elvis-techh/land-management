@@ -12,7 +12,7 @@ import type { ContractTerms, SaleType } from "../lib/contracts.js";
 import { buildSchedule, shiftDays } from "../lib/contracts.js";
 import type { ContractMoraRule } from "../lib/mora.js";
 import { contractRuleOf, loadMoraAccount, loadPaymentMora } from "../lib/moraAccounts.js";
-import { pendingCharges } from "../lib/moraAtPayment.js";
+import { chargesToExplain } from "../lib/moraAtPayment.js";
 import { amountProblem, ownMoraSchema, readSettings } from "../lib/settings.js";
 import { businessToday } from "../lib/time.js";
 
@@ -292,7 +292,7 @@ export const moraRoutes: FastifyPluginAsync<MoraRouteOptions> = async (app, opti
           contractId: lot.contractId,
           carriesMora: lot.carriesMora,
           pendingCents: lot.account?.pendingCents ?? 0,
-          charges: pendingCharges(lot.account, lot.terms, lot.history),
+          charges: chargesToExplain(lot.account, lot.terms, lot.history),
           late: lot.late,
         })),
       };

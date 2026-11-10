@@ -1,4 +1,4 @@
-import type { MoneyView } from "../../lib/money";
+import type { Cents, MoneyView } from "../../lib/money";
 import { cents, formatMoney, parseMoneyInput } from "../../lib/money";
 import type { PaymentMoraCharge, PaymentMoraLot } from "./api";
 import type { Blocker } from "./receiptBlocker";
@@ -52,68 +52,169 @@ export function itemName(installment: number): string {
 
 const capitalized = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
+/** As in afterPaymentLabel: on a phone "L." must not end one line and its figure start the next. */
+const keepFigures = (text: string) => text.replace(/(L\.|\$) /g, "$1\u00a0");
+
+/** "a", "a y b", "a, b y c". */
+function listed(parts: string[]): string {
+  return parts.length < 2 ? (parts[0] ?? "") : `${parts.slice(0, -1).join(", ")} y ${parts[parts.length - 1]}`;
+}
+
+function total(charges: PaymentMoraCharge[], part: (charge: PaymentMoraCharge) => number): Cents {
+  return cents(charges.reduce((sum, charge) => sum + part(charge), 0));
+}
+
+/** What the rule worked out for a charge, before its maximum. */
+function worked(charge: PaymentMoraCharge): number {
+  const rule = charge.rule!;
+  return rule.calculation === "percent" ? Math.round((charge.unpaid * rule.percent) / 100) : rule.fixed;
+}
+
+/** The maximum per cuota, when it cut this charge short. */
+function capOf(charge: PaymentMoraCharge): Cents | null {
+  const cap = charge.rule?.cap ?? null;
+  return cap !== null && charge.amount < worked(charge) ? cap : null;
+}
+
 /**
- * One charge read back as a sentence: which cuota, when it fell due, the grace
- * days, and how the amount came about.
+ * A cuota's automatic charges. `alone` when it is the cuota's only charge and
+ * none of it is settled, so the line's figure already says its amount.
  *
- *   La prima venció el 27 oct; pasados 5 días de gracia, el 2 nov se cargó
- *   L. 500 (10 % de los L. 30,000 que faltaban, con el máximo por cuota).
+ *   Pasados 5 días de gracia, se cargó el 10 % de los L. 2,000 que faltaban:
+ *   L. 200 el 31 ago, L. 200 el 30 sep y L. 100 el 31 oct (llegó al máximo de
+ *   L. 500 por cuota).
  */
-export function chargeSentence(charge: PaymentMoraCharge, money: MoneyView): string {
-  // As in afterPaymentLabel: on a phone "L." must not end one line and its figure start the next.
-  return sentence(charge, money).replace(/(L\.|\$) /g, "$1\u00a0");
+function ruleSentence(charges: PaymentMoraCharge[], money: MoneyView, alone: boolean): string {
+  const first = charges[0]!;
+  const rule = first.rule!;
+  const amountOf = (amount: Cents) => formatMoney(amount, money);
+  const grace =
+    first.repeat || rule.graceDays === 0
+      ? ""
+      : `${rule.graceDays === 1 ? "pasado 1 día" : `pasados ${rule.graceDays} días`} de gracia, `;
+  const sameRule = charges.every(
+    ({ rule: other }) =>
+      other!.calculation === rule.calculation && other!.percent === rule.percent && other!.fixed === rule.fixed,
+  );
+  const sameBase = charges.every((charge) => charge.unpaid === first.unpaid);
+
+  // What the charges share, said once, and what each one adds of its own.
+  let shared = "";
+  let own: (charge: PaymentMoraCharge) => string = () => "";
+
+  if (!sameRule) {
+    own = (charge) =>
+      charge.rule!.calculation === "percent"
+        ? `${charge.rule!.percent} % de ${amountOf(charge.unpaid)}`
+        : `monto fijo de ${amountOf(charge.rule!.fixed)}`;
+  } else if (rule.calculation === "fixed") {
+    shared = `un monto fijo de ${amountOf(rule.fixed)}`;
+  } else if (sameBase) {
+    shared = `el ${rule.percent} % de los ${amountOf(first.unpaid)} que faltaban`;
+  } else {
+    shared = `el ${rule.percent} % de lo que faltaba`;
+    own = (charge) => `de ${amountOf(charge.unpaid)}`;
+  }
+
+  if (charges.length === 1) {
+    const cap = capOf(first);
+    const upTo = cap === null ? "" : `, hasta el máximo de ${amountOf(cap)} por cuota`;
+    const what = alone ? `se cargó ${shared}` : `se cargaron ${amountOf(first.amount)}: ${shared}`;
+    return capitalized(`${grace}el ${shortDate(first.incurredOn)} ${what}${upTo}.`);
+  }
+
+  const entries = charges.map((charge) => {
+    const cap = capOf(charge);
+    // A fixed amount is said once, unless the maximum cut this one short.
+    const amount =
+      sameRule && rule.calculation === "fixed" && charge.amount === rule.fixed ? "" : `${amountOf(charge.amount)} `;
+    const notes = [own(charge), cap === null ? "" : `llegó al máximo de ${amountOf(cap)} por cuota`].filter(Boolean);
+    return `${amount}el ${shortDate(charge.incurredOn)}${notes.length > 0 ? ` (${notes.join("; ")})` : ""}`;
+  });
+
+  return capitalized(`${grace}se cargó${shared ? ` ${shared}` : ""}: ${listed(entries)}.`);
 }
 
-function sentence(charge: PaymentMoraCharge, money: MoneyView): string {
-  const item = capitalized(itemName(charge.installment));
-  const amount = formatMoney(charge.amount, money);
-  const owed =
-    charge.pending < charge.amount ? ` Quedan ${formatMoney(charge.pending, money)} por pagar.` : "";
-
-  if (charge.manual || charge.rule === null) {
-    return `${item}: ${amount} cargados a mano el ${shortDate(charge.incurredOn)}.${owed}`;
+/** A cuota's mora put on by hand («Cargar mora»). */
+function manualSentence(charges: PaymentMoraCharge[], money: MoneyView, alone: boolean): string {
+  if (alone) {
+    return `Se cargó a mano el ${shortDate(charges[0]!.incurredOn)}.`;
   }
 
-  const rule = charge.rule;
-  const worked =
-    rule.calculation === "percent" ? Math.round((charge.unpaid * rule.percent) / 100) : rule.fixed;
-  const capped = rule.cap !== null && charge.amount < worked ? ", con el máximo por cuota" : "";
-  const basis =
-    rule.calculation === "percent"
-      ? ` (${rule.percent} % de los ${formatMoney(charge.unpaid, money)} que faltaban${capped})`
-      : ` (monto fijo${capped})`;
+  const entries = charges.map((charge) => `${formatMoney(charge.amount, money)} el ${shortDate(charge.incurredOn)}`);
+  return `Cargada a mano: ${listed(entries)}.`;
+}
 
-  if (charge.repeat) {
-    return `${item} seguía atrasada: el ${shortDate(charge.incurredOn)} se cargaron otra vez ${amount}${basis}.${owed}`;
-  }
+/** What of a cuota's mora is no longer owed, and how it went. */
+function settledSentence(charges: PaymentMoraCharge[], money: MoneyView): string {
+  const forgiven = total(charges, (charge) => charge.forgiven);
+  const paid = total(charges, (charge) => charge.amount - charge.pending - charge.forgiven);
+  const parts = [
+    paid > 0 ? `ya se pagaron ${formatMoney(paid, money)}` : "",
+    forgiven > 0 ? `se perdonaron ${formatMoney(forgiven, money)}` : "",
+  ].filter(Boolean);
 
-  const grace =
-    rule.graceDays === 0
-      ? ""
-      : ` pasados ${rule.graceDays === 1 ? "1 día" : `${rule.graceDays} días`} de gracia,`;
-
-  return `${item} venció el ${shortDate(charge.dueOn)};${grace} el ${shortDate(charge.incurredOn)} se cargaron ${amount}${basis}.${owed}`;
+  return parts.length === 0 ? "" : `${capitalized(listed(parts))}.`;
 }
 
 /**
- * The sentences for a lot, oldest first. Past `max` the rest are summed in one
- * line, so a cuota late for a year does not push the form off the screen.
+ * One cuota's mora read back as a sentence (the owner's «B», 2026-11-09): when
+ * it fell due, what it owes, and how each charge came about. The paid and
+ * forgiven charges are in it too, so the figures add up.
+ *
+ *   Cuota 1, venció el 25 ago: L. 500. Pasados 5 días de gracia, se cargó el
+ *   10 % de los L. 2,000 que faltaban: L. 200 el 31 ago, L. 200 el 30 sep y
+ *   L. 100 el 31 oct (llegó al máximo de L. 500 por cuota).
  */
-export function chargeSentences(lot: PaymentMoraLot, money: MoneyView, max = 3): string[] {
-  const shown = lot.charges.slice(0, max).map((charge) => chargeSentence(charge, money));
-  const rest = lot.charges.slice(max);
+export function cuotaSentence(charges: PaymentMoraCharge[], money: MoneyView): string {
+  const first = charges[0]!;
+  const automatic = charges.filter((charge) => !charge.manual && charge.rule !== null);
+  const byHand = charges.filter((charge) => charge.manual || charge.rule === null);
+  const alone = charges.length === 1 && first.pending === first.amount;
+  // Mora put on by hand need not wait for the cuota to fall due.
+  const fellDue = charges.some((charge) => first.dueOn <= charge.incurredOn);
+  const label = first.installment === 0 ? "Prima" : `Cuota ${first.installment}`;
+  const owed = formatMoney(total(charges, (charge) => charge.pending), money);
+
+  return keepFigures(
+    [
+      `${label}${fellDue ? `, venció el ${shortDate(first.dueOn)}` : ""}: ${owed}.`,
+      automatic.length > 0 ? ruleSentence(automatic, money, alone) : "",
+      byHand.length > 0 ? manualSentence(byHand, money, alone) : "",
+      settledSentence(charges, money),
+    ]
+      .filter(Boolean)
+      .join(" "),
+  );
+}
+
+/**
+ * A line per cuota that owes mora, the prima first. Past `max` cuotas the rest
+ * share one line, so a lot late for a year does not push the form off the
+ * screen; never a single cuota, which would take a line all the same and say less.
+ */
+export function cuotaSentences(lot: PaymentMoraLot, money: MoneyView, max = 4): string[] {
+  const byCuota = new Map<number, PaymentMoraCharge[]>();
+
+  for (const charge of lot.charges) {
+    byCuota.set(charge.installment, [...(byCuota.get(charge.installment) ?? []), charge]);
+  }
+
+  const cuotas = [...byCuota.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([, charges]) => charges)
+    .filter((charges) => charges.some((charge) => charge.pending > 0));
+  const shown = cuotas.length > max + 1 ? cuotas.slice(0, max) : cuotas;
+  const rest = cuotas.slice(shown.length);
+  const lines = shown.map((charges) => cuotaSentence(charges, money));
 
   if (rest.length > 0) {
-    const total = rest.reduce((sum, charge) => sum + charge.pending, 0);
-    shown.push(
-      `Y ${rest.length === 1 ? "1 cargo más" : `${rest.length} cargos más`}: ${formatMoney(cents(total), money)}.`.replace(
-        /(L\.|\$) /g,
-        "$1\u00a0",
-      ),
-    );
+    const numbers = rest.map((charges) => String(charges[0]!.installment));
+    const owed = total(rest.flat(), (charge) => charge.pending);
+    lines.push(keepFigures(`Y las cuotas ${listed(numbers)}: ${formatMoney(owed, money)}.`));
   }
 
-  return shown;
+  return lines;
 }
 
 /** The typed mora in centavos, or NaN when nothing usable is typed. */

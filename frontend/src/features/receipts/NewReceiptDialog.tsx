@@ -36,7 +36,7 @@ import type { MoraEdit } from "./moraAtPayment";
 import {
   DATE_FIELD,
   MIN_REASON,
-  chargeSentences,
+  cuotaSentences,
   draftMora,
   itemName,
   moraBlocker,
@@ -998,7 +998,7 @@ export function NewReceiptDialog({
                   )}
                 </p>
                 <ul className="lot-mora-why">
-                  {chargeSentences(lot, money).map((line) => (
+                  {cuotaSentences(lot, money).map((line) => (
                     <li key={line}>{line}</li>
                   ))}
                 </ul>

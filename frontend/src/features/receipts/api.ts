@@ -185,8 +185,10 @@ export interface PaymentMoraCharge {
   dueOn: string;
   incurredOn: string;
   amount: Cents;
-  /** Still owed of it. */
+  /** Still owed of it: 0 once paid or forgiven. */
   pending: Cents;
+  /** What «Perdonar» cleared of it. The rest of `amount − pending` was paid. */
+  forgiven: Cents;
   /** What was unpaid of the cuota that day: the base of a percentage. */
   unpaid: Cents;
   /** Put on by hand («Cargar mora»). */
@@ -208,6 +210,7 @@ export interface PaymentMoraLot {
   /** A signed contract paid in cuotas, still open: its mora can be changed. */
   carriesMora: boolean;
   pending: Cents;
+  /** Every charge of each cuota that still owes mora, oldest first, paid and forgiven ones too. */
   charges: PaymentMoraCharge[];
   /** The oldest late cuota: where «Cobrar mora» goes. Null when not late. */
   late: { installment: number; dueOn: string } | null;
@@ -227,6 +230,7 @@ export async function fetchPaymentMora(customerId: string): Promise<PaymentMoraL
         incurredOn: string;
         amountCents: number;
         pendingCents: number;
+        forgivenCents: number;
         unpaidCents: number;
         manual: boolean;
         repeat: boolean;
@@ -252,6 +256,7 @@ export async function fetchPaymentMora(customerId: string): Promise<PaymentMoraL
       incurredOn: charge.incurredOn,
       amount: cents(charge.amountCents),
       pending: cents(charge.pendingCents),
+      forgiven: cents(charge.forgivenCents),
       unpaid: cents(charge.unpaidCents),
       manual: charge.manual,
       repeat: charge.repeat,

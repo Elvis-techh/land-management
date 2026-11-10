@@ -40,7 +40,7 @@ const RULES: MoraSettings = {
 
 const REASON = "Contrato migrado de Airtable, sin mora pactada.";
 
-async function lateContract() {
+async function lateContract(rules: MoraSettings = RULES) {
   const built = await buildTestApp();
   const { app, db, ids } = built;
 
@@ -59,9 +59,9 @@ async function lateContract() {
     .where(eq(contracts.id, ids.contractId))
     .run();
 
-  writeSection(db, "mora", RULES, ids.ownerId);
+  writeSection(db, "mora", rules, ids.ownerId);
   db.insert(moraRules)
-    .values({ id: randomUUID(), effectiveFrom: RULES.startsOn!, value: JSON.stringify(RULES), recordedBy: ids.ownerId })
+    .values({ id: randomUUID(), effectiveFrom: rules.startsOn!, value: JSON.stringify(rules), recordedBy: ids.ownerId })
     .run();
 
   const cookie = await login(app, "owner@test.hn", OWNER_PASSWORD);
@@ -114,6 +114,7 @@ describe("mora in «Registrar un pago»", () => {
         incurredOn: shiftDays(FIRST_DUE, 6),
         amountCents: EACH,
         pendingCents: EACH,
+        forgivenCents: 0,
         unpaidCents: CUOTA,
         manual: false,
         repeat: false,
@@ -127,6 +128,47 @@ describe("mora in «Registrar un pago»", () => {
       capCents: null,
       graceDays: 5,
     });
+    await t.close();
+  });
+
+  it("explains a cuota whole, its paid and forgiven charges too, and leaves out one with nothing owed", async () => {
+    // Every month: cuota 1 is charged twice (about 34 and 4 days ago), cuota 2 once.
+    const t = await lateContract({ ...RULES, frequency: "monthly" });
+    const charges = async () => {
+      const { contracts: lots } = await t.get(`/api/customers/${t.ids.customerId}/payment-mora`);
+      return lots.find((row: { contractId: string }) => row.contractId === t.ids.contractId).charges as Array<
+        Record<string, unknown>
+      >;
+    };
+    const forgive = (installment: number, amountCents: number) =>
+      t.app.inject({
+        method: "POST",
+        url: `/api/contracts/${t.ids.contractId}/mora/forgive`,
+        headers: { cookie: t.cookie },
+        payload: { installment, amountCents, reason: REASON },
+      });
+
+    assert.equal((await charges()).length, 3);
+
+    // «La mora primero»: L 200 pays cuota 1's first charge, the oldest.
+    assert.equal((await t.pay(EACH)).statusCode, 201);
+    // All of cuota 2's, and L 50 of cuota 1's second charge.
+    assert.equal((await forgive(2, EACH)).statusCode, 201);
+    assert.equal((await forgive(1, 5_000)).statusCode, 201);
+
+    assert.deepEqual(
+      (await charges()).map(({ installment, amountCents, pendingCents, forgivenCents, repeat }) => ({
+        installment,
+        amountCents,
+        pendingCents,
+        forgivenCents,
+        repeat,
+      })),
+      [
+        { installment: 1, amountCents: EACH, pendingCents: 0, forgivenCents: 0, repeat: false },
+        { installment: 1, amountCents: EACH, pendingCents: 15_000, forgivenCents: 5_000, repeat: true },
+      ],
+    );
     await t.close();
   });
 

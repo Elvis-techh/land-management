@@ -113,7 +113,10 @@ test("the supervisor charges one lot no mora and another L 200, each with a reas
   const moraA = dialog.locator(".lot-mora").filter({ hasText: "Mora L. 500" });
 
   // Why A has mora, and that B is late with none.
-  await expect(moraA).toContainText("La cuota 1: L. 500 cargados a mano el");
+  // A line per cuota: when it fell due, what it owes, and how (2026-11-09, the owner's «B»).
+  await expect(moraA).toContainText("Cuota 1, venció el");
+  await expect(moraA).toContainText("Se cargó a mano el");
+  await expect(moraA.locator(".lot-mora-why li")).toHaveCount(1);
   const late = dialog.locator(".lot-mora").filter({ hasText: "Atrasado: la cuota 1 venció el" });
   await expect(late).toBeVisible();
   // What the window shows first: why there is mora, and «Cobrar mora» on the late lot.
@@ -191,7 +194,7 @@ test("the associate sees why a lot has mora and cannot change it", async ({ page
   const dialog = await openPayment(page, customer);
 
   await expect(dialog.locator(".lot-mora").filter({ hasText: "Mora L. 500" })).toContainText(
-    "La cuota 1: L. 500 cargados a mano el",
+    "Se cargó a mano el",
   );
   await expect(dialog.getByRole("button", { name: `Cambiar la mora de ${a.code}` })).toHaveCount(0);
   await expect(dialog.getByRole("button", { name: /Cobrar mora/ })).toHaveCount(0);
