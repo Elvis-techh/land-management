@@ -614,8 +614,11 @@ export interface AfterPayment {
   installmentCount: number;
   /** The part of the payment that would pay mora. */
   mora: Cents;
-  /** Mora still owed after it. */
+  /** The part that would go to the prima. */
+  toDownPayment: Cents;
+  /** Mora still owed today, with this payment in its place. */
   moraPending: Cents;
+  /** The lot's saldo today, with this payment in its place, mora included. */
   newBalance: Cents;
   settled: boolean;
   nextDueAmount: Cents;
@@ -634,6 +637,8 @@ export async function fetchAfterPayment(
   amountCents: number,
   /** The mora as changed in the form, when it was. */
   moraCents?: number,
+  /** The payment's date, as typed: it pays the mora charged up to that day. */
+  paidOn?: string,
 ): Promise<AfterPayment> {
   const raw = await api.get<{
     appliedTo: Array<{
@@ -646,6 +651,7 @@ export async function fetchAfterPayment(
     }>;
     installmentCount: number;
     mora: number;
+    toDownPayment: number;
     moraPending: number;
     newBalance: number;
     settled: boolean;
@@ -655,7 +661,8 @@ export async function fetchAfterPayment(
     nextDueIsDownPayment: boolean;
   }>(
     `/api/contracts/${contractId}/after-payment?amountCents=${amountCents}` +
-      (moraCents === undefined ? "" : `&moraCents=${moraCents}`),
+      (moraCents === undefined ? "" : `&moraCents=${moraCents}`) +
+      (paidOn === undefined ? "" : `&paidOn=${paidOn}`),
   );
 
   return {
@@ -667,6 +674,7 @@ export async function fetchAfterPayment(
       remaining: cents(entry.remaining),
     })),
     mora: cents(raw.mora),
+    toDownPayment: cents(raw.toDownPayment),
     moraPending: cents(raw.moraPending),
     newBalance: cents(raw.newBalance),
     nextDueAmount: cents(raw.nextDueAmount),

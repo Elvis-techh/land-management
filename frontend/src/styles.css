@@ -7993,9 +7993,10 @@ input:disabled {
   white-space: normal;
 }
 
-/* "después: Cuota 4 de 12 · completa · próxima L. 25,000" — what the amount
-   being typed will do. A sentence too, so it wraps; set apart from the
-   "próxima" line above it, which describes the lot BEFORE this payment. */
+/* "Después: Cuota 4 de 12 · completa · próxima L. 25,000" — what the amount
+   being typed will do, at the foot of its list of parts. A sentence too, so it
+   wraps; set apart from the "próxima" line beside the saldo, which describes
+   the lot BEFORE this payment. */
 .split-table .after-payment {
   display: block;
   margin-top: 2px;
@@ -8061,6 +8062,78 @@ input:disabled {
 
 .lot-mora-edit .link-btn {
   justify-self: start;
+}
+
+/*
+ * What this payment does to the lot, in parts (receipts/paymentParts.ts):
+ * Mora, Prima, Cuota, Adelanto, then the Total under a rule, and the receipt's
+ * own words for it. Joined to its lot like the mora, in the same card shape
+ * without the mora's clay edge. The figures right-aligned in the mono face,
+ * every digit the same width, so they add up down the column.
+ */
+.split-table .split-parts-row td {
+  padding-top: 0;
+  white-space: normal;
+}
+
+.lot-parts {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+.lot-parts-head {
+  margin: 0 0 4px;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+/* No column gap: the label's own padding keeps them apart, so the rule over
+   the Total runs unbroken under both. */
+.lot-parts-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  row-gap: 2px;
+  max-width: 320px;
+  margin: 0;
+}
+
+.lot-parts-list > div {
+  display: contents;
+}
+
+.lot-parts-list dt {
+  padding-right: 16px;
+}
+
+.lot-parts-list dd {
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.lot-parts-list .is-total dt,
+.lot-parts-list .is-total dd {
+  margin-top: 2px;
+  padding-top: 4px;
+  border-top: 1px solid var(--line);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.lot-parts-left {
+  margin: 6px 0 0;
+}
+
+.split-table .lot-parts .after-payment {
+  margin: 6px 0 0;
 }
 
 /*

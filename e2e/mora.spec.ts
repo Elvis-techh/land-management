@@ -141,7 +141,11 @@ test("mora shows on the contract, the payment, the receipt and the Panel", async
     await dialog.getByRole("searchbox", { name: "Buscar cliente" }).fill(customer);
     await dialog.getByRole("option", { name: new RegExp(customer) }).click();
     await dialog.getByLabel("Monto *").fill("10400");
-    await expect(dialog.locator(".after-payment")).toContainText("mora L. 400 · Cuota 1 de 12 · completa");
+    await expect(dialog.locator(".lot-parts-list")).toContainText(
+      /Mora\s*L\.\s*400\s*Cuota\s*L\.\s*10,000\s*Total\s*L\.\s*10,400/,
+      { useInnerText: true },
+    );
+    await expect(dialog.locator(".after-payment")).toContainText("Cuota 1 de 12 · completa");
     await dialog.screenshot({ path: testInfo.outputPath("mora-pago.png") });
     await dialog.getByRole("button", { name: "Registrar y emitir recibo" }).click();
     await expect(dialog).toHaveCount(0);

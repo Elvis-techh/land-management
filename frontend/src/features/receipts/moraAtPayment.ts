@@ -162,7 +162,7 @@ function settledSentence(charges: PaymentMoraCharge[], money: MoneyView): string
  * it fell due, what it owes, and how each charge came about. The paid and
  * forgiven charges are in it too, so the figures add up.
  *
- *   Cuota 1, venció el 25 ago: L. 500. Pasados 5 días de gracia, se cargó el
+ *   Cuota 1, venció el 25 ago: L. 500 por pagar. Pasados 5 días de gracia, se cargó el
  *   10 % de los L. 2,000 que faltaban: L. 200 el 31 ago, L. 200 el 30 sep y
  *   L. 100 el 31 oct (llegó al máximo de L. 500 por cuota).
  */
@@ -178,7 +178,9 @@ export function cuotaSentence(charges: PaymentMoraCharge[], money: MoneyView): s
 
   return keepFigures(
     [
-      `${label}${fellDue ? `, venció el ${shortDate(first.dueOn)}` : ""}: ${owed}.`,
+      // «por pagar», so a line that goes on to say «se cargó a mano» is not
+      // read as mora already paid (owner, 10 Nov 2026).
+      `${label}${fellDue ? `, venció el ${shortDate(first.dueOn)}` : ""}: ${owed} por pagar.`,
       automatic.length > 0 ? ruleSentence(automatic, money, alone) : "",
       byHand.length > 0 ? manualSentence(byHand, money, alone) : "",
       settledSentence(charges, money),
@@ -211,7 +213,7 @@ export function cuotaSentences(lot: PaymentMoraLot, money: MoneyView, max = 4): 
   if (rest.length > 0) {
     const numbers = rest.map((charges) => String(charges[0]!.installment));
     const owed = total(rest.flat(), (charge) => charge.pending);
-    lines.push(keepFigures(`Y las cuotas ${listed(numbers)}: ${formatMoney(owed, money)}.`));
+    lines.push(keepFigures(`Y las cuotas ${listed(numbers)}: ${formatMoney(owed, money)} por pagar.`));
   }
 
   return lines;

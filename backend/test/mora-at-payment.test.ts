@@ -4,7 +4,7 @@ import { describe, it } from "node:test";
 
 import { eq } from "drizzle-orm";
 
-import { contracts, moraRules } from "../src/db/schema.js";
+import { contracts, moraRules, payments } from "../src/db/schema.js";
 import { shiftDays } from "../src/lib/contracts.js";
 import type { MoraSettings } from "../src/lib/settings.js";
 import { DEFAULT_SETTINGS, writeSection } from "../src/lib/settings.js";
@@ -189,6 +189,66 @@ describe("mora in «Registrar un pago»", () => {
     // The cuota alone falls short of cuota + L 400 of mora, and not of cuota + no mora.
     assert.equal(line(await t.get(split)).belowMinimum, true);
     assert.equal(line(await t.get(`${split}&mora=${t.ids.contractId}:0`)).belowMinimum, false);
+    await t.close();
+  });
+
+  it("previews a payment on its own date, as the save places it (owner, 10 Nov 2026)", async () => {
+    const t = await lateContract();
+    const url = `/api/contracts/${t.ids.contractId}/after-payment?amountCents=${CUOTA}`;
+    const early = shiftDays(FIRST_DUE, -5);
+    const priceLeft = 13_500_000 - 1_500_000 - CUOTA;
+
+    // Today the L 400 of mora is paid first and L 9,600 reaches cuota 1.
+    const today = await t.get(url);
+    assert.equal(today.mora, OWED);
+    assert.equal(today.moraPending, 0);
+    assert.equal(today.newBalance, priceLeft + OWED);
+
+    // Dated before cuota 1 fell due: no mora existed to pay, and cuota 1 is
+    // paid on time, so its L 200 is never charged. Cuota 2's stays owed.
+    const before = await t.get(`${url}&paidOn=${early}`);
+    assert.equal(before.mora, 0);
+    assert.equal(before.toDownPayment, 0);
+    assert.equal(before.appliedTo[0].number, 1);
+    assert.equal(before.appliedTo[0].settled, true);
+    assert.equal(before.moraPending, EACH);
+    assert.equal(before.newBalance, priceLeft + EACH);
+
+    // A changed mora goes only with today's date, as on POST /receipts.
+    const changed = await t.app.inject({
+      method: "GET",
+      url: `${url}&paidOn=${early}&moraCents=0`,
+      headers: { cookie: t.cookie },
+    });
+    assert.equal(changed.statusCode, 400);
+    assert.equal(changed.json().error, "mora_needs_today");
+
+    // Saved with that date, the lot owes what the preview said.
+    assert.equal((await t.pay(CUOTA, undefined, { paidOn: early })).statusCode, 201);
+    const row = (await t.get("/api/contracts")).contracts.find((entry: { id: string }) => entry.id === t.ids.contractId);
+    assert.equal(row.balance, before.newBalance);
+    assert.equal(await t.pending(), EACH);
+    await t.close();
+  });
+
+  it("the owner's screenshot: a prima dated months back pays no mora charged since", async () => {
+    // Cuota 1 is late with L 200 charged; the prima is unpaid.
+    const t = await lateContract();
+    t.db.delete(payments).where(eq(payments.contractId, t.ids.contractId)).run();
+    const prima = 1_500_000;
+    const url = `/api/contracts/${t.ids.contractId}/after-payment?amountCents=${prima}`;
+    const back = shiftDays(TODAY, -90);
+
+    const today = await t.get(url);
+    assert.ok(today.mora > 0, "today the mora is paid first");
+    assert.equal(today.toDownPayment, prima - today.mora);
+
+    const dated = await t.get(`${url}&paidOn=${back}`);
+    assert.equal(dated.mora, 0);
+    assert.equal(dated.toDownPayment, prima);
+    // The mora is still owed afterwards, and in the saldo.
+    assert.equal(dated.moraPending, today.mora + today.moraPending);
+    assert.equal(dated.newBalance, today.newBalance);
     await t.close();
   });
 

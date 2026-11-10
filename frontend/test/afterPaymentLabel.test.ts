@@ -36,6 +36,7 @@ function after(overrides: Partial<AfterPayment>): AfterPayment {
     appliedTo: [],
     installmentCount: 12,
     mora: L(0),
+    toDownPayment: L(0),
     moraPending: L(0),
     newBalance: L(200_000),
     settled: false,
@@ -115,14 +116,14 @@ describe("afterPaymentLabel", () => {
     );
   });
 
-  it("puts the part that pays mora first, and any mora left last", () => {
+  it("leaves the part that pays mora to the list above it, and says any mora left last", () => {
     same(
       afterPaymentLabel(after({ appliedTo: [cuota(4, 25_000)], mora: L(500) }), HNL),
-      "mora L. 500 · Cuota 4 de 12 · completa · próxima L. 25,000",
+      "Cuota 4 de 12 · completa · próxima L. 25,000",
     );
     same(
       afterPaymentLabel(after({ appliedTo: [cuota(4, 25_000)], moraPending: L(500) }), HNL),
-      "Cuota 4 de 12 · completa · próxima L. 25,000 · mora pendiente L. 500",
+      "Cuota 4 de 12 · completa · próxima L. 25,000 · mora por pagar L. 500",
     );
   });
 });
