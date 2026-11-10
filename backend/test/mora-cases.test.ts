@@ -23,11 +23,16 @@ import { OWNER_PASSWORD, STAFF_PASSWORD, buildTestApp, login } from "./helpers.j
 
 const TIME_ZONE = "America/Tegucigalpa";
 
+interface Figures {
+  charged: number;
+  paid: number;
+  forgiven: number;
+  pending: number;
+  byInstallment: Record<number, number>;
+}
+
 /** In centavos, by contract code: what the notes promise right after a seed. */
-const EXPECTED: Record<
-  string,
-  { charged: number; paid: number; forgiven: number; pending: number; byInstallment: Record<number, number> }
-> = {
+const EXPECTED: Record<string, Figures> = {
   "CM-01": { charged: 20_000, paid: 0, forgiven: 0, pending: 20_000, byInstallment: { 1: 20_000 } },
   "CM-02": { charged: 50_000, paid: 0, forgiven: 0, pending: 50_000, byInstallment: { 1: 50_000 } },
   "CM-03": {
@@ -56,6 +61,40 @@ const EXPECTED: Record<
   "CM-20A": { charged: 20_000, paid: 0, forgiven: 0, pending: 20_000, byInstallment: { 1: 20_000 } },
   "CM-20B": { charged: 20_000, paid: 0, forgiven: 0, pending: 20_000, byInstallment: { 1: 20_000 } },
 };
+
+const NONE: Figures = { charged: 0, paid: 0, forgiven: 0, pending: 0, byInstallment: {} };
+const L200_ON_CUOTA_1: Figures = { charged: 20_000, paid: 0, forgiven: 0, pending: 20_000, byInstallment: { 1: 20_000 } };
+
+/** The same for the «Pago» contracts, the mora in «Registrar un pago». */
+const EXPECTED_PAYMENT: Record<string, Figures> = {
+  "CP-01": L200_ON_CUOTA_1,
+  "CP-02": L200_ON_CUOTA_1,
+  "CP-03": L200_ON_CUOTA_1,
+  "CP-04": { charged: 50_000, paid: 0, forgiven: 0, pending: 50_000, byInstallment: { 1: 50_000 } },
+  "CP-05A": L200_ON_CUOTA_1,
+  "CP-05B": L200_ON_CUOTA_1,
+  "CP-06": NONE,
+  "CP-07": {
+    charged: 110_000,
+    paid: 0,
+    forgiven: 0,
+    pending: 110_000,
+    byInstallment: { 1: 50_000, 2: 40_000, 3: 20_000 },
+  },
+  "CP-08": { charged: 30_000, paid: 20_000, forgiven: 0, pending: 10_000, byInstallment: { 1: 10_000 } },
+  "CP-09": { charged: 50_000, paid: 0, forgiven: 20_000, pending: 30_000, byInstallment: { 1: 30_000 } },
+  "CP-10": NONE,
+  "CP-11": L200_ON_CUOTA_1,
+  "CP-12": {
+    charged: 120_000,
+    paid: 0,
+    forgiven: 0,
+    pending: 120_000,
+    byInstallment: { 1: 20_000, 2: 20_000, 3: 20_000, 4: 20_000, 5: 20_000, 6: 20_000 },
+  },
+};
+
+const ALL_EXPECTED = { ...EXPECTED, ...EXPECTED_PAYMENT };
 
 describe("the mora cases come out the same on any day", () => {
   // Months of 28, 29, 30 and 31 days, and the days the due day has to clamp.
@@ -87,21 +126,24 @@ describe("the mora cases come out the same on any day", () => {
       const accounts = loadMoraAccounts(db, { asOf: today, timeZone: TIME_ZONE });
       const rows = db.select({ id: contracts.id, code: contracts.code }).from(contracts).all();
 
-      assert.equal(rows.length, Object.keys(EXPECTED).length);
+      assert.equal(rows.length, Object.keys(ALL_EXPECTED).length);
 
       for (const { id, code } of rows) {
         const account = accounts.get(id);
-        const expected = EXPECTED[code]!;
+        const expected = ALL_EXPECTED[code]!;
 
-        assert.ok(account, code);
+        // A contract never charged any mora has no account at all.
+        assert.ok(account || expected.charged === 0, code);
         assert.deepEqual(
-          {
-            charged: account.chargedCents,
-            paid: account.paidCents,
-            forgiven: account.forgivenCents,
-            pending: account.pendingCents,
-            byInstallment: account.pendingByInstallment,
-          },
+          account
+            ? {
+                charged: account.chargedCents,
+                paid: account.paidCents,
+                forgiven: account.forgivenCents,
+                pending: account.pendingCents,
+                byInstallment: account.pendingByInstallment,
+              }
+            : NONE,
           expected,
           code,
         );
@@ -185,11 +227,17 @@ describe("the mora cases, through the routes", async () => {
     for (const row of rows) {
       assert.match(row.notes ?? "", /^Caso \d\d/, row.code);
     }
+
+    const payments = (await list()).filter((row) => row.code.startsWith("CP-"));
+    assert.equal(payments.length, Object.keys(EXPECTED_PAYMENT).length);
+    for (const row of payments) {
+      assert.match(row.notes ?? "", /^Pago \d\d/, row.code);
+    }
   });
 
   it("shows the same figures through the routes as the notes promise", async () => {
     for (const row of await list()) {
-      const expected = EXPECTED[row.code];
+      const expected = ALL_EXPECTED[row.code];
 
       if (!expected) {
         continue;
@@ -356,5 +404,206 @@ describe("the mora cases, through the routes", async () => {
     for (const action of ["mora_forgive", "mora_charge", "mora_rule", "cancel"]) {
       assert.ok(actions.has(action), action);
     }
+  });
+});
+
+describe("the «Pago» cases, in «Registrar un pago»", async () => {
+  const { app, sqlite, db, ids } = await buildTestApp();
+  after(async () => {
+    await app.close();
+    sqlite.close();
+  });
+
+  const today = businessToday(TIME_ZONE);
+  seedMoraCases(db, { actorId: ids.ownerId, today, timeZone: TIME_ZONE });
+
+  const cookie = await login(app, "owner@test.hn", OWNER_PASSWORD);
+  const REASON = "Se acordó con el cliente en esta prueba.";
+
+  const get = async (url: string) => {
+    const response = await app.inject({ method: "GET", url, headers: { cookie } });
+    assert.equal(response.statusCode, 200, response.body);
+    return response.json();
+  };
+
+  const contract = async (code: string) =>
+    (await get("/api/contracts")).contracts.find((row: { code: string }) => row.code === code) as {
+      id: string;
+      customerId: string;
+      mora: { charged: number; paid: number; forgiven: number; pending: number };
+      health?: { status: string; arrears: number };
+    };
+
+  const customerOf = (code: string) =>
+    db.select({ id: contracts.customerId }).from(contracts).where(eq(contracts.code, code)).get()!.id;
+
+  /** What «Registrar un pago» reads about one lot's mora. */
+  const paymentMora = async (code: string) => {
+    const { id } = await contract(code);
+    const { contracts: lots } = await get(`/api/customers/${customerOf(code)}/payment-mora`);
+    return lots.find((lot: { contractId: string }) => lot.contractId === id) as {
+      pendingCents: number;
+      late: { installment: number; dueOn: string } | null;
+      charges: Array<{
+        installment: number;
+        amountCents: number;
+        pendingCents: number;
+        forgivenCents: number;
+        unpaidCents: number;
+        manual: boolean;
+        rule: { capCents: number | null } | null;
+      }>;
+    };
+  };
+
+  /** A payment dated today on one lot, as the form sends it. */
+  const pay = async (code: string, amountCents: number, moraCents?: number) => {
+    const { id } = await contract(code);
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/receipts",
+      headers: { cookie },
+      payload: {
+        customerId: customerOf(code),
+        paidOn: today,
+        method: "cash",
+        lines: [
+          {
+            contractId: id,
+            amountCents,
+            type: "installment",
+            ...(moraCents === undefined ? {} : { mora: { amountCents: moraCents, reason: REASON } }),
+          },
+        ],
+      },
+    });
+    assert.equal(response.statusCode, 201, response.body);
+    return response.json().receipt as {
+      id: string;
+      lines: Array<{ moraPaid: Array<{ installment: number; amount: number }>; moraPending: number }>;
+    };
+  };
+
+  const moraOf = async (code: string) => get(`/api/contracts/${(await contract(code)).id}/mora`);
+
+  it("01: L. 2,200 pays the L. 200 of mora and the whole cuota", async () => {
+    const receipt = await pay("CP-01", 220_000);
+    assert.deepEqual(receipt.lines[0]!.moraPaid, [{ installment: 1, amount: 20_000 }]);
+    assert.equal((await contract("CP-01")).mora.pending, 0);
+    assert.equal((await contract("CP-01")).health?.arrears, 0);
+  });
+
+  it("02: the cuota alone pays the mora first, and L. 200 of the cuota is left", async () => {
+    const { id } = await contract("CP-02");
+    const after = await get(`/api/contracts/${id}/after-payment?amountCents=200000`);
+    assert.equal(after.mora, 20_000);
+    assert.equal(after.appliedTo[0].settled, false);
+    assert.equal(after.appliedTo[0].remaining, 20_000);
+  });
+
+  it("03: none, with the payment; voiding the receipt makes it owed again", async () => {
+    const receipt = await pay("CP-03", 200_000, 0);
+    assert.deepEqual(receipt.lines[0]!.moraPaid, []);
+    assert.equal((await contract("CP-03")).mora.pending, 0);
+    assert.equal((await contract("CP-03")).health?.arrears, 0);
+
+    const voided = await app.inject({
+      method: "POST",
+      url: `/api/receipts/${receipt.id}/void`,
+      headers: { cookie },
+      payload: { reason: "Se anuló para probar la mora." },
+    });
+    assert.equal(voided.statusCode, 200, voided.body);
+    assert.equal((await contract("CP-03")).mora.pending, 20_000);
+  });
+
+  it("04: L. 250 of the L. 500, the maximum", async () => {
+    const [charge] = (await paymentMora("CP-04")).charges;
+    assert.equal(charge!.amountCents, 50_000);
+    assert.equal(charge!.rule?.capCents, 50_000);
+
+    const receipt = await pay("CP-04", 1_025_000, 25_000);
+    assert.deepEqual(receipt.lines[0]!.moraPaid, [{ installment: 1, amount: 25_000 }]);
+    assert.equal((await contract("CP-04")).mora.forgiven, 25_000);
+    assert.equal((await contract("CP-04")).health?.arrears, 0);
+  });
+
+  it("05: «Repartir» with one lot's mora at none gives L. 2,000 and L. 2,200", async () => {
+    const a = (await contract("CP-05A")).id;
+    const b = (await contract("CP-05B")).id;
+    const { lines } = await get(`/api/customers/${customerOf("CP-05A")}/split?amountCents=420000&mora=${a}:0`);
+    const amountOf = (id: string) => lines.find((line: { contractId: string }) => line.contractId === id).amountCents;
+
+    assert.equal(amountOf(a), 200_000);
+    assert.equal(amountOf(b), 220_000);
+  });
+
+  it("06: in its grace days: no mora, and not late, so no «Cobrar mora»", async () => {
+    const lot = await paymentMora("CP-06");
+    assert.equal(lot.pendingCents, 0);
+    assert.deepEqual(lot.charges, []);
+    assert.equal(lot.late, null);
+  });
+
+  it("07: three cuotas, the first at the maximum; L. 600 forgives L. 500", async () => {
+    const lot = await paymentMora("CP-07");
+    assert.deepEqual(
+      lot.charges.map((charge) => charge.installment).sort(),
+      [1, 1, 1, 2, 2, 3],
+    );
+    const firstCuota = lot.charges.filter((charge) => charge.installment === 1);
+    assert.deepEqual(
+      firstCuota.map((charge) => charge.amountCents),
+      [20_000, 20_000, 10_000],
+    );
+
+    await pay("CP-07", 60_000, 60_000);
+    assert.equal((await contract("CP-07")).mora.forgiven, 50_000);
+  });
+
+  it("08: both charges with their bases, and what was paid of them", async () => {
+    const { charges } = await paymentMora("CP-08");
+    assert.deepEqual(
+      charges.map(({ amountCents, unpaidCents, pendingCents }) => [amountCents, unpaidCents, pendingCents]),
+      [
+        [20_000, 200_000, 0],
+        [10_000, 100_000, 10_000],
+      ],
+    );
+  });
+
+  it("09: the part forgiven shows, and none forgives only the L. 300 left", async () => {
+    const { charges } = await paymentMora("CP-09");
+    assert.equal(charges[0]!.forgivenCents, 20_000);
+
+    await pay("CP-09", 1_000_000, 0);
+    assert.equal((await contract("CP-09")).mora.forgiven, 50_000);
+  });
+
+  it("10: «Sin mora» and late: «Cobrar mora» L. 300 is charged by hand and paid", async () => {
+    const lot = await paymentMora("CP-10");
+    assert.equal(lot.pendingCents, 0);
+    assert.equal(lot.late?.installment, 1);
+
+    const receipt = await pay("CP-10", 230_000, 30_000);
+    assert.deepEqual(receipt.lines[0]!.moraPaid, [{ installment: 1, amount: 30_000 }]);
+    const [manual] = (await moraOf("CP-10")).manual;
+    assert.equal(manual.amountCents, 30_000);
+    assert.equal(manual.pendingCents, 0);
+  });
+
+  it("11: up to L. 500 charges L. 300 by hand today, on cuota 1", async () => {
+    const receipt = await pay("CP-11", 250_000, 50_000);
+    assert.deepEqual(receipt.lines[0]!.moraPaid, [{ installment: 1, amount: 50_000 }]);
+    const [manual] = (await moraOf("CP-11")).manual;
+    assert.deepEqual([manual.installment, manual.amountCents, manual.incurredOn], [1, 30_000, today]);
+  });
+
+  it("12: six cuotas of mora by hand", async () => {
+    const { charges } = await paymentMora("CP-12");
+    assert.deepEqual(
+      charges.map((charge) => [charge.installment, charge.manual]),
+      [1, 2, 3, 4, 5, 6].map((installment) => [installment, true]),
+    );
   });
 });
