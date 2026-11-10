@@ -20,7 +20,7 @@
  */
 
 import type { ContractTerms } from "./contracts.js";
-import { buildSchedule } from "./contracts.js";
+import { buildSchedule, shiftDays } from "./contracts.js";
 import type { MoraAccount, MoraForgiveness, MoraManualCharge, MoraRuleVersion } from "./mora.js";
 import { rulesOn } from "./mora.js";
 
@@ -55,8 +55,14 @@ export function dueOnOf(terms: ContractTerms, installment: number): string | nul
 }
 
 /**
- * The prima or cuota a «Cobrar mora» goes on: the oldest one that fell due
- * before today and is not fully paid. Null when the lot is not late.
+ * The prima or cuota a «Cobrar mora» goes on: the oldest one whose grace days
+ * are over and that is not fully paid. Null when the lot is not late.
+ *
+ * Late from the day the automatic mora would be charged (due + grace + 1, as
+ * in lib/mora.ts), not the day after it fell due. Offered sooner, a «Cobrar
+ * mora» during the grace days was followed by the automatic charge once they
+ * ended: mora twice on the same cuota. The grace days are the ones that also
+ * decide «Atrasado» (the owner's rule of 2026-10-22).
  *
  * `pricePaidCents` is what the payments put towards the price: everything
  * paid, less the part that paid mora.
@@ -65,9 +71,10 @@ export function oldestLate(
   terms: ContractTerms,
   pricePaidCents: number,
   today: string,
+  graceDays: number,
 ): { installment: number; dueOn: string } | null {
   const late = itemsOf(terms).find(
-    (item) => item.dueOn < today && item.startCents + item.amountCents > pricePaidCents,
+    (item) => shiftDays(item.dueOn, graceDays) < today && item.startCents + item.amountCents > pricePaidCents,
   );
 
   return late ? { installment: late.installment, dueOn: late.dueOn } : null;

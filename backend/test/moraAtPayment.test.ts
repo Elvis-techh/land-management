@@ -127,21 +127,33 @@ describe("oldestLate", () => {
   };
 
   it("is the prima while it is not fully paid", () => {
-    assert.deepEqual(oldestLate(terms, L(9_999), "2026-11-06"), { installment: 0, dueOn: "2026-08-20" });
+    assert.deepEqual(oldestLate(terms, L(9_999), "2026-11-06", 5), { installment: 0, dueOn: "2026-08-20" });
   });
 
   it("is the first cuota past due and not fully paid", () => {
     // Prima and cuota 1 paid, cuota 2 (5 Oct) half paid.
-    assert.deepEqual(oldestLate(terms, L(25_000), "2026-11-06"), { installment: 2, dueOn: "2026-10-05" });
+    assert.deepEqual(oldestLate(terms, L(25_000), "2026-11-06", 5), { installment: 2, dueOn: "2026-10-05" });
   });
 
-  it("counts a cuota falling due today as not late yet", () => {
-    assert.equal(oldestLate(terms, L(30_000), "2026-11-05"), null);
-    assert.deepEqual(oldestLate(terms, L(30_000), "2026-11-06"), { installment: 3, dueOn: "2026-11-05" });
+  it("counts a cuota falling due today as not late yet, with no grace days", () => {
+    assert.equal(oldestLate(terms, L(30_000), "2026-11-05", 0), null);
+    assert.deepEqual(oldestLate(terms, L(30_000), "2026-11-06", 0), { installment: 3, dueOn: "2026-11-05" });
+  });
+
+  it("waits out the grace days, until the day the automatic mora would be charged", () => {
+    // Cuota 3 fell due on 5 Nov. With 5 days of grace the automatic mora comes on the 11th:
+    // a «Cobrar mora» before then would be followed by that charge, mora twice.
+    assert.equal(oldestLate(terms, L(30_000), "2026-11-06", 5), null);
+    assert.equal(oldestLate(terms, L(30_000), "2026-11-10", 5), null);
+    assert.deepEqual(oldestLate(terms, L(30_000), "2026-11-11", 5), { installment: 3, dueOn: "2026-11-05" });
+    // The prima the same way, from the day it was signed.
+    const signedLate = { ...terms, signedOn: "2026-11-03", dueDay: 3, firstDueOn: "2026-12-03" };
+    assert.equal(oldestLate(signedLate, L(0), "2026-11-08", 5), null);
+    assert.deepEqual(oldestLate(signedLate, L(0), "2026-11-09", 5), { installment: 0, dueOn: "2026-11-03" });
   });
 
   it("is null when everything due is paid", () => {
-    assert.equal(oldestLate(terms, L(40_000), "2026-11-06"), null);
+    assert.equal(oldestLate(terms, L(40_000), "2026-11-06", 5), null);
   });
 });
 

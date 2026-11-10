@@ -14,7 +14,7 @@ import type {
 } from "./mora.js";
 import { contractHistory, moraAccount, moraEverOn } from "./mora.js";
 import { oldestLate } from "./moraAtPayment.js";
-import { ownMoraSchema, readMoraHistory } from "./settings.js";
+import { ownMoraSchema, readMoraHistory, readSettings } from "./settings.js";
 import { businessToday, parseTimestamp } from "./time.js";
 
 /**
@@ -402,7 +402,7 @@ export interface PaymentMora {
   account: MoraAccount | undefined;
   /** Its own rule history, for saying which rule charged each mora. */
   history: readonly MoraRuleVersion[];
-  /** The oldest prima or cuota past due and not fully paid: where «Cobrar mora» goes. */
+  /** The oldest prima or cuota past its grace days and not fully paid: where «Cobrar mora» goes. */
   late: { installment: number; dueOn: string } | null;
 }
 
@@ -454,6 +454,7 @@ export function loadPaymentMora(
   }
 
   const general = readMoraHistory(db);
+  const graceDays = readSettings(db).mora.graceDays;
   const accounts = loadMoraAccounts(db, { ...options, contractIds, history: general });
   const rules = readContractRules(db, contractIds);
 
@@ -478,7 +479,7 @@ export function loadPaymentMora(
       terms,
       account,
       history: contractHistory(general, rules.get(row.id) ?? []),
-      late: carriesMora ? oldestLate(terms, pricePaid, options.asOf) : null,
+      late: carriesMora ? oldestLate(terms, pricePaid, options.asOf, graceDays) : null,
     });
   }
 
