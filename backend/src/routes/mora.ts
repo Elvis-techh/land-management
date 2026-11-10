@@ -120,6 +120,22 @@ function forgivenSnapshot(entry: { installment: number; forgivenOn: string; amou
   };
 }
 
+/**
+ * What is still owed of the mora on one cuota, right now: the «Mora por pagar»
+ * a Historial line shows before and after a change, so a reader sees what the
+ * change did («L. 500 → L. 250») without working it out. Read again after the
+ * write, inside the same transaction, because a later payment can take some of
+ * it (a «Cargar mora» dated in the past, a «Perdonar» taken back).
+ */
+function moraOwed(
+  db: Parameters<typeof loadMoraAccount>[0],
+  contractId: string,
+  installment: number,
+  at: { asOf: string; timeZone: string },
+): number {
+  return loadMoraAccount(db, contractId, at)?.pendingByInstallment[installment] ?? 0;
+}
+
 /** Two rules that charge the same, whatever order their keys came in. */
 function sameRule(a: ContractMoraRule, b: ContractMoraRule): boolean {
   if (a.mode !== b.mode) {
@@ -450,6 +466,8 @@ export const moraRoutes: FastifyPluginAsync<MoraRouteOptions> = async (app, opti
       const id = randomUUID();
 
       app.db.transaction((tx) => {
+        const owedBefore = moraOwed(tx, row.id, body.installment, at());
+
         tx.insert(moraManualCharges)
           .values({
             id,
@@ -469,7 +487,8 @@ export const moraRoutes: FastifyPluginAsync<MoraRouteOptions> = async (app, opti
           entityId: row.id,
           action: "mora_charge",
           reason: body.reason,
-          after: snapshot(body),
+          before: { moraPendingCents: owedBefore },
+          after: { ...snapshot(body), moraPendingCents: moraOwed(tx, row.id, body.installment, at()) },
         });
 
         // A mora covered by a payment already made takes that money off the
@@ -555,7 +574,8 @@ export const moraRoutes: FastifyPluginAsync<MoraRouteOptions> = async (app, opti
           entityId: row.id,
           action: "mora_forgive",
           reason: body.reason,
-          after: forgivenSnapshot({ ...body, forgivenOn }),
+          before: { moraPendingCents: unpaid },
+          after: { ...forgivenSnapshot({ ...body, forgivenOn }), moraPendingCents: unpaid - body.amountCents },
         });
 
         // Forgiving the last of what was owed can settle the contract.
@@ -598,6 +618,8 @@ export const moraRoutes: FastifyPluginAsync<MoraRouteOptions> = async (app, opti
       const actor = request.user!;
 
       app.db.transaction((tx) => {
+        const owedBefore = moraOwed(tx, existing.contractId, existing.installment, at());
+
         tx.update(moraForgiveness)
           .set({
             removedAt: new Date().toISOString(),
@@ -613,7 +635,8 @@ export const moraRoutes: FastifyPluginAsync<MoraRouteOptions> = async (app, opti
           entityId: existing.contractId,
           action: "mora_unforgive",
           reason: parsed.data.reason,
-          before: forgivenSnapshot(existing),
+          before: { ...forgivenSnapshot(existing), moraPendingCents: owedBefore },
+          after: { moraPendingCents: moraOwed(tx, existing.contractId, existing.installment, at()) },
         });
 
         // The mora is owed again, which can reopen a contract that was paid off.
@@ -656,6 +679,8 @@ export const moraRoutes: FastifyPluginAsync<MoraRouteOptions> = async (app, opti
       const actor = request.user!;
 
       app.db.transaction((tx) => {
+        const owedBefore = moraOwed(tx, existing.contractId, existing.installment, at());
+
         tx.update(moraManualCharges)
           .set({
             removedAt: new Date().toISOString(),
@@ -671,7 +696,8 @@ export const moraRoutes: FastifyPluginAsync<MoraRouteOptions> = async (app, opti
           entityId: existing.contractId,
           action: "mora_remove",
           reason: parsed.data.reason,
-          before: snapshot(existing),
+          before: { ...snapshot(existing), moraPendingCents: owedBefore },
+          after: { moraPendingCents: moraOwed(tx, existing.contractId, existing.installment, at()) },
         });
 
         // Paid mora goes back to the cuotas, which can settle the contract.

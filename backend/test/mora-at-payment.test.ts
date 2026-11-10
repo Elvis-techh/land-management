@@ -220,6 +220,17 @@ describe("mora in «Registrar un pago»", () => {
     assert.equal(forgiven.length, 2);
     assert.equal(forgiven[0].after.receiptCode, receipt.code);
     assert.equal(forgiven[0].reason, REASON);
+    // Each cuota's «Mora por pagar», before and after: L 200 → L 0.
+    assert.deepEqual(
+      forgiven.map((event: { before: { moraPendingCents: number }; after: { moraPendingCents: number } }) => [
+        event.before.moraPendingCents,
+        event.after.moraPendingCents,
+      ]),
+      [
+        [EACH, 0],
+        [EACH, 0],
+      ],
+    );
     await t.close();
   });
 
@@ -239,6 +250,19 @@ describe("mora in «Registrar un pago»", () => {
     );
     // «La mora primero»: the L 100 left is paid first.
     assert.deepEqual(response.json().receipt.lines[0].moraPaid, [{ installment: 2, amount: 10_000 }]);
+    // Historial says what each cuota owed before the payment, not after it.
+    const filed = (await t.audit())
+      .filter((event: { action: string }) => event.action === "mora_forgive")
+      .map((event: { after: { moraInstallment: number; moraPendingCents: number }; before: { moraPendingCents: number } }) => [
+        event.after.moraInstallment,
+        event.before.moraPendingCents,
+        event.after.moraPendingCents,
+      ])
+      .sort((a: number[], b: number[]) => a[0]! - b[0]!);
+    assert.deepEqual(filed, [
+      [1, EACH, 0],
+      [2, EACH, 10_000],
+    ]);
     await t.close();
   });
 
@@ -262,6 +286,9 @@ describe("mora in «Registrar un pago»", () => {
     );
     assert.equal(paid, 60_000);
     assert.equal(await t.pending(), 0);
+    const filed = (await t.audit()).find((event: { action: string }) => event.action === "mora_charge");
+    assert.equal(filed.before.moraPendingCents, EACH);
+    assert.equal(filed.after.moraPendingCents, 2 * EACH);
     await t.close();
   });
 

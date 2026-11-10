@@ -151,7 +151,14 @@ describe("«Cargar mora»", async () => {
 
     assert.ok(filed, "the charge is in the Historial");
     assert.equal(filed.reason, "Pagó L 200 de mora en efectivo con la cuota 1.");
-    assert.deepEqual(filed.after, { moraInstallment: 1, moraIncurredOn: PAID_ON, amountCents: 20_000 });
+    // The payment of that day already paid it, so nothing is owed before or after.
+    assert.deepEqual(filed.before, { moraPendingCents: 0 });
+    assert.deepEqual(filed.after, {
+      moraInstallment: 1,
+      moraIncurredOn: PAID_ON,
+      amountCents: 20_000,
+      moraPendingCents: 0,
+    });
   });
 
   it("is owed when nothing has paid it, and shows on the Panel", async () => {
@@ -166,6 +173,13 @@ describe("«Cargar mora»", async () => {
     const dashboard = (await app.inject({ method: "GET", url: "/api/dashboard", headers: { cookie } })).json();
 
     assert.equal(dashboard.income.mora.pendingCents, 50_000);
+
+    const filed = (await auditActions()).find(
+      (event: { action: string; after: { amountCents?: number } }) =>
+        event.action === "mora_charge" && event.after.amountCents === 50_000,
+    );
+    assert.equal(filed.before.moraPendingCents, 0);
+    assert.equal(filed.after.moraPendingCents, 50_000);
   });
 
   it("is taken back with «Quitar», with a reason, and filed in the Historial", async () => {
@@ -185,7 +199,10 @@ describe("«Cargar mora»", async () => {
 
     assert.equal((await contract()).mora.pending, 0);
     assert.equal((await moraOf()).manual.length, 1);
-    assert.ok((await auditActions()).some((event: { action: string }) => event.action === "mora_remove"));
+    const removed = (await auditActions()).find((event: { action: string }) => event.action === "mora_remove");
+    assert.ok(removed);
+    assert.equal(removed.before.moraPendingCents, 50_000);
+    assert.equal(removed.after.moraPendingCents, 0);
 
     // Already taken back.
     assert.equal((await remove("Se cargó en el contrato equivocado.")).statusCode, 404);

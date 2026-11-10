@@ -92,6 +92,8 @@ const fieldLabels: Record<string, string> = {
   moraInstallment: "Cuota",
   moraIncurredOn: "Fecha de la mora",
   moraForgivenOn: "Mora perdonada el",
+  // What that cuota still owed of mora, before and after the change.
+  moraPendingCents: "Mora por pagar",
   // A contract's own mora rule — see POST /contracts/:id/mora/rule.
   moraRule: "Regla de mora",
   moraRuleFrom: "Regla desde",
@@ -141,6 +143,7 @@ const moneyFields = new Set([
   "fixedCents",
   "capCents",
   "minUnpaidCents",
+  "moraPendingCents",
 ]);
 
 function formatValue(field: string, value: unknown, money: MoneyView): string {
@@ -195,13 +198,24 @@ function formatValue(field: string, value: unknown, money: MoneyView): string {
   return String(value);
 }
 
+/**
+ * Rows read after what was done, as its outcome: «Cuota 2 · Monto L. 250 ·
+ * Mora por pagar L. 500 → L. 250». Stored on both sides, so without this it
+ * would come first, before the cuota it is about.
+ */
+const OUTCOME_FIELDS = new Set(["moraPendingCents"]);
+
 /** Only the fields that actually differ, so the reader is not made to hunt. */
 function changedFields(event: AuditEvent): string[] {
   const keys = new Set([...Object.keys(event.before ?? {}), ...Object.keys(event.after ?? {})]);
-
-  return [...keys].filter(
+  const changed = [...keys].filter(
     (key) => JSON.stringify(event.before?.[key]) !== JSON.stringify(event.after?.[key]),
   );
+
+  return [
+    ...changed.filter((key) => !OUTCOME_FIELDS.has(key)),
+    ...changed.filter((key) => OUTCOME_FIELDS.has(key)),
+  ];
 }
 
 function formatTimestamp(value: string): string {
