@@ -25,8 +25,24 @@ const form = (patch: Partial<MoraForm> = {}): MoraForm => ({
 });
 
 describe("the mora summary", () => {
-  it("says the mora is off, whatever the other fields hold", () => {
-    assert.equal(moraSummary(form({ enabled: false })), "Apagada. Ningún contrato lleva mora.");
+  it("says the mora is off, whatever the other fields hold, and that charged mora stays owed", () => {
+    assert.equal(
+      moraSummary(form({ enabled: false })),
+      "Apagada. La mora ya cargada sigue pendiente hasta que se pague o se perdone.",
+    );
+  });
+
+  it("says from when, while the switch is flipped off and not saved yet", () => {
+    assert.equal(
+      moraSummary(form({ enabled: false }), true),
+      "Apagada desde mañana, al guardar. La mora ya cargada sigue pendiente hasta que se pague o se perdone.",
+    );
+  });
+
+  it("never claims that no contract owes mora", () => {
+    for (const savedOn of [false, true]) {
+      assert.doesNotMatch(moraSummary(form({ enabled: false }), savedOn), /Ningún contrato/);
+    }
   });
 
   it("reads a percentage rule back", () => {

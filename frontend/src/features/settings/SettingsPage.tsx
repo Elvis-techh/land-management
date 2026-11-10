@@ -427,7 +427,7 @@ export function SettingsPage({ user, settings, onSaved }: SettingsPageProps) {
               <circle cx="12" cy="12" r="9" />
               <path d="M12 8v5M12 16h.01" />
             </svg>
-            <span>{moraSummary(mora)}</span>
+            <span>{moraSummary(mora, settings.mora.enabled)}</span>
           </p>
 
           {/* Switched off, the rules fold away; what was typed in them is kept
