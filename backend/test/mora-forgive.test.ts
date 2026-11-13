@@ -97,6 +97,10 @@ describe("«Perdonar»", async () => {
       .json()
       .events.filter((event: { entityId: string }) => event.entityId === ids.contractId)
       .map((event: { action: string }) => event.action);
+  const auditEvent = async (action: string) =>
+    (await app.inject({ method: "GET", url: "/api/audit", headers: { cookie } }))
+      .json()
+      .events.find((event: { entityId: string; action: string }) => event.entityId === ids.contractId && event.action === action);
 
   it("offers what is unpaid of each cuota's mora", async () => {
     const mora = await moraOf();
@@ -163,6 +167,10 @@ describe("«Perdonar»", async () => {
     assert.equal(dashboard.income.mora.pendingCents, 20_000);
 
     assert.ok((await auditActions()).includes("mora_forgive"));
+    // «Mora por pagar» of cuota 1, before and after: L 400 → L 200.
+    const filed = await auditEvent("mora_forgive");
+    assert.equal(filed.before.moraPendingCents, 40_000);
+    assert.equal(filed.after.moraPendingCents, 20_000);
   });
 
   it("counts from then on: the next payment that day pays only what is left", async () => {
@@ -209,6 +217,10 @@ describe("«Perdonar»", async () => {
     assert.equal(row.mora.pending, 10_000);
     assert.deepEqual((await moraOf()).forgiven, []);
     assert.ok((await auditActions()).includes("mora_unforgive"));
+    // Read after the write: the later payment pays L 200 of it, so L 100 is owed, not L 200.
+    const filed = await auditEvent("mora_unforgive");
+    assert.equal(filed.before.moraPendingCents, 0);
+    assert.equal(filed.after.moraPendingCents, 10_000);
 
     assert.equal((await remove("Se perdonó en el contrato equivocado.")).statusCode, 404);
   });
