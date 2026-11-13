@@ -2,10 +2,7 @@
 
 ## Who you are working with
 
-The owner is new to programming and often works from a phone. Explain git,
-GitHub and deploy concepts (branch, commit, push, pull request, merge, build,
-deploy) in plain language the first time they come up in a session, briefly
-and without jargon, and say why a step is needed, not just what to type. They
+The owner is new to programming and often works from a phone. They
 can paste commands into the droplet console but cannot easily copy text out of
 it; they share screenshots instead. Never ask for secrets in the chat.
 
@@ -66,7 +63,7 @@ picks it up within two more. Details: docs/github-actions-deploy.md.
 ## Fixing things, one at a time
 
 The owner wants every change to be easy to identify and easy to undo. Work
-through fixes this way, and explain each step briefly the first time:
+through fixes this way:
 
 1. **One fix per branch, started from the latest `main`.** Name it after its
    purpose with the code-review ID when there is one, e.g.
