@@ -41,7 +41,9 @@ import {
   itemName,
   moraBlocker,
   moraChanged,
+  moraDateRefusal,
   moraFieldId,
+  moraRaised,
   moraReasonFieldId,
   shortDate,
 } from "./moraAtPayment";
@@ -213,6 +215,9 @@ export function NewReceiptDialog({
    * not a value equal to it, is what "nobody touched it" means.
    */
   const [moraLots, setMoraLots] = useState<Record<string, PaymentMoraLot>>({});
+  /* The payment date `moraLots` were read for: until it is the one typed, no
+     change is offered against figures for another day. */
+  const [moraLotsFor, setMoraLotsFor] = useState("");
   const [moraEdits, setMoraEdits] = useState<Record<string, MoraEdit>>({});
   const [proofs, setProofs] = useState<PendingProof[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -433,40 +438,46 @@ export function NewReceiptDialog({
   }, [payable, isMultiLot, amountByContract, amountText, typeByContract, paidOn, moraLots, moraEdits]);
 
   /*
-   * The lots' mora, read again whenever their balances move (a payment
-   * entered elsewhere, live). A failure only means no explanation shows; the
-   * payment itself is unaffected, and without it no change can be made.
+   * The lots' mora for the date typed (on an earlier date, as it stood that
+   * day), read again whenever the date changes or their balances move (a
+   * payment entered elsewhere, live). A failure only means no explanation
+   * shows; the payment itself is unaffected, and without it no change can be
+   * made.
    */
   const balancesKey = payable.map((contract) => `${contract.id}:${contract.balance}`).join("|");
 
   useEffect(() => {
     if (customerId === "") {
       setMoraLots({});
+      setMoraLotsFor("");
       return;
     }
 
     let live = true;
 
-    fetchPaymentMora(customerId)
+    fetchPaymentMora(customerId, paidOn)
       .then((found) => {
         if (live) {
           setMoraLots(Object.fromEntries(found.map((lot) => [lot.contractId, lot])));
+          setMoraLotsFor(paidOn);
         }
       })
       .catch(() => {
         if (live) {
           setMoraLots({});
+          setMoraLotsFor("");
         }
       });
 
     return () => {
       live = false;
     };
-  }, [customerId, balancesKey]);
+  }, [customerId, balancesKey, paidOn]);
 
-  /* Changing the mora is only for a payment dated today: see moraAtPayment.ts. */
-  const isToday = paidOn === businessToday();
-  const canEditMoraNow = canChangeMora && isToday;
+  /* Which changes the date allows is `moraDateRefusal` (moraAtPayment.ts). */
+  const today = businessToday();
+  const isToday = paidOn === today;
+  const canEditMoraNow = canChangeMora && moraLotsFor === paidOn;
 
   const startMoraEdit = (contract: Contract) => {
     const lot = moraLots[contract.id];
@@ -983,17 +994,26 @@ export function NewReceiptDialog({
       return null;
     }
 
-    const offerCharge = lot.pending === 0 && lot.late !== null && canEditMoraNow;
-    // Late, no mora, and «Cobrar mora» held back only by the date: say so,
+    // What the date allows: less (or the same), and more. See moraDateRefusal.
+    const lowerRefused = moraDateRefusal(lot, paidOn, today, false);
+    const raiseRefused = moraDateRefusal(lot, paidOn, today, true);
+    const offerChange = canEditMoraNow && lowerRefused === null;
+    const offerCharge = lot.pending === 0 && lot.late !== null && canEditMoraNow && raiseRefused === null;
+    // Late, no mora, and «Cobrar mora» held back only by the date: say why,
     // rather than leave the button missing with no reason.
-    const chargeNeedsToday = lot.pending === 0 && lot.late !== null && canChangeMora && !isToday;
+    const chargeRefused =
+      lot.pending === 0 && lot.late !== null && canChangeMora && raiseRefused !== null ? raiseRefused : null;
 
-    if (lot.pending === 0 && !offerCharge && !chargeNeedsToday && !edit) {
+    if (lot.pending === 0 && !offerCharge && !chargeRefused && !edit) {
       return null;
     }
 
     const changed = edit !== undefined && moraChanged(lot, edit);
+    // The change as typed, held back by the date: more mora on a day with a receipt, say.
+    const editRefused =
+      edit !== undefined && changed ? moraDateRefusal(lot, paidOn, today, moraRaised(lot, edit)) : null;
     const code = contract.lot.code;
+    const chargedOn = lot.on === today ? "hoy" : `el ${shortDate(lot.on)}`;
 
     return (
       // `joined`: the list of this payment's parts comes under it, as one card.
@@ -1004,7 +1024,7 @@ export function NewReceiptDialog({
               <>
                 <p className="lot-mora-head">
                   <strong>Mora por pagar {formatMoney(lot.pending, money)}</strong>
-                  {canEditMoraNow && !edit && (
+                  {offerChange && !edit && (
                     <button
                       type="button"
                       className="link-btn"
@@ -1020,11 +1040,13 @@ export function NewReceiptDialog({
                     <li key={line}>{line}</li>
                   ))}
                 </ul>
-                {!isToday && (
+                {(!isToday || (canChangeMora && lowerRefused)) && (
                   <p className="field-hint">
-                    Este pago es del {shortDate(paidOn)}: se acomoda en ese día y solo paga la mora
-                    cargada hasta entonces.
-                    {canChangeMora && " Para cambiar la mora, registra el pago con la fecha de hoy."}
+                    {!isToday &&
+                      (lot.on === paidOn
+                        ? `Este pago es del ${shortDate(paidOn)}: se acomoda en ese día, y esta es la mora que había entonces. La cargada después va aparte.`
+                        : `Este pago es del ${shortDate(paidOn)}: se acomoda en ese día y solo paga la mora cargada hasta entonces.`)}
+                    {canChangeMora && lowerRefused && ` ${lowerRefused}`}
                   </p>
                 )}
               </>
@@ -1047,9 +1069,7 @@ export function NewReceiptDialog({
                       </button>
                     )}
                   </p>
-                  {chargeNeedsToday && (
-                    <p className="field-hint">Para cobrar mora, registra el pago con la fecha de hoy.</p>
-                  )}
+                  {chargeRefused && <p className="field-hint">{chargeRefused}</p>}
                 </>
               )
             )}
@@ -1068,7 +1088,7 @@ export function NewReceiptDialog({
                   <span className="field-hint">
                     {lot.pending > 0
                       ? `Antes ${formatMoney(lot.pending, money)}. Pon 0 para no cobrarla.`
-                      : "Se carga hoy, por el atraso."}
+                      : `Se carga ${chargedOn}, por el atraso.`}
                   </span>
                 </div>
                 {/* The owner's rule: a reason only when the mora changes. */}
@@ -1096,11 +1116,7 @@ export function NewReceiptDialog({
                     </span>
                   </div>
                 )}
-                {!isToday && (
-                  <p className="form-blocked">
-                    La mora solo se cambia en un pago con la fecha de hoy.
-                  </p>
-                )}
+                {editRefused && <p className="form-blocked">{editRefused}</p>}
                 <button type="button" className="link-btn" onClick={() => dropMoraEdit(contract.id)}>
                   Dejar la mora como estaba
                 </button>

@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 
 import type { ContractTerms } from "../src/lib/contracts.js";
 import type { MoraAccount } from "../src/lib/mora.js";
-import { changeRows, justBefore, oldestLate, planMoraChange } from "../src/lib/moraAtPayment.js";
+import { changeRows, justBefore, moraChangeRefusal, oldestLate, planMoraChange } from "../src/lib/moraAtPayment.js";
 
 /*
  * The mora changed in «Registrar un pago» (lib/moraAtPayment.ts): what rows a
@@ -158,7 +158,7 @@ describe("oldestLate", () => {
 });
 
 describe("changeRows", () => {
-  it("dates every row today and puts the «Perdonar» rows just before the payment", () => {
+  it("dates every row on the payment's day and puts the «Perdonar» rows just before the payment", () => {
     let next = 0;
     const paymentAt = "2026-11-06T15:00:00.000Z";
     const rows = changeRows(
@@ -180,5 +180,43 @@ describe("changeRows", () => {
         },
       ],
     });
+  });
+});
+
+describe("moraChangeRefusal: no receipt already issued changes (owner, 12 Nov 2026)", () => {
+  const today = "2026-11-12";
+  const refusal = (paidOn: string, latest: { paidOn: string; receiptCode: string | null } | null, raising: boolean) =>
+    moraChangeRefusal({ paidOn, today, latest, raising });
+
+  it("allows today, and an earlier day with no payment after it", () => {
+    assert.equal(refusal(today, null, true), null);
+    assert.equal(refusal(today, { paidOn: "2026-11-01", receiptCode: "A1" }, true), null);
+    assert.equal(refusal("2026-04-30", null, true), null);
+    assert.equal(refusal("2026-04-30", { paidOn: "2026-03-31", receiptCode: "A1" }, true), null);
+  });
+
+  it("refuses any change when a receipt is dated after the payment, and names it", () => {
+    for (const raising of [true, false]) {
+      assert.equal(
+        refusal("2026-04-30", { paidOn: "2026-11-05", receiptCode: "QX7" }, raising),
+        "Tiene un recibo del 5 nov (QX7), posterior a esta fecha: su mora solo se cambia en un pago " +
+          "del 5 nov o después, para que ese recibo no cambie.",
+      );
+    }
+    assert.match(refusal("2026-04-30", { paidOn: today, receiptCode: null }, false)!, /^Tiene un pago de hoy,.* en un pago de hoy,/);
+  });
+
+  it("on the same day as a receipt, allows less mora but not more", () => {
+    assert.equal(refusal("2026-04-30", { paidOn: "2026-04-30", receiptCode: "QX7" }, false), null);
+    assert.equal(
+      refusal("2026-04-30", { paidOn: "2026-04-30", receiptCode: "QX7" }, true),
+      "Ya tiene un recibo del 30 abr (QX7): cobrarle más mora ese mismo día cambiaría lo que ese recibo cobró. " +
+        "Cóbrala en un pago de un día posterior.",
+    );
+    assert.match(refusal(today, { paidOn: today, receiptCode: "QX7" }, true)!, /^Ya tiene un recibo de hoy \(QX7\)/);
+  });
+
+  it("refuses a future date", () => {
+    assert.equal(refusal("2026-11-13", null, false), "La mora no se cambia en un pago con fecha futura.");
   });
 });

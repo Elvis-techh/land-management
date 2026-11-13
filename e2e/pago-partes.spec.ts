@@ -122,7 +122,9 @@ test("the payment's parts: the mora first today, none on a date before it was ch
   await expect(parts.locator(".lot-parts-head")).toContainText("Este pago, del");
   await expect(parts.locator(".after-payment")).toContainText("mora por pagar L. 500");
   await expect(parts.locator(".after-payment")).not.toContainText("faltan");
-  await expect(dialog.locator(".lot-mora")).toContainText("solo paga la mora cargada hasta entonces");
+  // The lot as it stood that day (the owner's rule of 12 Nov 2026): no mora
+  // yet and the prima not late, so nothing to say or change under it.
+  await expect(dialog.locator(".lot-mora")).toHaveCount(0);
   await expect(dialog.locator(".receipt-running-total")).toContainText("L. 120,500");
   await shot("pago-partes-fecha-pasada.png");
 

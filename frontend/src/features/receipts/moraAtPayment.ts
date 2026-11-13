@@ -11,8 +11,10 @@ import { amountFieldId } from "./receiptBlocker";
  *
  * - a reason only when the mora is changed;
  * - only with that permission;
- * - only on a payment dated today, so no receipt already issued changes;
- * - «Cobrar mora» on a late lot that has none.
+ * - «Cobrar mora» on a late lot that has none;
+ * - and (2026-11-12, replacing «only today») on any date up to today, as long
+ *   as no receipt already issued changes: see `moraDateRefusal`. On an earlier
+ *   date the lot is shown, and changed, as it stood that day.
  *
  * What a change files (a «Perdonar» for less, a «Cargar mora» for more) is
  * worked out by the server: see backend/src/lib/moraAtPayment.ts.
@@ -243,6 +245,59 @@ export function draftMora(
   return { amountCents: moraTarget(edit), reason: edit.reason.trim() };
 }
 
+/** «del 5 nov», or «de hoy». */
+function dayWords(isoDate: string, today: string): string {
+  return isoDate === today ? "de hoy" : `del ${shortDate(isoDate)}`;
+}
+
+/**
+ * Why this lot's mora cannot be changed with a payment dated `paidOn`, or
+ * null when it can. The server's rule, in the same words
+ * (backend/src/lib/moraAtPayment.ts `moraChangeRefusal`), so the form says it
+ * before the save would:
+ *
+ * - a receipt dated after the payment: no change, it would be divided again;
+ * - a receipt dated the same day: less mora, but not more (a «Cargar mora»
+ *   comes before that day's payments, so that receipt would pay it);
+ * - a future date: no change.
+ *
+ * `raising` when the change would leave more mora owed than `lot.pending`.
+ */
+export function moraDateRefusal(
+  lot: Pick<PaymentMoraLot, "latestPayment">,
+  paidOn: string,
+  today: string,
+  raising: boolean,
+): string | null {
+  if (paidOn > today) {
+    return "La mora no se cambia en un pago con fecha futura.";
+  }
+
+  const latest = lot.latestPayment;
+
+  if (latest === null || latest.paidOn < paidOn || (latest.paidOn === paidOn && !raising)) {
+    return null;
+  }
+
+  const when = dayWords(latest.paidOn, today);
+  const which = latest.receiptCode ? `un recibo ${when} (${latest.receiptCode})` : `un pago ${when}`;
+
+  if (latest.paidOn > paidOn) {
+    return (
+      `Tiene ${which}, posterior a esta fecha: su mora solo se cambia en un pago ` +
+      `${when === "de hoy" ? "de hoy" : `${when} o después`}, para que ese recibo no cambie.`
+    );
+  }
+
+  return `Ya tiene ${which}: cobrarle más mora ese mismo día cambiaría lo que ese recibo cobró. Cóbrala en un pago de un día posterior.`;
+}
+
+/** Would this edit leave more mora than the lot owes now? */
+export function moraRaised(lot: PaymentMoraLot, edit: MoraEdit): boolean {
+  const target = moraTarget(edit);
+  return !Number.isNaN(target) && target > lot.pending;
+}
+
 export interface MoraBlockerInput {
   /** The lots in the order the form lists them. */
   lots: Array<{ id: string; code: string }>;
@@ -278,9 +333,11 @@ export function moraBlocker(input: MoraBlockerInput): Blocker | null {
       continue;
     }
 
-    if (input.paidOn !== input.today) {
+    const refused = moraDateRefusal(lot, input.paidOn, input.today, moraRaised(lot, edit));
+
+    if (refused) {
       return {
-        message: `La mora de ${code} solo se cambia en un pago con la fecha de hoy. Pon la fecha de hoy o deja la mora como estaba.`,
+        message: `${code}: ${refused} Cambia la fecha o deja la mora como estaba.`,
         focus: DATE_FIELD,
       };
     }

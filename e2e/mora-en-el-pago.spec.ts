@@ -34,6 +34,13 @@ function shiftDays(isoDate: string, days: number): string {
   return new Date(Date.parse(`${isoDate}T00:00:00Z`) + days * DAY_MS).toISOString().slice(0, 10);
 }
 
+const MONTHS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+
+/** "2 nov", as the form writes a date. */
+function shortDate(isoDate: string): string {
+  return `${Number(isoDate.slice(8, 10))} ${MONTHS[Number(isoDate.slice(5, 7)) - 1]}`;
+}
+
 async function twoLateLots(page: Page, today: string) {
   const tag = uniqueTag();
   const customer = `Mora en el pago ${tag}`;
@@ -166,9 +173,9 @@ test("the supervisor charges one lot no mora and another L 200, each with a reas
   await page.locator(`#receipt-mora-reason-${a.contractId}`).fill("Contrato migrado de Airtable, sin mora pactada.");
   await page.locator(`#receipt-mora-reason-${b.contractId}`).fill("Acordado con el cliente por el atraso.");
 
-  // Another date: no change is allowed, and the form says so.
-  await dialog.getByLabel("Fecha del pago *").fill(shiftDays(today, -1));
-  await expect(dialog.getByText("La mora solo se cambia en un pago con la fecha de hoy.").first()).toBeVisible();
+  // A future date: no change is allowed, and the form says so.
+  await dialog.getByLabel("Fecha del pago *").fill(shiftDays(today, 1));
+  await expect(dialog.getByText("La mora no se cambia en un pago con fecha futura.").first()).toBeVisible();
   await dialog.getByLabel("Fecha del pago *").fill(today);
 
   // The change filled in, with the «después» line it gives.
@@ -209,4 +216,58 @@ test("the associate sees why a lot has mora and cannot change it", async ({ page
   await expect(dialog.getByRole("button", { name: `Cambiar la mora de ${a.code}` })).toHaveCount(0);
   await expect(dialog.getByRole("button", { name: /Cobrar mora/ })).toHaveCount(0);
   await expect(dialog.getByText(/^Atrasado:/)).toHaveCount(0);
+});
+
+/*
+ * The owner's rule of 2026-11-12: the mora can be changed on an earlier date
+ * too, as long as the lot has no receipt dated after it, so the history from
+ * Airtable can be typed in oldest first with the mora Airtable charged.
+ */
+test("an earlier date: Airtable's mora goes with the old payment, and a receipt after it holds the mora", async ({ page }, testInfo) => {
+  const today = officeToday();
+  const back = shiftDays(today, -20);
+  await logIn(page);
+  const { customer, b } = await twoLateLots(page, today);
+  await page.reload();
+
+  const dialog = await openPayment(page, customer);
+  await dialog.getByLabel("Fecha del pago *").fill(back);
+
+  // That day B was late with no mora: «Cobrar mora» puts it on that day.
+  await dialog.getByRole("button", { name: `Cobrar mora a ${b.code}` }).click();
+  await dialog.getByLabel(`Mora a cobrar a ${b.code}`).fill("300");
+  await expect(dialog.getByText(`Se carga el ${shortDate(back)}, por el atraso.`)).toBeVisible();
+  await page.locator(`#receipt-mora-reason-${b.contractId}`).fill("Mora que cobró Airtable por la cuota 1.");
+  await dialog.locator(`#receipt-amount-${b.contractId}`).fill("10300");
+  const parts = () =>
+    dialog
+      .getByRole("group", { name: `Este pago en ${b.code}` })
+      .locator(".lot-parts-list > div")
+      .evaluateAll((rows) =>
+        rows.map((row) => `${row.querySelector("dt")!.textContent} ${row.querySelector("dd")!.textContent}`),
+      );
+  await expect.poll(parts).toEqual(["Mora L. 300", "Cuota L. 10,000", "Total L. 10,300"]);
+  await dialog.locator(".lot-mora-edit").scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath("mora-fecha-pasada-1.png"), animations: "disabled" });
+
+  await dialog.getByRole("button", { name: "Registrar y emitir recibo" }).click();
+  await expect(page.getByRole("dialog", { name: "Registrar una transacción" })).toHaveCount(0);
+
+  // On file on that day, paid by that receipt.
+  const mora = (await (await page.request.get(`/api/contracts/${b.contractId}/mora`)).json()) as {
+    manual: Array<{ amountCents: number; incurredOn: string; pendingCents: number }>;
+  };
+  expect(mora.manual.map((entry) => [entry.amountCents, entry.incurredOn, entry.pendingCents])).toEqual([
+    [30_000, back, 0],
+  ]);
+
+  // Ten days before it, B's mora stays as it is: that receipt would change.
+  await page.reload();
+  await openPayment(page, customer);
+  await dialog.getByLabel("Fecha del pago *").fill(shiftDays(back, -10));
+  const held = dialog.locator(".lot-mora").filter({ hasText: `Tiene un recibo del ${shortDate(back)}` });
+  await expect(held).toContainText("posterior a esta fecha: su mora solo se cambia en un pago");
+  await expect(dialog.getByRole("button", { name: `Cobrar mora a ${b.code}` })).toHaveCount(0);
+  await held.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath("mora-fecha-pasada-2.png"), animations: "disabled" });
 });

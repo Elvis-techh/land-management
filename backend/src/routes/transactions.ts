@@ -17,8 +17,8 @@ import { roleCan } from "../lib/capabilities.js";
 import { openContract } from "../lib/holding.js";
 import { replayContract } from "../lib/ledger.js";
 import type { MoraAccountsOptions } from "../lib/moraAccounts.js";
-import { ledgerChargesOf, loadMoraAccount, loadMoraAccounts, loadPaymentMora } from "../lib/moraAccounts.js";
-import { changeRows, justBefore, planMoraChange } from "../lib/moraAtPayment.js";
+import { ledgerChargesOf, loadMoraAccount, loadMoraAccounts, loadPaymentMoraOn } from "../lib/moraAccounts.js";
+import { changeRows, justBefore, moraChangeRefusal, planMoraChange } from "../lib/moraAtPayment.js";
 import { businessToday } from "../lib/time.js";
 
 const PAYMENT_METHODS = ["cash", "transfer", "card"] as const;
@@ -461,30 +461,39 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
       };
       const asOf = today();
       const typedOn = request.query.paidOn ?? "";
-      const paidOn = /^\d{4}-\d{2}-\d{2}$/.test(typedOn) && typedOn < asOf ? typedOn : asOf;
+      // As typed (a future date too, which a changed mora is refused for)...
+      const dated = /^\d{4}-\d{2}-\d{2}$/.test(typedOn) ? typedOn : asOf;
+      // ...and where the preview places the payment: a future one, today.
+      const paidOn = dated < asOf ? dated : asOf;
       let adjusting: NonNullable<MoraAccountsOptions["adjusting"]> | undefined;
 
       if (request.query.moraCents !== undefined) {
         const target = Number(request.query.moraCents);
 
-        // As POST /receipts: a changed mora goes only with a payment dated today.
-        if (paidOn !== asOf) {
-          return reply.code(400).send({
-            error: "mora_needs_today",
-            message: "La mora solo se cambia en un pago con la fecha de hoy.",
-          });
-        }
-
         if (!Number.isInteger(target) || target < 0) {
           return reply.code(400).send({ error: "invalid_mora", message: "Indica la mora, en centavos." });
         }
 
-        const lot = loadPaymentMora(app.db, [request.params.id], { asOf, timeZone: options.timeZone }).get(
-          request.params.id,
-        );
+        // As POST /receipts: against the mora owed on the payment's date, and
+        // only when no receipt already issued would change.
+        const lot = loadPaymentMoraOn(app.db, [request.params.id], dated, {
+          asOf,
+          timeZone: options.timeZone,
+        }).get(request.params.id);
 
         if (!lot?.carriesMora) {
           return reply.code(409).send({ error: "not_chargeable", message: "Este contrato no lleva mora." });
+        }
+
+        const refusal = moraChangeRefusal({
+          paidOn: dated,
+          today: asOf,
+          latest: lot.latest,
+          raising: target > (lot.account?.pendingCents ?? 0),
+        });
+
+        if (refusal) {
+          return reply.code(400).send({ error: "mora_date_refused", message: refusal });
         }
 
         const plan = planMoraChange(lot.account, target, lot.late?.installment ?? null);
@@ -496,7 +505,7 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
         let next = 0;
         adjusting = {
           contractId: request.params.id,
-          ...changeRows(plan, asOf, justBefore(new Date().toISOString()), () => `preview-${(next += 1)}`),
+          ...changeRows(plan, paidOn, justBefore(new Date().toISOString()), () => `preview-${(next += 1)}`),
         };
       }
 

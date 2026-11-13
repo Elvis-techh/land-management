@@ -214,14 +214,14 @@ describe("mora in «Registrar un pago»", () => {
     assert.equal(before.moraPending, EACH);
     assert.equal(before.newBalance, priceLeft + EACH);
 
-    // A changed mora goes only with today's date, as on POST /receipts.
+    // A changed mora never goes with a future date, as on POST /receipts.
     const changed = await t.app.inject({
       method: "GET",
-      url: `${url}&paidOn=${early}&moraCents=0`,
+      url: `${url}&paidOn=${shiftDays(TODAY, 1)}&moraCents=0`,
       headers: { cookie: t.cookie },
     });
     assert.equal(changed.statusCode, 400);
-    assert.equal(changed.json().error, "mora_needs_today");
+    assert.equal(changed.json().error, "mora_date_refused");
 
     // Saved with that date, the lot owes what the preview said.
     assert.equal((await t.pay(CUOTA, undefined, { paidOn: early })).statusCode, 201);
@@ -249,6 +249,135 @@ describe("mora in «Registrar un pago»", () => {
     // The mora is still owed afterwards, and in the saldo.
     assert.equal(dated.moraPending, today.mora + today.moraPending);
     assert.equal(dated.newBalance, today.newBalance);
+    await t.close();
+  });
+
+  /*
+   * The owner's rule of 2026-11-12: on an earlier date too, as long as the lot
+   * has no receipt dated after it, so that no receipt already handed out
+   * changes. 20 days ago cuota 1 was late with its L 200 and cuota 2 not due
+   * yet; the fixture's own payments are from January and February.
+   */
+  const BACK = shiftDays(TODAY, -20);
+  const total = (paid: Array<{ amount: number }>) => paid.reduce((sum, entry) => sum + entry.amount, 0);
+  const lotOf = async (t: Awaited<ReturnType<typeof lateContract>>, paidOn: string) =>
+    (await t.get(`/api/customers/${t.ids.customerId}/payment-mora?paidOn=${paidOn}`)).contracts.find(
+      (row: { contractId: string }) => row.contractId === t.ids.contractId,
+    );
+
+  it("an earlier date: the mora owed THAT day, changed and filed on it", async () => {
+    const t = await lateContract();
+
+    // The form is shown the lot as it stood that day: cuota 1's L 200 only.
+    const lot = await lotOf(t, BACK);
+    assert.equal(lot.on, BACK);
+    assert.equal(lot.pendingCents, EACH);
+    assert.deepEqual(lot.late, { installment: 1, dueOn: FIRST_DUE });
+    assert.deepEqual(
+      lot.charges.map((charge: { installment: number }) => charge.installment),
+      [1],
+    );
+    assert.ok(lot.latestPayment.paidOn < BACK);
+
+    // No mora with it: the preview and the save agree, the cuota is paid whole.
+    const preview = await t.get(
+      `/api/contracts/${t.ids.contractId}/after-payment?amountCents=${CUOTA}&paidOn=${BACK}&moraCents=0`,
+    );
+    assert.equal(preview.mora, 0);
+    assert.equal(preview.appliedTo[0].settled, true);
+
+    const response = await t.pay(CUOTA, { amountCents: 0, reason: REASON }, { paidOn: BACK });
+    assert.equal(response.statusCode, 201, response.body);
+    assert.deepEqual(response.json().receipt.lines[0].moraPaid, []);
+
+    // The «Perdonar» is dated that day. Cuota 2's mora, charged since, stays owed.
+    const mora = await t.get(`/api/contracts/${t.ids.contractId}/mora`);
+    assert.deepEqual(
+      mora.forgiven.map((entry: { installment: number; forgivenOn: string; amountCents: number }) => [
+        entry.installment,
+        entry.forgivenOn,
+        entry.amountCents,
+      ]),
+      [[1, BACK, EACH]],
+    );
+    assert.equal(await t.pending(), EACH);
+    assert.equal(preview.moraPending, EACH);
+    await t.close();
+  });
+
+  it("the Airtable move, typed oldest first: Airtable's mora with each old payment", async () => {
+    const t = await lateContract();
+
+    // L 500 that day where the rule had L 200: L 300 put on by hand, on that date.
+    const first = await t.pay(CUOTA, { amountCents: 50_000, reason: "Mora que cobró Airtable por la cuota 1." }, { paidOn: BACK });
+    assert.equal(first.statusCode, 201, first.body);
+    assert.equal(total(first.json().receipt.lines[0].moraPaid), 50_000);
+    const mora = await t.get(`/api/contracts/${t.ids.contractId}/mora`);
+    assert.deepEqual(
+      mora.manual.map((entry: { installment: number; incurredOn: string; amountCents: number }) => [
+        entry.installment,
+        entry.incurredOn,
+        entry.amountCents,
+      ]),
+      [[1, BACK, 30_000]],
+    );
+
+    // The next one, five days later, can change its mora too...
+    const next = await t.pay(CUOTA, { amountCents: 0, reason: "Airtable no cobró mora en este pago." }, {
+      paidOn: shiftDays(BACK, 15),
+    });
+    assert.equal(next.statusCode, 201, next.body);
+
+    // ...but not one typed out of order, before a receipt already issued.
+    const early = await t.pay(CUOTA, { amountCents: 0, reason: REASON }, { paidOn: shiftDays(BACK, -1) });
+    assert.equal(early.statusCode, 400);
+    assert.equal(early.json().error, "mora_date_refused");
+    assert.match(early.json().message, new RegExp(`Tiene un recibo del .* \\(${next.json().receipt.code}\\), posterior`));
+    await t.close();
+  });
+
+  it("a receipt dated after the payment: no change, shown as today, and the payment still goes in", async () => {
+    const t = await lateContract();
+    const later = (await t.pay(CUOTA)).json().receipt;
+
+    const lot = await lotOf(t, BACK);
+    assert.equal(lot.on, TODAY);
+    assert.deepEqual(lot.latestPayment, { paidOn: TODAY, receiptCode: later.code });
+
+    const refused = await t.pay(CUOTA, { amountCents: 0, reason: REASON }, { paidOn: BACK });
+    assert.equal(refused.statusCode, 400);
+    assert.equal(refused.json().error, "mora_date_refused");
+    assert.match(refused.json().message, new RegExp(`\\(${later.code}\\)`));
+
+    const preview = await t.app.inject({
+      method: "GET",
+      url: `/api/contracts/${t.ids.contractId}/after-payment?amountCents=${CUOTA}&paidOn=${BACK}&moraCents=0`,
+      headers: { cookie: t.cookie },
+    });
+    assert.equal(preview.statusCode, 400);
+    assert.equal((await t.get(`/api/contracts/${t.ids.contractId}/mora`)).forgiven.length, 0);
+
+    assert.equal((await t.pay(CUOTA, undefined, { paidOn: BACK })).statusCode, 201);
+    await t.close();
+  });
+
+  it("a day that already has a receipt: less mora yes, more no, so that receipt keeps what it paid", async () => {
+    // Found while building the rule (12 Nov 2026): a «Cobrar mora» on a second
+    // payment the same day made the first receipt pay it, L 400 became L 1,000.
+    const t = await lateContract();
+    const first = (await t.pay(10_000)).json().receipt;
+    assert.equal(total(first.lines[0].moraPaid), 10_000);
+
+    const less = await t.pay(CUOTA, { amountCents: 0, reason: REASON });
+    assert.equal(less.statusCode, 201, less.body);
+
+    const more = await t.pay(60_000, { amountCents: 60_000, reason: "Acordado con el cliente: L 600 de mora." });
+    assert.equal(more.statusCode, 400);
+    assert.equal(more.json().error, "mora_date_refused");
+    assert.match(more.json().message, /Ya tiene un recibo de hoy \(.+\): cobrarle más mora ese mismo día/);
+
+    const again = (await t.get(`/api/receipts/${first.id}`)).receipt;
+    assert.equal(total(again.lines[0].moraPaid), 10_000);
     await t.close();
   });
 
@@ -346,15 +475,15 @@ describe("mora in «Registrar un pago»", () => {
     await t.close();
   });
 
-  it("refuses without the permission, on another day, with a short reason, and changes nothing", async () => {
+  it("refuses without the permission, on a future date, with a short reason, and changes nothing", async () => {
     const t = await lateContract();
 
     const staff = await t.pay(CUOTA, { amountCents: 0, reason: REASON }, {}, t.staffCookie);
     assert.equal(staff.statusCode, 403, staff.body);
 
-    const yesterday = await t.pay(CUOTA, { amountCents: 0, reason: REASON }, { paidOn: shiftDays(TODAY, -1) });
-    assert.equal(yesterday.statusCode, 400);
-    assert.equal(yesterday.json().error, "mora_needs_today");
+    const tomorrow = await t.pay(CUOTA, { amountCents: 0, reason: REASON }, { paidOn: shiftDays(TODAY, 1) });
+    assert.equal(tomorrow.statusCode, 400);
+    assert.equal(tomorrow.json().error, "mora_date_refused");
 
     const short = await t.pay(CUOTA, { amountCents: 0, reason: "corto" });
     assert.equal(short.statusCode, 400);
