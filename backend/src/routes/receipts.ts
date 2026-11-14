@@ -1010,7 +1010,14 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
        */
       const moraPlans = new Map<
         string,
-        { pendingCents: number; targetCents: number; reason: string; change: MoraChange }
+        {
+          pendingCents: number;
+          /** What each cuota owed of mora before the change, for Historial's «antes → después». */
+          pendingByInstallment: Readonly<Record<number, number>>;
+          targetCents: number;
+          reason: string;
+          change: MoraChange;
+        }
       >();
       const moraLines = body.lines.filter((line) => line.mora && byId.has(line.contractId));
 
@@ -1054,6 +1061,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
 
           moraPlans.set(line.contractId, {
             pendingCents: lot.account?.pendingCents ?? 0,
+            pendingByInstallment: lot.account?.pendingByInstallment ?? {},
             targetCents: line.mora!.amountCents,
             reason: line.mora!.reason,
             change,
@@ -1182,17 +1190,23 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
                 })
                 .run();
 
+              // «Mora por pagar» of the cuota, before and after: the change
+              // lands just before the payment, so nothing else moves it.
+              const owedBefore = plan.pendingByInstallment[entry.installment] ?? 0;
+
               recordAudit(tx, {
                 actorId: actor.id,
                 entityType: "contract",
                 entityId: contractId,
                 action: "mora_forgive",
                 reason: plan.reason,
+                before: { moraPendingCents: owedBefore },
                 after: {
                   moraInstallment: entry.installment,
                   moraForgivenOn: entry.forgivenOn,
                   amountCents: entry.amountCents,
                   receiptCode: code,
+                  moraPendingCents: owedBefore - entry.amountCents,
                 },
               });
             }
@@ -1209,17 +1223,21 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
                 })
                 .run();
 
+              const owedBefore = plan.pendingByInstallment[entry.installment] ?? 0;
+
               recordAudit(tx, {
                 actorId: actor.id,
                 entityType: "contract",
                 entityId: contractId,
                 action: "mora_charge",
                 reason: plan.reason,
+                before: { moraPendingCents: owedBefore },
                 after: {
                   moraInstallment: entry.installment,
                   moraIncurredOn: entry.incurredOn,
                   amountCents: entry.amountCents,
                   receiptCode: code,
+                  moraPendingCents: owedBefore + entry.amountCents,
                 },
               });
             }
