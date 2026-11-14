@@ -8084,16 +8084,55 @@ input:disabled {
   white-space: normal;
 }
 
-/* "Después: Cuota 4 de 12 · completa · próxima L. 25,000" — what the amount
-   being typed will do, at the foot of its list of parts. A sentence too, so it
-   wraps; set apart from the "próxima" line beside the saldo, which describes
-   the lot BEFORE this payment. */
+/* «Después de este pago»: what the amount being typed will leave, one fact per
+   box (owner, 13 Nov 2026): green once finished, red while still owed. Set
+   apart from the "Próxima cuota" line beside the saldo, which describes the
+   lot BEFORE this payment. */
 .split-table .after-payment {
   display: block;
   margin-top: 2px;
   white-space: normal;
-  color: var(--green-dark, #2e6b4a);
+}
+
+.after-payment-head {
+  margin: 0 0 4px;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.after-boxes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.after-box {
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
   font-weight: 500;
+}
+
+.after-box.is-ok {
+  border-color: var(--green);
+  background: var(--green-bg);
+  color: var(--green-dark);
+}
+
+.after-box.is-due {
+  border-color: var(--red);
+  background: var(--red-bg);
+  color: var(--red-dark);
+}
+
+.after-box-note {
+  display: block;
+  font-size: 0.85em;
+  font-weight: 400;
 }
 
 /*

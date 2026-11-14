@@ -110,7 +110,7 @@ test("the payment's parts: the mora first today, none on a date before it was ch
   await dialog.getByLabel("Monto *").fill("15000");
   await expect.poll(read).toEqual(["Mora L. 500", "Prima L. 14,500", "Total L. 15,000"]);
   await expect(parts.locator(".lot-parts-head")).toHaveText("Este pago");
-  await expect(parts.locator(".after-payment")).toContainText("faltan L. 500 de prima");
+  await expect(parts.locator(".after-payment")).toContainText("Faltan L. 500 de prima");
   await expect(dialog.locator(".receipt-running-total")).toContainText("L. 120,500");
   await shot("pago-partes-hoy.png");
 
@@ -120,9 +120,13 @@ test("the payment's parts: the mora first today, none on a date before it was ch
   await dialog.getByLabel("Fecha del pago *").fill(back);
   await expect.poll(read).toEqual(["Mora L. 0", "Prima L. 15,000", "Total L. 15,000"]);
   await expect(parts.locator(".lot-parts-head")).toContainText("Este pago, del");
-  await expect(parts.locator(".after-payment")).toContainText("mora por pagar L. 500");
-  await expect(parts.locator(".after-payment")).not.toContainText("faltan");
-  await expect(dialog.locator(".lot-mora")).toContainText("solo paga la mora cargada hasta entonces");
+  await expect(parts.locator(".after-payment")).toContainText("Mora por pagar L. 500");
+  // Charged after that date, so the payment could not have paid it: the box says so.
+  await expect(parts.locator(".after-box.is-due")).toHaveText(/^Mora por pagar L\.\s500Cargada después del \d+ \S+, en la cuota 1$/);
+  await expect(parts.locator(".after-payment")).not.toContainText("Faltan");
+  // The lot as it stood that day (the owner's rule of 12 Nov 2026): no mora
+  // yet and the prima not late, so nothing to say or change under it.
+  await expect(dialog.locator(".lot-mora")).toHaveCount(0);
 
   // The saldo is that day's, the receipt's «Balance Anterior»: no mora yet.
   // Today's is under it (owner, 13 Nov 2026). The saldo restante follows, so
@@ -130,9 +134,9 @@ test("the payment's parts: the mora first today, none on a date before it was ch
   await expect(dialog.locator(".split-table thead th").nth(1)).toHaveText(/^Saldo al \d+ \S+$/);
   await expect(balance.locator(".cell-money")).toHaveText("L. 135,000");
   await expect(balance).not.toContainText("incluye mora");
-  await expect(balance).toContainText("hoy L. 135,500");
+  await expect(balance).toContainText("Saldo actual L. 135,500");
   await expect(dialog.locator(".receipt-running-total")).toContainText(/Saldo restante al \d+ \S+ L\. 120,000/);
-  await expect(dialog.locator(".receipt-running-today")).toHaveText("hoy L. 120,500");
+  await expect(dialog.locator(".receipt-running-today")).toHaveText("saldo actual L. 120,500");
   await shot("pago-partes-fecha-pasada.png");
 
   // Saved with that date, the receipt and the lot say what the form said.
@@ -160,6 +164,6 @@ test("the payment's parts: the mora first today, none on a date before it was ch
   await page.getByRole("banner").getByRole("button", { name: "Nueva transacción" }).click();
   await dialog.getByRole("searchbox", { name: "Buscar cliente" }).fill(customer);
   await dialog.getByRole("option", { name: new RegExp(customer) }).click();
-  await expect(balance).toContainText("próxima: faltan L. 6,000 de L. 10,000");
+  await expect(balance).toContainText("Próxima cuota: faltan L. 6,000 de L. 10,000");
   await expect(balance).not.toContainText("adelanto");
 });

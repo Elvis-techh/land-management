@@ -22,9 +22,9 @@ test("the form says what the amount being typed will do", async ({ page }) => {
   const balance = balanceText.replace(/^\s*L\.\s*/, "").replace(/,/g, "");
 
   await dialog.getByLabel("Monto *").fill(balance);
-  await expect(after).toContainText("contrato pagado");
+  await expect(after).toContainText("Contrato pagado");
 
   await dialog.getByLabel("Monto *").fill("1");
   await expect(after).toContainText("Abono a cuota");
-  await expect(after).not.toContainText("contrato pagado");
+  await expect(after).not.toContainText("Contrato pagado");
 });

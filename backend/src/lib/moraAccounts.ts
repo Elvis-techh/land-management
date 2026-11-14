@@ -1,7 +1,7 @@
 import { and, eq, inArray, isNull } from "drizzle-orm";
 
 import type { Db } from "../db/client.js";
-import { contracts, moraContractRules, moraForgiveness, moraManualCharges, payments } from "../db/schema.js";
+import { contracts, moraContractRules, moraForgiveness, moraManualCharges, payments, receipts } from "../db/schema.js";
 import type { ContractTerms, SaleType } from "./contracts.js";
 import type { LedgerCharge } from "./ledger.js";
 import type {
@@ -13,6 +13,7 @@ import type {
   MoraRuleVersion,
 } from "./mora.js";
 import { contractHistory, moraAccount, moraEverOn } from "./mora.js";
+import type { LatestPayment } from "./moraAtPayment.js";
 import { oldestLate } from "./moraAtPayment.js";
 import { ownMoraSchema, readMoraHistory, readSettings } from "./settings.js";
 import { businessToday, parseTimestamp } from "./time.js";
@@ -481,6 +482,96 @@ export function loadPaymentMora(
       history: contractHistory(general, rules.get(row.id) ?? []),
       late: carriesMora ? oldestLate(terms, pricePaid, options.asOf, graceDays) : null,
     });
+  }
+
+  return result;
+}
+
+/**
+ * The newest payment still standing on each of these lots, with its receipt's
+ * code: what decides whether a lot's mora can be changed with a payment on a
+ * given date (`moraChangeRefusal`). A lot with none is missing.
+ */
+export function latestPayments(
+  db: Pick<Db, "select">,
+  contractIds: readonly string[],
+): Map<string, LatestPayment> {
+  const result = new Map<string, LatestPayment & { createdAt: string }>();
+
+  if (contractIds.length === 0) {
+    return result;
+  }
+
+  for (const row of db
+    .select({
+      contractId: payments.contractId,
+      paidOn: payments.paidOn,
+      createdAt: payments.createdAt,
+      receiptCode: receipts.code,
+    })
+    .from(payments)
+    .leftJoin(receipts, eq(receipts.id, payments.receiptId))
+    .where(and(isNull(payments.reversedAt), inArray(payments.contractId, [...contractIds])))
+    .all()) {
+    const known = result.get(row.contractId);
+
+    if (
+      !known ||
+      row.paidOn > known.paidOn ||
+      (row.paidOn === known.paidOn && parseTimestamp(row.createdAt) > parseTimestamp(known.createdAt))
+    ) {
+      result.set(row.contractId, { paidOn: row.paidOn, receiptCode: row.receiptCode, createdAt: row.createdAt });
+    }
+  }
+
+  return result;
+}
+
+/** A lot's mora for a payment on a given date, and what decides whether it can be changed. */
+export interface PaymentMoraOn extends PaymentMora {
+  /** The day the figures are as of: the payment's date, or today. */
+  on: string;
+  latest: LatestPayment | null;
+}
+
+/**
+ * The mora of these lots as «Registrar un pago» shows and changes it for a
+ * payment dated `paidOn`.
+ *
+ * Dated before today, a lot is shown as it stood THAT day, the mora a change
+ * would be made against (the owner's rule of 2026-11-12). Except a lot with a
+ * payment dated after it: its mora cannot be changed then, and the replay of
+ * that day would count the later payment too, so it is shown as it is today.
+ * Today or later, as today.
+ */
+export function loadPaymentMoraOn(
+  db: Pick<Db, "select">,
+  contractIds: readonly string[],
+  paidOn: string,
+  options: { asOf: string; timeZone: string },
+): Map<string, PaymentMoraOn> {
+  const latest = latestPayments(db, contractIds);
+  const past = (id: string) => paidOn < options.asOf && !((latest.get(id)?.paidOn ?? "") > paidOn);
+  const then = loadPaymentMora(db, contractIds.filter(past), { ...options, asOf: paidOn });
+  const now = loadPaymentMora(
+    db,
+    contractIds.filter((id) => !past(id)),
+    options,
+  );
+  const result = new Map<string, PaymentMoraOn>();
+
+  // In the order asked for.
+  for (const id of contractIds) {
+    const lot = then.get(id) ?? now.get(id);
+    const found = latest.get(id);
+
+    if (lot) {
+      result.set(id, {
+        ...lot,
+        on: then.has(id) ? paidOn : options.asOf,
+        latest: found ? { paidOn: found.paidOn, receiptCode: found.receiptCode } : null,
+      });
+    }
   }
 
   return result;

@@ -209,6 +209,13 @@ export interface PaymentMoraLot {
   contractId: string;
   /** A signed contract paid in cuotas, still open: its mora can be changed. */
   carriesMora: boolean;
+  /**
+   * The day these figures are as of: the payment's date when it is earlier
+   * than today and nothing on the lot is dated after it, otherwise today.
+   */
+  on: string;
+  /** The newest payment still standing on the lot, which a change is checked against. */
+  latestPayment: { paidOn: string; receiptCode: string | null } | null;
   pending: Cents;
   /** Every charge of each cuota that still owes mora, oldest first, paid and forgiven ones too. */
   charges: PaymentMoraCharge[];
@@ -216,12 +223,14 @@ export interface PaymentMoraLot {
   late: { installment: number; dueOn: string } | null;
 }
 
-/** The mora of each lot this customer is paying on. Read-only. */
-export async function fetchPaymentMora(customerId: string): Promise<PaymentMoraLot[]> {
+/** The mora of each lot this customer is paying on, for a payment dated `paidOn`. Read-only. */
+export async function fetchPaymentMora(customerId: string, paidOn: string): Promise<PaymentMoraLot[]> {
   const raw = await api.get<{
     contracts: Array<{
       contractId: string;
       carriesMora: boolean;
+      on: string;
+      latestPayment: { paidOn: string; receiptCode: string | null } | null;
       pendingCents: number;
       late: { installment: number; dueOn: string } | null;
       charges: Array<{
@@ -243,11 +252,13 @@ export async function fetchPaymentMora(customerId: string): Promise<PaymentMoraL
         } | null;
       }>;
     }>;
-  }>(`/api/customers/${customerId}/payment-mora`);
+  }>(`/api/customers/${customerId}/payment-mora?paidOn=${encodeURIComponent(paidOn)}`);
 
   return raw.contracts.map((lot) => ({
     contractId: lot.contractId,
     carriesMora: lot.carriesMora,
+    on: lot.on,
+    latestPayment: lot.latestPayment,
     pending: cents(lot.pendingCents),
     late: lot.late,
     charges: lot.charges.map((charge) => ({
@@ -644,6 +655,10 @@ export interface AfterPayment {
   toDownPayment: Cents;
   /** Mora still owed today, with this payment in its place. */
   moraPending: Cents;
+  /** The part of `moraPending` charged after the payment's date: a payment cannot pay mora not yet charged. */
+  moraPendingLater: Cents;
+  /** The cuotas that part was charged on, in order (0 is the prima). */
+  moraLaterInstallments: number[];
   /** The lot's saldo today, with this payment in its place, mora included. */
   newBalance: Cents;
   settled: boolean;
@@ -663,7 +678,7 @@ export async function fetchAfterPayment(
   amountCents: number,
   /** The mora as changed in the form, when it was. */
   moraCents?: number,
-  /** The payment's date, as typed: it pays the mora charged up to that day. */
+  /** The payment's date, as typed: it pays the mora charged up to that day, and a changed mora is filed on it. */
   paidOn?: string,
 ): Promise<AfterPayment> {
   const raw = await api.get<{
@@ -679,6 +694,8 @@ export async function fetchAfterPayment(
     mora: number;
     toDownPayment: number;
     moraPending: number;
+    moraPendingLater: number;
+    moraLaterInstallments: number[];
     newBalance: number;
     settled: boolean;
     nextDueAmount: number;
@@ -702,6 +719,7 @@ export async function fetchAfterPayment(
     mora: cents(raw.mora),
     toDownPayment: cents(raw.toDownPayment),
     moraPending: cents(raw.moraPending),
+    moraPendingLater: cents(raw.moraPendingLater),
     newBalance: cents(raw.newBalance),
     nextDueAmount: cents(raw.nextDueAmount),
     nextInstallment: cents(raw.nextInstallment),

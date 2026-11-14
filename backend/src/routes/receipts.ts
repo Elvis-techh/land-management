@@ -36,9 +36,9 @@ import type { ContractTerms, SaleType } from "../lib/contracts.js";
 import { appliedInstallments, assessContract, buildSchedule } from "../lib/contracts.js";
 import type { LedgerCharge } from "../lib/ledger.js";
 import { orderLedger, receiptFigures, replayContract } from "../lib/ledger.js";
-import { ledgerChargesOf, loadMoraAccount, loadMoraAccounts, loadPaymentMora } from "../lib/moraAccounts.js";
+import { ledgerChargesOf, loadMoraAccount, loadMoraAccounts, loadPaymentMoraOn } from "../lib/moraAccounts.js";
 import type { MoraChange } from "../lib/moraAtPayment.js";
-import { changeRows, justBefore, planMoraChange } from "../lib/moraAtPayment.js";
+import { changeRows, justBefore, moraChangeRefusal, planMoraChange } from "../lib/moraAtPayment.js";
 import { businessToday } from "../lib/time.js";
 import {
   allocateReceiptCode,
@@ -507,9 +507,9 @@ const receiptBody = z.object({
         /**
          * The lot's mora, changed in the form: what it is to owe right before
          * this payment (0 = none), and why. Only when it was changed. On
-         * `mora:charge` and only on a payment dated today; written as
-         * «Perdonar» or «Cargar mora» linked to this receipt. See
-         * lib/moraAtPayment.ts.
+         * `mora:charge`, and only when no receipt already issued would change
+         * (`moraChangeRefusal`); written as «Perdonar» or «Cargar mora» on the
+         * payment's date, linked to this receipt. See lib/moraAtPayment.ts.
          */
         mora: z
           .object({
@@ -1004,9 +1004,11 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
 
       /*
        * Mora changed in the form, lot by lot. Checked before anything is
-       * written: who may change it, that the payment is dated today (so no
-       * receipt already issued changes), that the lot carries mora, and that
-       * charging more has a late cuota to go on.
+       * written: who may change it, that no receipt already issued changes
+       * (`moraChangeRefusal`: today, or an earlier day with no later receipt
+       * on the lot), that the lot carries mora, and that charging more has a
+       * late cuota to go on. On an earlier day the change is made against the
+       * mora the lot owed that day, and filed on it.
        */
       const moraPlans = new Map<
         string,
@@ -1029,17 +1031,10 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
           });
         }
 
-        if (body.paidOn !== asOf) {
-          return reply.code(400).send({
-            error: "mora_needs_today",
-            message:
-              "La mora solo se cambia en un pago con la fecha de hoy, para que ningún recibo ya emitido cambie.",
-          });
-        }
-
-        const lots = loadPaymentMora(
+        const lots = loadPaymentMoraOn(
           app.db,
           moraLines.map((line) => line.contractId),
+          body.paidOn,
           moraAt(),
         );
 
@@ -1051,6 +1046,17 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
             return reply
               .code(409)
               .send({ error: "not_chargeable", message: `El contrato ${code} no lleva mora.` });
+          }
+
+          const refusal = moraChangeRefusal({
+            paidOn: body.paidOn,
+            today: asOf,
+            latest: lot.latest,
+            raising: line.mora!.amountCents > (lot.account?.pendingCents ?? 0),
+          });
+
+          if (refusal) {
+            return reply.code(400).send({ error: "mora_date_refused", message: `${code}: ${refusal}` });
           }
 
           const change = planMoraChange(lot.account, line.mora!.amountCents, lot.late?.installment ?? null);
@@ -1171,13 +1177,13 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
             .run();
 
           /*
-           * The mora changed in the form, before the payments: one
-           * millisecond before their instant, so the replay puts it ahead of
-           * them and after anything entered earlier today. The same rows the
-           * contract's own mora panel writes, linked to this receipt.
+           * The mora changed in the form, before the payments: on their date,
+           * one millisecond before their instant, so the replay puts it ahead
+           * of them and after anything entered earlier that day. The same rows
+           * the contract's own mora panel writes, linked to this receipt.
            */
           for (const [contractId, plan] of moraPlans) {
-            const rows = changeRows(plan.change, asOf, justBefore(now), randomUUID);
+            const rows = changeRows(plan.change, body.paidOn, justBefore(now), randomUUID);
 
             for (const entry of rows.forgiveness) {
               tx.insert(moraForgiveness)

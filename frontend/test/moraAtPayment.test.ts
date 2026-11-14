@@ -8,6 +8,7 @@ import {
   cuotaSentences,
   draftMora,
   moraBlocker,
+  moraDateRefusal,
   moraFieldId,
   moraReasonFieldId,
   shortDate,
@@ -42,6 +43,8 @@ const PRIMA: PaymentMoraCharge = {
 const lot = (patch: Partial<PaymentMoraLot> = {}): PaymentMoraLot => ({
   contractId: "c1",
   carriesMora: true,
+  on: "2026-11-06",
+  latestPayment: { paidOn: "2026-10-01", receiptCode: "QX7" },
   pending: L(500),
   charges: [PRIMA],
   late: { installment: 0, dueOn: "2026-10-27" },
@@ -228,14 +231,34 @@ describe("what stops a receipt whose mora was changed", () => {
     assert.equal(moraBlocker({ ...base, edits: { c1: { amount: "0", reason: "Migrado de Airtable" } } }), null);
   });
 
-  it("refuses another day than today, and sends the caret to the date", () => {
+  it("allows an earlier day with no receipt after it (owner, 12 Nov 2026)", () => {
+    assert.equal(
+      moraBlocker({ ...base, paidOn: "2026-10-15", edits: { c1: { amount: "0", reason: "Migrado de Airtable" } } }),
+      null,
+    );
+  });
+
+  it("refuses a day before a receipt already issued, and sends the caret to the date", () => {
     const blocked = moraBlocker({
       ...base,
-      paidOn: "2026-11-05",
+      paidOn: "2026-09-30",
       edits: { c1: { amount: "0", reason: "Migrado de Airtable" } },
     });
     assert.equal(blocked?.focus, DATE_FIELD);
-    assert.match(blocked!.message, /solo se cambia en un pago con la fecha de hoy/);
+    assert.equal(
+      blocked!.message,
+      "B-01: Tiene un recibo del 1 oct (QX7), posterior a esta fecha: su mora solo se cambia en un pago " +
+        "del 1 oct o después, para que ese recibo no cambie. Cambia la fecha o deja la mora como estaba.",
+    );
+  });
+
+  it("on the day of a receipt, refuses more mora but not less", () => {
+    const edits = (amount: string) => ({ c1: { amount, reason: "Migrado de Airtable" } });
+    assert.equal(moraBlocker({ ...base, paidOn: "2026-10-01", edits: edits("100") }), null);
+    assert.match(
+      moraBlocker({ ...base, paidOn: "2026-10-01", edits: edits("900") })!.message,
+      /^B-01: Ya tiene un recibo del 1 oct \(QX7\): cobrarle más mora ese mismo día/,
+    );
   });
 
   it("refuses a change on a lot that receives nothing", () => {
@@ -252,5 +275,37 @@ describe("what stops a receipt whose mora was changed", () => {
       message: "Escribe la mora que se cobra a B-01, o 0 para no cobrarla.",
       focus: moraFieldId("c1"),
     });
+  });
+});
+
+describe("moraDateRefusal: the server's rule, said before the save", () => {
+  const TODAY = "2026-11-12";
+  const on = (latestPayment: PaymentMoraLot["latestPayment"]) => ({ latestPayment });
+
+  it("matches the server's words", () => {
+    // backend/test/moraAtPayment.test.ts checks the same sentences.
+    assert.equal(
+      moraDateRefusal(on({ paidOn: "2026-11-05", receiptCode: "QX7" }), "2026-04-30", TODAY, false),
+      "Tiene un recibo del 5 nov (QX7), posterior a esta fecha: su mora solo se cambia en un pago " +
+        "del 5 nov o después, para que ese recibo no cambie.",
+    );
+    assert.equal(
+      moraDateRefusal(on({ paidOn: "2026-04-30", receiptCode: "QX7" }), "2026-04-30", TODAY, true),
+      "Ya tiene un recibo del 30 abr (QX7): cobrarle más mora ese mismo día cambiaría lo que ese recibo cobró. " +
+        "Cóbrala en un pago de un día posterior.",
+    );
+    assert.equal(moraDateRefusal(on(null), "2026-11-13", TODAY, false), "La mora no se cambia en un pago con fecha futura.");
+  });
+
+  it("says «de hoy» for today's receipt, and «un pago» for money with no receipt", () => {
+    assert.match(
+      moraDateRefusal(on({ paidOn: TODAY, receiptCode: null }), "2026-04-30", TODAY, false)!,
+      /^Tiene un pago de hoy, posterior a esta fecha: su mora solo se cambia en un pago de hoy,/,
+    );
+  });
+
+  it("allows a lot with no payments, or none on or after the date", () => {
+    assert.equal(moraDateRefusal(on(null), "2026-04-30", TODAY, true), null);
+    assert.equal(moraDateRefusal(on({ paidOn: "2026-04-29", receiptCode: "A" }), "2026-04-30", TODAY, true), null);
   });
 });

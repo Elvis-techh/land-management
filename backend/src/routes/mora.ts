@@ -11,7 +11,7 @@ import { syncContractLifecycle } from "../lib/contractLifecycle.js";
 import type { ContractTerms, SaleType } from "../lib/contracts.js";
 import { buildSchedule, shiftDays } from "../lib/contracts.js";
 import type { ContractMoraRule } from "../lib/mora.js";
-import { contractRuleOf, loadMoraAccount, loadPaymentMora } from "../lib/moraAccounts.js";
+import { contractRuleOf, loadMoraAccount, loadPaymentMoraOn } from "../lib/moraAccounts.js";
 import { chargesToExplain } from "../lib/moraAtPayment.js";
 import { amountProblem, ownMoraSchema, readSettings } from "../lib/settings.js";
 import { businessToday } from "../lib/time.js";
@@ -291,8 +291,13 @@ export const moraRoutes: FastifyPluginAsync<MoraRouteOptions> = async (app, opti
    * what is owed, each charge with why it was made, and the oldest late cuota
    * (where «Cobrar mora» would go). Read-only, for anyone signed in; changing
    * it is POST /receipts, on `mora:charge`. See lib/moraAtPayment.ts.
+   *
+   * `paidOn` is the payment's date as typed: before today, each lot is shown
+   * as it stood that day, unless it has a payment dated later (`on` says
+   * which). `latestPayment` is what the form checks a change against, as the
+   * save does (`moraChangeRefusal`).
    */
-  app.get<{ Params: { id: string } }>(
+  app.get<{ Params: { id: string }; Querystring: { paidOn?: string } }>(
     "/customers/:id/payment-mora",
     { onRequest: app.requireUser },
     async (request) => {
@@ -302,14 +307,18 @@ export const moraRoutes: FastifyPluginAsync<MoraRouteOptions> = async (app, opti
         .where(and(eq(contracts.customerId, request.params.id), eq(contracts.status, "active")))
         .all()
         .map((row) => row.id);
+      const typed = request.query.paidOn ?? "";
+      const paidOn = /^\d{4}-\d{2}-\d{2}$/.test(typed) ? typed : today();
 
       return {
-        contracts: [...loadPaymentMora(app.db, ids, at()).values()].map((lot) => ({
+        contracts: [...loadPaymentMoraOn(app.db, ids, paidOn, at()).values()].map((lot) => ({
           contractId: lot.contractId,
           carriesMora: lot.carriesMora,
+          on: lot.on,
           pendingCents: lot.account?.pendingCents ?? 0,
           charges: chargesToExplain(lot.account, lot.terms, lot.history),
           late: lot.late,
+          latestPayment: lot.latest,
         })),
       };
     },
