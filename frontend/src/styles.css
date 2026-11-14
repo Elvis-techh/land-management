@@ -1473,6 +1473,32 @@ tbody tr:hover {
   white-space: nowrap;
 }
 
+/* The «L.» of each amount, in a column of its own, so every «L.» stands under
+   the one above it whatever the size of the number — see `Figure` in
+   ReceiptPaper.tsx. Specific enough to beat `.receipt-items tbody td`.
+
+   Both amount columns ask for 1%, which a table reads as "as narrow as the
+   content allows", so the room left over goes to the description instead of
+   opening a gap between the «L.» and the digits. Any width the header forces
+   on them lands to the left of the «L.», which is right-aligned for that. */
+.receipt-items td.receipt-cur-cell {
+  width: 1%;
+  padding-left: 1em;
+  padding-right: 0.3em;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.receipt-items td.receipt-right {
+  width: 1%;
+}
+
+/* Every digit the same width, so a column of amounts lines up digit under
+   digit and point under point. */
+.receipt-num {
+  font-variant-numeric: tabular-nums;
+}
+
 .receipt-item-lot {
   display: block;
 }
@@ -1497,8 +1523,24 @@ tbody tr:hover {
   margin-bottom: 1.875em;
 }
 
+/*
+ * Each column is a grid of three: the label, the «L.», the digits. Every row
+ * puts its cells on those same columns (`subgrid`), so the «L.» of each figure
+ * stands under the one above and the digits end on one edge, the boxed balance
+ * included — see `Figure` in ReceiptPaper.tsx.
+ *
+ * The column carries the size of the enlarged reading region (see
+ * `.receipt-client` above), and every row box keeps it: the two larger figures
+ * enlarge their CELLS, not their row. That keeps the rows' side padding, in
+ * `em`, the same length on every row, and that padding is what makes the
+ * figures inside the box end where the figures above it end.
+ */
 .receipt-summary-col {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-content: start;
   width: 44%;
+  font-size: 1.1875em;
 }
 
 /* The right-hand column holds the boxed balance, and "Nuevo Balance Pendiente"
@@ -1508,45 +1550,82 @@ tbody tr:hover {
   width: 52%;
 }
 
+.receipt-summary-row,
+.receipt-highlight {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  align-items: baseline;
+  /* The box's own inner margin, given to every row so all the figures share
+     its edges. 0.83em here is the box's former 0.75em at its larger size. */
+  padding-left: 0.83em;
+  padding-right: 0.83em;
+}
+
 .receipt-summary-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 1em;
   margin-bottom: 0.6875em;
-  /* The last of the enlarged reading region — see `.receipt-client` above. */
-  font-size: 1.1875em;
 }
 
-.receipt-summary-value {
-  font-weight: 600;
+/* The label keeps its distance from the «L.» however long it gets. */
+.receipt-summary-row > span:first-child {
+  padding-right: 1em;
 }
 
-/* "L. 225,000.00" is one thing to read, and wrapping it after the "L." makes it
-   two. Every figure in the summary is held on one line. */
-.receipt-summary-row > span:last-child {
+.receipt-cur {
+  padding-right: 0.3em;
   white-space: nowrap;
 }
 
+/* "L. 225,000.00" is one thing to read, and wrapping it after the "L." makes it
+   two. Every figure in the summary is held on one line, and right-aligned in
+   its column so the digits end on one edge. */
+.receipt-summary-col .receipt-num {
+  justify-self: end;
+  /* Also inside its own box: the WhatsApp image pins each cell to the width
+     it had on screen and draws the larger text a touch narrower, which left
+     the two big figures a pixel or two short of the edge. */
+  text-align: right;
+  white-space: nowrap;
+}
+
+.receipt-summary-row .receipt-cur,
+.receipt-summary-row .receipt-num {
+  font-weight: 600;
+}
+
+/* 1.1053em of the column is the 1.3125em of the document these two have
+   always had. */
 .receipt-summary-row.is-bold {
-  padding-bottom: 0.3125em;
+  padding-bottom: 0.3454em;
   border-bottom: 1px solid var(--r-border);
   color: var(--r-primary);
-  font-size: 1.3125em;
+  font-weight: 700;
+}
+
+.receipt-summary-row.is-bold > * {
+  font-size: 1.1053em;
+}
+
+.receipt-summary-row.is-bold .receipt-cur,
+.receipt-summary-row.is-bold .receipt-num {
   font-weight: 700;
 }
 
 /* The answer, boxed. The three rows above it are the working. */
 .receipt-highlight {
-  display: flex;
-  justify-content: space-between;
   align-items: center;
-  margin-top: 0.9375em;
-  padding: 0.9375em 0.75em;
+  margin-top: 1.0362em;
+  /* Less its 1px border, which the rows above do not have, so its figure ends
+     exactly where theirs do. */
+  padding: 1.0362em calc(0.83em - 1px);
   border: 1px solid var(--r-border);
   border-radius: 8px;
   background: var(--r-highlight);
-  font-size: 1.3125em;
   font-weight: 700;
+}
+
+.receipt-highlight > * {
+  font-size: 1.1053em;
 }
 
 /* The label centres its own text, so it stays level with the amount even when
@@ -1562,11 +1641,9 @@ tbody tr:hover {
   line-height: 1.2;
 }
 
-.receipt-highlight-value {
-  flex-shrink: 0;
+.receipt-highlight .receipt-cur,
+.receipt-highlight .receipt-num {
   color: var(--r-red);
-  text-align: right;
-  white-space: nowrap;
 }
 
 /* Paid off: green, because red says money is still owed and none is. */
@@ -1575,7 +1652,8 @@ tbody tr:hover {
   background: var(--r-green-bg);
 }
 
-.receipt-highlight.is-paid .receipt-highlight-value {
+.receipt-highlight.is-paid .receipt-cur,
+.receipt-highlight.is-paid .receipt-num {
   color: var(--r-green);
 }
 
@@ -1598,21 +1676,16 @@ tbody tr:hover {
  */
 @container (max-width: 600px) {
   /*
-   * A fixed table, because an automatic one cannot be made narrower than the
-   * sum of its columns' min-content — and with "MONTO PAGADO" held on one line
-   * that sum is wider than the preview column, so the amounts were pushed off
-   * the right edge with the header cut in half. Fixed layout gives the amount
-   * column a stated width and hands the rest to the description, which wraps.
+   * "MONTO PAGADO" may wrap here. An automatic table cannot be narrower than
+   * the sum of its columns' min-content, and with the header held on one line
+   * that sum was wider than the preview column, so the amounts were pushed off
+   * the right edge. Wrapped, the amount's two columns are exactly as wide as
+   * the widest «L.» and figure, and the description, which wraps anywhere
+   * (below), takes the rest. A fixed table used to do this job, but it hands
+   * every amount the same stated width, and that left a gap between each «L.»
+   * and a small number.
    */
-  .receipt-items {
-    table-layout: fixed;
-  }
-
-  /* Wide enough for "L. 9,999,999.99". The width is in the header's small
-     type, but the amount under it is set larger and never wraps, so 8.5em
-     here let anything from six figures up run past the paper's edge. */
   .receipt-items th.receipt-right {
-    width: 12.5em;
     white-space: normal;
   }
 
@@ -1623,14 +1696,19 @@ tbody tr:hover {
     overflow-wrap: anywhere;
   }
 
+  /* One list instead of two columns, with one «L.» column for all five
+     figures: the summary itself becomes the grid, and the two columns step
+     aside (`display: contents`) so their rows sit on its tracks. Their size
+     still passes down to the rows. */
   .receipt-summary {
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
     gap: 0;
   }
 
   .receipt-summary-col,
   .receipt-summary-col.is-wide {
-    width: 100%;
+    display: contents;
   }
 
   .receipt-header {
@@ -3409,6 +3487,19 @@ body.is-dragging-file .proof-dropzone.is-slot:not(.is-disabled) {
    than they owe — but it must not read like an ordinary figure, because the
    next screen is a question about it. */
 .receipt-running-total.is-over strong {
+  color: var(--red-dark);
+}
+
+/* With a past date: today's saldo restante, under the one of that day. */
+.receipt-running-today {
+  margin: 2px 0 0;
+  text-align: right;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+}
+
+.receipt-running-today.is-over {
   color: var(--red-dark);
 }
 

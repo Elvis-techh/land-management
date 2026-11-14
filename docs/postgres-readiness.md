@@ -31,7 +31,12 @@ The first step for paying customers is not PostgreSQL. Lindero is built for
 one business: no table says which business a row belongs to. The simplest safe
 setup is **one copy of Lindero per customer, each with its own SQLite file**
 (its own subdomain, settings and backups). SQLite suits that well, because each
-customer's data is physically separate.
+customer's data is physically separate. The test site already runs this way:
+`prueba-lindero` is a second copy of Lindero on the same droplet, with its own
+SQLite file, its own `.env` and its own service (`deploy/setup-test-site.sh`,
+`deploy/lindero-test-api.service`). A customer's copy would follow the same
+pattern. What else has to happen before the first paying customer is listed in
+`docs/later-versions.md`.
 
 The weight station app also uses SQLite. Its own map belongs in its own
 repository. Sections 4 and 5 below are the parts most likely to apply there
@@ -52,27 +57,35 @@ too.
 
 ## 3. Size of the job
 
-Counted on 29 Oct 2026:
+Counted on 10 Nov 2026 (first count 29 Oct 2026: 21 tables, 26 migrations,
+221 calls, 36 transactions, 51 test files):
 
 | What | Count | Where |
 |---|---|---|
-| Tables | 21 | `backend/src/db/schema.ts` |
-| Migrations | 26 (`0000` to `0025`) | `backend/drizzle/` |
-| `.get()` calls | 107 | 17 files |
-| `.all()` calls | 58 | 19 files |
-| `.run()` calls | 56 | 19 files |
-| `db.transaction()` blocks | 36 | 13 files |
-| Backend test files | 51 | `backend/test/` |
+| Tables | 22 | `backend/src/db/schema.ts` |
+| Migrations | 28 (`0000` to `0027`) | `backend/drizzle/` |
+| `.get()` calls | 110 | 18 files |
+| `.all()` calls | 66 | 19 files |
+| `.run()` calls | 73 | 20 files |
+| `db.transaction()` blocks | 38 | 13 files |
+| Backend test files | 62 | `backend/test/` |
 
-The busiest files: `routes/receipts.ts` (13 / 26 / 10 / 5, in that order),
-`routes/contracts.ts` (8 / 26 / 7 / 6), `routes/lots.ts` (3 / 11 / 2 / 3),
-`routes/projects.ts`, `routes/users.ts`, `routes/constancias.ts`,
-`routes/transactions.ts`, `routes/mora.ts`. Library files that read the
+The busiest files, as `.get()` / `.all()` / `.run()` / transactions:
+`routes/receipts.ts` (26 / 15 / 14 / 5), `routes/contracts.ts`
+(26 / 8 / 7 / 6), `routes/lots.ts` (11 / 3 / 2 / 3), `routes/mora.ts`
+(3 / 4 / 6 / 5), then `routes/projects.ts`, `routes/users.ts`,
+`routes/constancias.ts`, `routes/transactions.ts`. Library files that read the
 database are called from routes, so they turn async too:
 `lib/moraAccounts.ts`, `lib/settings.ts`, `lib/preferences.ts`,
 `lib/capabilities.ts`, `lib/constancias.ts`, `lib/contractLifecycle.ts`,
 `lib/exchangeRate.ts`, `lib/storedFiles.ts`, `lib/audit.ts`,
-`auth/session.ts`.
+`auth/session.ts`. The seed scripts write with `.run()` as well:
+`db/seed.ts`, `db/bootstrap.ts`, and `db/moraCases.ts` (the test site's
+mora cases).
+
+To count again: `grep -rho '\.get()' --include=*.ts backend/src | wc -l` for
+the calls, and `grep -rl` with the same pattern for the files; the same for
+`.all()`, `.run()` and `.transaction(`.
 
 Estimate: one to two weeks of careful work, most of it sections 4 and 5, plus
 the tests.
@@ -118,6 +131,7 @@ Places that depend on this today, and what each needs:
 | Contract codes `CT-YYYY-NNN` and adenda codes `-A1` | `nextContractCode` and the `LIKE` on codes in `routes/contracts.ts`, retried on a unique violation | Same lock, and see section 6 for `CAST` and the error code. |
 | A receipt's random code never repeats | `allocateReceiptCode` checks, then inserts, in `routes/receipts.ts` | Inside the transaction plus the unique index, retrying on a clash. |
 | The same payment is not entered twice | The `lower(trim(reference))` check in `routes/receipts.ts`, and the idempotency key | The idempotency key has a unique index already. The reference check needs the lock or a retry. |
+| Never forgive more mora than is unpaid | «Perdonar» in `routes/mora.ts` reads what is unpaid before its transaction; the «Cambiar» mora in «Registrar un pago» (`planMoraChange`, `routes/receipts.ts`) does the same | Read the mora account inside the transaction, after locking the contract row. |
 | Rules saved the same day replace each other | `onConflictDoUpdate` on `mora_rules` and `mora_contract_rules` | Works the same in PostgreSQL. |
 
 For each one, write a test that sends two requests at the same moment and
@@ -158,7 +172,7 @@ the live updates.
   in PostgreSQL, not byte order as in SQLite, so accented names may sort
   differently. Use `COLLATE "C"` where the order must stay exactly the same.
 
-**Migrations.** Do not port the 26 SQLite migrations one by one. Generate one
+**Migrations.** Do not port the 28 SQLite migrations one by one. Generate one
 fresh PostgreSQL baseline from the new `schema.ts`
 (`drizzle-kit generate` with `dialect: "postgresql"` in
 `backend/drizzle.config.ts`). The old folder stays in git history.
@@ -166,7 +180,7 @@ fresh PostgreSQL baseline from the new `schema.ts`
 ## 8. Tests
 
 `createTestApp()` in `backend/test/helpers.ts` gives every test its own
-in-memory SQLite database, which is why 51 test files run in seconds. To keep
+in-memory SQLite database, which is why 62 test files run in seconds. To keep
 that speed, use **PGlite** (PostgreSQL compiled to run inside Node, supported by
 Drizzle as `drizzle-orm/pglite`) for the tests, and a real PostgreSQL in the
 browser tests and the CI workflows. Add the "two requests at once" tests from
@@ -177,8 +191,10 @@ SQLite migrator and snapshot, and are rewritten rather than ported.
 
 ## 9. Server, backups and deploy
 
-- **Memory and cost.** The droplet has 512 MB, shared with the weight
-  software. A small PostgreSQL needs roughly 50 to 100 MB more. DigitalOcean's
+- **Memory and cost.** The droplet has 1 GB (resized from 512 MB on
+  4 Sep 2026), shared with the weight software. `MemoryMax` holds Lindero to
+  256 MB and the test site to 150 MB. A small PostgreSQL needs roughly 50 to
+  100 MB more. DigitalOcean's
   smallest managed PostgreSQL costs more on its own than the whole $13 monthly
   budget. Decide this before anything else.
 - **Backups.** `backend/scripts/backup.mjs` (`VACUUM INTO` and `quick_check`)

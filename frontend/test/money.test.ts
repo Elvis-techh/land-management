@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { typedCents } from "../src/lib/money";
+import { cents, formatDocumentMoney, formatDocumentMoneyParts, typedCents } from "../src/lib/money";
 
 describe("typedCents", () => {
   it("reads the field as lempiras", () => {
@@ -21,5 +21,19 @@ describe("typedCents", () => {
     assert.equal(typedCents("   "), 0);
     assert.equal(typedCents("."), 0);
     assert.equal(typedCents("0"), 0);
+  });
+});
+
+describe("formatDocumentMoneyParts", () => {
+  it("is formatDocumentMoney split at the space, for a «L.» column of its own", () => {
+    for (const amount of [0, 25_000, 3_000_000, 42_050_000, 125_000_000]) {
+      for (const view of [
+        { currency: "HNL" as const, usdRate: 1 },
+        { currency: "USD" as const, usdRate: 24.5 },
+      ]) {
+        const { symbol, value } = formatDocumentMoneyParts(cents(amount), view);
+        assert.equal(`${symbol} ${value}`, formatDocumentMoney(cents(amount), view));
+      }
+    }
   });
 });

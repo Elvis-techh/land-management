@@ -270,7 +270,8 @@ for (const { digits, price, prima } of [
       const paper = document.querySelector<HTMLElement>(".receipt-share-stage .receipt-paper")!;
       const box = paper.querySelector<HTMLElement>(".receipt-highlight")!;
       const label = box.querySelector<HTMLElement>(".receipt-highlight-label")!;
-      const value = box.querySelector<HTMLElement>(".receipt-highlight-value")!;
+      // The amount is two cells, «L.» and the digits: it starts at the «L.».
+      const value = box.querySelector<HTMLElement>(".receipt-cur")!;
       const paperBox = paper.getBoundingClientRect();
       const boxRect = box.getBoundingClientRect();
       const valueRect = value.getBoundingClientRect();

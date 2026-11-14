@@ -115,6 +115,23 @@ export function formatDocumentMoney(amount: Cents, view: MoneyView): string {
 }
 
 /**
+ * `formatDocumentMoney` in two parts, for a document that sets the «L.» in a
+ * column of its own and lines the digits up under each other: the receipt's
+ * amounts and its summary (ReceiptPaper.tsx). Joined with a space, the parts
+ * are exactly what `formatDocumentMoney` prints.
+ */
+export function formatDocumentMoneyParts(
+  amount: Cents,
+  view: MoneyView,
+): { symbol: string; value: string } {
+  if (view.currency === "USD") {
+    return formatMoneyParts(amount, view);
+  }
+
+  return { symbol: "L.", value: documentFormat.format(amount / 100) };
+}
+
+/**
  * Same as `formatMoney`, but returns the currency symbol and the number
  * separately so the UI can style them differently — Lindero tints the symbol
  * and keeps the digits in full-strength ink, which makes columns of money much

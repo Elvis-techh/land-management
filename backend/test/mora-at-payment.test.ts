@@ -231,6 +231,45 @@ describe("mora in «Registrar un pago»", () => {
     await t.close();
   });
 
+  it("says what a lot owed on a past date: the «Balance Anterior» its receipt prints (owner, 13 Nov 2026)", async () => {
+    const t = await lateContract();
+    const priceLeft = 13_500_000 - 1_500_000;
+    const on = async (date: string) =>
+      (await t.get(`/api/customers/${t.ids.customerId}/balances-on?on=${date}`)).contracts.find(
+        (row: { contractId: string }) => row.contractId === t.ids.contractId,
+      );
+
+    // Before cuota 1 fell due: nothing late, no mora.
+    const early = await on(shiftDays(FIRST_DUE, -5));
+    assert.deepEqual([early.balance, early.moraPending], [priceLeft, 0]);
+
+    // Today: all L 400, the same saldo the contract shows.
+    const now = await on(TODAY);
+    assert.deepEqual([now.balance, now.moraPending], [priceLeft + OWED, OWED]);
+    const row = (await t.get("/api/contracts")).contracts.find((entry: { id: string }) => entry.id === t.ids.contractId);
+    assert.equal(now.balance, row.balance);
+
+    // After cuota 1's charge and before cuota 2's: L 200.
+    const between = shiftDays(FIRST_DUE, 10);
+    const then = await on(between);
+    assert.deepEqual([then.balance, then.moraPending], [priceLeft + EACH, EACH]);
+
+    // Saved with that date, its receipt starts from that figure.
+    const response = await t.pay(CUOTA, undefined, { paidOn: between });
+    assert.equal(response.statusCode, 201, response.body);
+    const receipt = response.json().receipt;
+    assert.equal(receipt.lines[0].previousBalance, then.balance);
+    assert.equal(receipt.previousBalance, then.balance);
+
+    const bad = await t.app.inject({
+      method: "GET",
+      url: `/api/customers/${t.ids.customerId}/balances-on?on=ayer`,
+      headers: { cookie: t.cookie },
+    });
+    assert.equal(bad.statusCode, 400);
+    await t.close();
+  });
+
   it("the owner's screenshot: a prima dated months back pays no mora charged since", async () => {
     // Cuota 1 is late with L 200 charged; the prima is unpaid.
     const t = await lateContract();
@@ -409,6 +448,17 @@ describe("mora in «Registrar un pago»", () => {
     assert.equal(forgiven.length, 2);
     assert.equal(forgiven[0].after.receiptCode, receipt.code);
     assert.equal(forgiven[0].reason, REASON);
+    // Each cuota's «Mora por pagar», before and after: L 200 → L 0.
+    assert.deepEqual(
+      forgiven.map((event: { before: { moraPendingCents: number }; after: { moraPendingCents: number } }) => [
+        event.before.moraPendingCents,
+        event.after.moraPendingCents,
+      ]),
+      [
+        [EACH, 0],
+        [EACH, 0],
+      ],
+    );
     await t.close();
   });
 
@@ -428,6 +478,19 @@ describe("mora in «Registrar un pago»", () => {
     );
     // «La mora primero»: the L 100 left is paid first.
     assert.deepEqual(response.json().receipt.lines[0].moraPaid, [{ installment: 2, amount: 10_000 }]);
+    // Historial says what each cuota owed before the payment, not after it.
+    const filed = (await t.audit())
+      .filter((event: { action: string }) => event.action === "mora_forgive")
+      .map((event: { after: { moraInstallment: number; moraPendingCents: number }; before: { moraPendingCents: number } }) => [
+        event.after.moraInstallment,
+        event.before.moraPendingCents,
+        event.after.moraPendingCents,
+      ])
+      .sort((a: number[], b: number[]) => a[0]! - b[0]!);
+    assert.deepEqual(filed, [
+      [1, EACH, 0],
+      [2, EACH, 10_000],
+    ]);
     await t.close();
   });
 
@@ -451,6 +514,9 @@ describe("mora in «Registrar un pago»", () => {
     );
     assert.equal(paid, 60_000);
     assert.equal(await t.pending(), 0);
+    const filed = (await t.audit()).find((event: { action: string }) => event.action === "mora_charge");
+    assert.equal(filed.before.moraPendingCents, EACH);
+    assert.equal(filed.after.moraPendingCents, 2 * EACH);
     await t.close();
   });
 

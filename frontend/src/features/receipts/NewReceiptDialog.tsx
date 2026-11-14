@@ -22,11 +22,12 @@ import {
 } from "./paymentType";
 import type { PendingProof, ProofLot } from "./ProofDropzone";
 import { MAX_PROOFS, ProofDropzone, acceptProofFiles } from "./ProofDropzone";
-import type { AfterPayment, PaymentMoraLot, ReceiptDraft, ReceiptDraftLine } from "./api";
+import type { AfterPayment, BalanceOn, PaymentMoraLot, ReceiptDraft, ReceiptDraftLine } from "./api";
 import {
   createReceipt,
   fetchLastPayer,
   fetchAfterPayment,
+  fetchBalancesOn,
   fetchCustomerSplit,
   fetchDuplicates,
   fetchPaymentMora,
@@ -479,6 +480,50 @@ export function NewReceiptDialog({
   const isToday = paidOn === today;
   const canEditMoraNow = canChangeMora && moraLotsFor === paidOn;
 
+  /*
+   * With a past date the saldo column shows the lots as they stood THAT day:
+   * the «Balance Anterior» the receipt will print (owner, 13 Nov 2026).
+   * Today's saldo holds mora charged after it, which that payment never
+   * meets. Read again when the date, the customer or a balance moves; until it
+   * answers, or if it fails, the column stays on today.
+   */
+  const [balancesOn, setBalancesOn] = useState<{ key: string; byContract: Record<string, BalanceOn> } | null>(null);
+  const isPastDate = /^\d{4}-\d{2}-\d{2}$/.test(paidOn) && paidOn < today;
+  const balancesOnKey = isPastDate && customerId !== "" ? `${customerId}|${paidOn}` : "";
+
+  useEffect(() => {
+    if (balancesOnKey === "") {
+      setBalancesOn(null);
+      return;
+    }
+
+    let live = true;
+
+    fetchBalancesOn(customerId, paidOn)
+      .then((found) => {
+        if (live) {
+          setBalancesOn({
+            key: balancesOnKey,
+            byContract: Object.fromEntries(found.map((lot) => [lot.contractId, lot])),
+          });
+        }
+      })
+      .catch(() => {
+        if (live) {
+          setBalancesOn(null);
+        }
+      });
+
+    return () => {
+      live = false;
+    };
+  }, [balancesOnKey, customerId, paidOn, balancesKey]);
+
+  /** Is the column showing the payment's day? Only once that day's figures are in. */
+  const showsDay = balancesOnKey !== "" && balancesOn?.key === balancesOnKey;
+  const dayOf = (contract: Contract): BalanceOn | null =>
+    showsDay ? (balancesOn!.byContract[contract.id] ?? null) : null;
+
   const startMoraEdit = (contract: Contract) => {
     const lot = moraLots[contract.id];
     setMoraEdits((current) => ({
@@ -588,6 +633,33 @@ export function NewReceiptDialog({
       (line.mora ? line.mora.amountCents - (moraLots[line.contractId]?.pending ?? 0) : 0)
     );
   }, 0);
+
+  /*
+   * With a past date, a lot's saldo on THAT day once this payment is in: the
+   * receipt's «Nuevo Balance Pendiente», so «Saldo al …» minus the money adds
+   * up. Today's figure above stays beside it, and is what the server checks
+   * an overpayment against.
+   */
+  const dayAfterOf = (line: ReceiptDraftLine): number | null => {
+    const contract = payable.find((entry) => entry.id === line.contractId);
+    const day = contract ? dayOf(contract) : null;
+
+    if (!day) {
+      return null;
+    }
+
+    return (
+      day.balance -
+      line.amountCents +
+      (line.mora ? line.mora.amountCents - (moraLots[line.contractId]?.pending ?? 0) : 0)
+    );
+  };
+  const balanceAfterOn = showsDay
+    ? lines.reduce<number | null>((sum, line) => {
+        const after = dayAfterOf(line);
+        return sum === null || after === null ? null : sum + after;
+      }, 0)
+    : null;
 
   /*
    * Is this payment already in the ledger?
@@ -1144,6 +1216,8 @@ export function NewReceiptDialog({
     }
 
     const parts = paymentParts(after, cents(amount), paidOn, moraLots[contract.id]?.carriesMora ?? false);
+    const line = lines.find((entry) => entry.contractId === contract.id);
+    const dayAfter = line ? dayAfterOf(line) : null;
 
     return (
       <tr className="split-parts-row">
@@ -1160,7 +1234,16 @@ export function NewReceiptDialog({
             </dl>
             {isMultiLot && (
               <p className="lot-parts-left">
-                Saldo restante <strong>{formatMoney(after.newBalance, money)}</strong>
+                {dayAfter !== null ? (
+                  <>
+                    Saldo restante al {shortDate(paidOn)} <strong>{formatMoney(cents(dayAfter), money)}</strong>
+                    {" · "}hoy {formatMoney(after.newBalance, money)}
+                  </>
+                ) : (
+                  <>
+                    Saldo restante <strong>{formatMoney(after.newBalance, money)}</strong>
+                  </>
+                )}
               </p>
             )}
             <p className="after-payment">Después: {afterPaymentLabel(after, money)}</p>
@@ -1504,7 +1587,7 @@ export function NewReceiptDialog({
             <thead>
               <tr>
                 <th>Lote</th>
-                <th className="col-money">Saldo actual</th>
+                <th className="col-money">{showsDay ? `Saldo al ${shortDate(paidOn)}` : "Saldo actual"}</th>
                 {/* Only when there is a division to see. One lot receives the
                     Monto typed above, in full, and a column repeating it would
                     be a second place for the same figure to live. The type
@@ -1528,12 +1611,25 @@ export function NewReceiptDialog({
                   </td>
                   <td className="col-money">
                     <span className="cell-money is-balance">
-                      {formatMoney(contract.balance, money)}
+                      {formatMoney(dayOf(contract)?.balance ?? contract.balance, money)}
                     </span>
                     {/* The saldo keeps the mora in it, as the receipt's «Balance
-                        Anterior» does, and says how much (owner, 10 Nov 2026). */}
-                    {contract.mora.pending > 0 && (
-                      <span className="cell-sub">incluye mora {formatMoney(contract.mora.pending, money)}</span>
+                        Anterior» does, and says how much (owner, 10 Nov 2026).
+                        With a past date, both as of that day, and today's saldo
+                        under them (owner, 13 Nov 2026). */}
+                    {dayOf(contract) ? (
+                      <>
+                        {dayOf(contract)!.moraPending > 0 && (
+                          <span className="cell-sub">
+                            incluye mora {formatMoney(dayOf(contract)!.moraPending, money)}
+                          </span>
+                        )}
+                        <span className="cell-sub">hoy {formatMoney(contract.balance, money)}</span>
+                      </>
+                    ) : (
+                      contract.mora.pending > 0 && (
+                        <span className="cell-sub">incluye mora {formatMoney(contract.mora.pending, money)}</span>
+                      )
                     )}
                     {contract.health.nextDueOn && contract.health.nextDueIsDownPayment && (
                       <span className="cell-sub">
@@ -1628,9 +1724,21 @@ export function NewReceiptDialog({
           */}
           {total > 0 && (
             <>
-              <p className={`receipt-running-total${balanceAfter < 0 ? " is-over" : ""}`}>
-                Saldo restante <strong>{formatMoney(cents(balanceAfter), money)}</strong>
-              </p>
+              {balanceAfterOn !== null ? (
+                <>
+                  <p className="receipt-running-total">
+                    Saldo restante al {shortDate(paidOn)}{" "}
+                    <strong>{formatMoney(cents(balanceAfterOn), money)}</strong>
+                  </p>
+                  <p className={`receipt-running-today${balanceAfter < 0 ? " is-over" : ""}`}>
+                    hoy {formatMoney(cents(balanceAfter), money)}
+                  </p>
+                </>
+              ) : (
+                <p className={`receipt-running-total${balanceAfter < 0 ? " is-over" : ""}`}>
+                  Saldo restante <strong>{formatMoney(cents(balanceAfter), money)}</strong>
+                </p>
+              )}
 
               {balanceAfter < 0 && (
                 <p className="receipt-over-note">
