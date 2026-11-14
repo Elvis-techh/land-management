@@ -7,9 +7,10 @@ import { getInitials } from "../../lib/initials";
 import type { Cents, MoneyView } from "../../lib/money";
 import { formatMoney, formatMoneyParts } from "../../lib/money";
 import { buildProjectAccents } from "../../lib/projectAccent";
-import { HEALTH_PRESENTATION } from "../contracts/contractPresentation";
+import { HEALTH_PRESENTATION, healthHint } from "../contracts/contractPresentation";
 import { BEHIND_HEALTH } from "../contracts/contractFilters";
 import type { ContractFilterPreset } from "../contracts/contractFilters";
+import { useSettings } from "../settings/SettingsContext";
 import type { Dashboard, Debtor, MonthPayment, MoraMonth, SignedContract } from "./api";
 import { resetDashboardLayout, saveDashboardLayout } from "./api";
 import { MonthlyBars } from "./MonthlyBars";
@@ -126,6 +127,7 @@ export function DashboardPage({
   onOpenContract,
   onShowContracts,
 }: DashboardPageProps) {
+  const { graceDays } = useSettings().mora;
   const { income, collections, upcoming } = data;
   const rate = collectionRate(income.collectedCents, income.expectedCents);
   const collectedDelta = compareToPrevious(income.collectedCents, income.previousToDateCents);
@@ -528,7 +530,11 @@ export function DashboardPage({
                 const presentation = HEALTH_PRESENTATION[bucket.status];
 
                 return (
-                  <div key={bucket.status} className="dash-bucket" title={presentation.hint}>
+                  <div
+                    key={bucket.status}
+                    className="dash-bucket"
+                    title={healthHint(bucket.status, graceDays)}
+                  >
                     {/* The label is always present, so these four are never told
                         apart by their colour alone. */}
                     <span className={presentation.stampClass}>{presentation.label}</span>
