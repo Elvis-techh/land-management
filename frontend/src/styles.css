@@ -3490,6 +3490,19 @@ body.is-dragging-file .proof-dropzone.is-slot:not(.is-disabled) {
   color: var(--red-dark);
 }
 
+/* With a past date: today's saldo restante, under the one of that day. */
+.receipt-running-today {
+  margin: 2px 0 0;
+  text-align: right;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+}
+
+.receipt-running-today.is-over {
+  color: var(--red-dark);
+}
+
 .receipt-over-note {
   margin: 4px 0 0;
   text-align: right;

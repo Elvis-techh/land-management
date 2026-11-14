@@ -547,6 +547,68 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
   );
 
   /**
+   * What each of a customer's lots owed on a day, as a payment dated that day
+   * finds it: the «Balance Anterior» its receipt prints, mora included, and
+   * how much of it was mora. For «Registrar un pago» with a past date, whose
+   * saldo column then shows that day rather than today (owner, 13 Nov 2026).
+   *
+   * The receipt's own replay (lib/ledger.ts): a payment of nothing is put on
+   * that day, after the ones already entered for it, and what it found owed is
+   * read. No charge up to that day depends on the payment, so the amount
+   * typed makes no difference to it.
+   */
+  app.get<{ Params: { id: string }; Querystring: { on?: string } }>(
+    "/customers/:id/balances-on",
+    { onRequest: app.requireUser },
+    async (request, reply) => {
+      const on = request.query.on ?? "";
+
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(on)) {
+        return reply.code(400).send({ error: "invalid_date", message: "Indica la fecha, AAAA-MM-DD." });
+      }
+
+      const asOf = today();
+      const rows = app.db
+        .select({ id: contracts.id, salePriceCents: contracts.salePriceCents })
+        .from(contracts)
+        .where(and(eq(contracts.customerId, request.params.id), eq(contracts.status, "active")))
+        .all();
+
+      return {
+        on,
+        contracts: rows.map((row) => {
+          const probe = { id: "probe", contractId: row.id, amountCents: 0, paidOn: on };
+          const account = loadMoraAccount(app.db, row.id, { asOf, timeZone: options.timeZone, adding: probe });
+          const credits = app.db
+            .select({
+              id: payments.id,
+              amountCents: payments.amountCents,
+              paidOn: payments.paidOn,
+              createdAt: payments.createdAt,
+              reversedAt: payments.reversedAt,
+            })
+            .from(payments)
+            .where(eq(payments.contractId, row.id))
+            .all();
+          const line = replayContract({
+            salePriceCents: row.salePriceCents,
+            credits: [...credits, { ...probe, createdAt: new Date().toISOString(), reversedAt: null }],
+            charges: ledgerChargesOf(account),
+          }).lines.find((entry) => entry.entry.id === "probe");
+          const split = account?.splits.find((entry) => entry.creditId === "probe");
+
+          return {
+            contractId: row.id,
+            balance: line?.balanceBeforeCents ?? 0,
+            // What was owed of mora just before it: a payment of nothing pays none.
+            moraPending: split ? split.moraPendingAfterCents + split.toMoraCents : 0,
+          };
+        }),
+      };
+    },
+  );
+
+  /**
    * Correct a posted transaction.
    *
    * This is the one place in Lindero where a financial row is rewritten rather

@@ -271,6 +271,32 @@ export async function fetchPaymentMora(customerId: string): Promise<PaymentMoraL
   }));
 }
 
+/** What one lot owed on a day, as a payment dated that day finds it. */
+export interface BalanceOn {
+  contractId: string;
+  /** The «Balance Anterior» the receipt of a payment that day prints, mora included. */
+  balance: Cents;
+  /** The mora inside it. */
+  moraPending: Cents;
+}
+
+/**
+ * Each of a customer's lots as it stood on `on`: «Registrar un pago» with a
+ * past date shows that day's saldo, the one its receipt will print.
+ */
+export async function fetchBalancesOn(customerId: string, on: string): Promise<BalanceOn[]> {
+  const raw = await api.get<{
+    on: string;
+    contracts: Array<{ contractId: string; balance: number; moraPending: number }>;
+  }>(`/api/customers/${customerId}/balances-on?on=${on}`);
+
+  return raw.contracts.map((lot) => ({
+    contractId: lot.contractId,
+    balance: cents(lot.balance),
+    moraPending: cents(lot.moraPending),
+  }));
+}
+
 /**
  * Correct a posted transaction.
  *
