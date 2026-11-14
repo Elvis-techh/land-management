@@ -158,8 +158,8 @@ test("the supervisor charges one lot no mora and another L 200, each with a reas
   await expect.poll(() => partsOf(a.code)).toEqual(["Mora L. 0", "Cuota L. 10,000", "Total L. 10,000"]);
   await expect.poll(() => partsOf(b.code)).toEqual(["Mora L. 200", "Cuota L. 10,000", "Total L. 10,200"]);
   const afterOf = (code: string) => dialog.getByRole("group", { name: `Este pago en ${code}` }).locator(".after-payment");
-  await expect(afterOf(a.code)).not.toContainText("mora");
-  await expect(afterOf(b.code)).not.toContainText("mora");
+  await expect(afterOf(a.code)).not.toContainText("Mora");
+  await expect(afterOf(b.code)).not.toContainText("Mora");
   // A: 120,500 − its L 500 − 10,000; B: 120,000 + L 200 − 10,200. L 110,000 each.
   await expect(dialog).toContainText("Saldo restante L. 220,000");
 

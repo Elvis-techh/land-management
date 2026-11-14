@@ -182,6 +182,11 @@ describe("mora in «Registrar un pago»", () => {
     assert.equal(none.moraPending, 0);
     assert.equal(none.appliedTo[0].settled, true);
     assert.equal((await t.get(`${url}&moraCents=60000`)).mora, 60_000);
+    // Dated today, nothing owed afterwards was charged after it.
+    const short = await t.get(`/api/contracts/${t.ids.contractId}/after-payment?amountCents=10000`);
+    assert.ok(short.moraPending > 0);
+    assert.equal(short.moraPendingLater, 0);
+    assert.deepEqual(short.moraLaterInstallments, []);
 
     const split = `/api/customers/${t.ids.customerId}/split?amountCents=${CUOTA}`;
     const line = (body: { lines: Array<{ contractId: string; belowMinimum: boolean }> }) =>
@@ -341,6 +346,9 @@ describe("mora in «Registrar un pago»", () => {
     );
     assert.equal(await t.pending(), EACH);
     assert.equal(preview.moraPending, EACH);
+    // All of it charged after that day, on cuota 2: the form says so beside it.
+    assert.equal(preview.moraPendingLater, EACH);
+    assert.deepEqual(preview.moraLaterInstallments, [2]);
     await t.close();
   });
 

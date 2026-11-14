@@ -54,7 +54,7 @@ export function itemName(installment: number): string {
 
 const capitalized = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
-/** As in afterPaymentLabel: on a phone "L." must not end one line and its figure start the next. */
+/** As in afterPaymentBoxes: on a phone "L." must not end one line and its figure start the next. */
 const keepFigures = (text: string) => text.replace(/(L\.|\$) /g, "$1\u00a0");
 
 /** "a", "a y b", "a, b y c". */

@@ -655,6 +655,10 @@ export interface AfterPayment {
   toDownPayment: Cents;
   /** Mora still owed today, with this payment in its place. */
   moraPending: Cents;
+  /** The part of `moraPending` charged after the payment's date: a payment cannot pay mora not yet charged. */
+  moraPendingLater: Cents;
+  /** The cuotas that part was charged on, in order (0 is the prima). */
+  moraLaterInstallments: number[];
   /** The lot's saldo today, with this payment in its place, mora included. */
   newBalance: Cents;
   settled: boolean;
@@ -690,6 +694,8 @@ export async function fetchAfterPayment(
     mora: number;
     toDownPayment: number;
     moraPending: number;
+    moraPendingLater: number;
+    moraLaterInstallments: number[];
     newBalance: number;
     settled: boolean;
     nextDueAmount: number;
@@ -713,6 +719,7 @@ export async function fetchAfterPayment(
     mora: cents(raw.mora),
     toDownPayment: cents(raw.toDownPayment),
     moraPending: cents(raw.moraPending),
+    moraPendingLater: cents(raw.moraPendingLater),
     newBalance: cents(raw.newBalance),
     nextDueAmount: cents(raw.nextDueAmount),
     nextInstallment: cents(raw.nextInstallment),

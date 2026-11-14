@@ -48,7 +48,7 @@ import {
   moraReasonFieldId,
   shortDate,
 } from "./moraAtPayment";
-import { afterPaymentLabel } from "./afterPaymentLabel";
+import { afterPaymentBoxes } from "./afterPaymentBoxes";
 import { paymentParts } from "./paymentParts";
 import type { DuplicateMatch } from "./api";
 import { AMOUNT_FIELD, CUSTOMER_FIELD, receiptBlocker } from "./receiptBlocker";
@@ -1237,7 +1237,7 @@ export function NewReceiptDialog({
                 {dayAfter !== null ? (
                   <>
                     Saldo restante al {shortDate(paidOn)} <strong>{formatMoney(cents(dayAfter), money)}</strong>
-                    {" · "}hoy {formatMoney(after.newBalance, money)}
+                    {" · "}saldo actual {formatMoney(after.newBalance, money)}
                   </>
                 ) : (
                   <>
@@ -1246,7 +1246,17 @@ export function NewReceiptDialog({
                 )}
               </p>
             )}
-            <p className="after-payment">Después: {afterPaymentLabel(after, money)}</p>
+            <div className="after-payment" role="group" aria-label={`Después de este pago en ${contract.lot.code}`}>
+              <p className="after-payment-head">Después de este pago{isToday ? "" : ", hoy"}</p>
+              <ul className="after-boxes">
+                {afterPaymentBoxes(after, money, isToday ? undefined : paidOn).map((box) => (
+                  <li key={box.key} className={`after-box is-${box.tone}`}>
+                    {box.text}
+                    {box.note && <span className="after-box-note">{box.note}</span>}
+                  </li>
+                ))}
+              </ul>
+            </div>
           </div>
         </td>
       </tr>
@@ -1624,7 +1634,7 @@ export function NewReceiptDialog({
                             incluye mora {formatMoney(dayOf(contract)!.moraPending, money)}
                           </span>
                         )}
-                        <span className="cell-sub">hoy {formatMoney(contract.balance, money)}</span>
+                        <span className="cell-sub">Saldo actual {formatMoney(contract.balance, money)}</span>
                       </>
                     ) : (
                       contract.mora.pending > 0 && (
@@ -1643,8 +1653,8 @@ export function NewReceiptDialog({
                     {contract.health.nextDueOn && !contract.health.nextDueIsDownPayment && (
                       <span className="cell-sub">
                         {contract.health.nextDueCredit > 0
-                          ? `próxima: faltan ${formatMoney(contract.health.nextDueAmount, money)} de ${formatMoney(contract.health.nextInstallment, money)}`
-                          : `próxima ${formatMoney(contract.health.nextInstallment, money)}`}
+                          ? `Próxima cuota: faltan ${formatMoney(contract.health.nextDueAmount, money)} de ${formatMoney(contract.health.nextInstallment, money)}`
+                          : `Próxima cuota ${formatMoney(contract.health.nextInstallment, money)}`}
                       </span>
                     )}
                   </td>
@@ -1731,7 +1741,7 @@ export function NewReceiptDialog({
                     <strong>{formatMoney(cents(balanceAfterOn), money)}</strong>
                   </p>
                   <p className={`receipt-running-today${balanceAfter < 0 ? " is-over" : ""}`}>
-                    hoy {formatMoney(cents(balanceAfter), money)}
+                    saldo actual {formatMoney(cents(balanceAfter), money)}
                   </p>
                 </>
               ) : (
