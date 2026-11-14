@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import type { ContractTerms } from "../src/lib/contracts.js";
+import { assessContract, shiftDays } from "../src/lib/contracts.js";
 import type {
   ContractMoraVersion,
   MoraContract,
@@ -17,6 +18,7 @@ import {
   moraPendingThrough,
   rulesOn,
 } from "../src/lib/mora.js";
+import { oldestLate } from "../src/lib/moraAtPayment.js";
 import type { MoraSettings, OwnMoraRules } from "../src/lib/settings.js";
 
 /** L 1 = 100 centavos, as everywhere else in the app. */
@@ -625,5 +627,29 @@ describe("mora forgiven («Perdonar»)", () => {
 
     assert.equal(account.forgiven[0]!.amountCents, lempiras(100));
     assert.equal(account.pendingCents, 0);
+  });
+});
+
+describe("«Atrasado» and the mora", () => {
+  it("call a cuota late on the same day, whatever the grace days", () => {
+    // Cuota 4, due 5 October, unpaid. Three places must agree on the day its
+    // grace ends: lib/contracts.ts decides «Atrasado», lib/mora.ts charges the
+    // mora, and lib/moraAtPayment.ts offers «Cobrar mora». «Atrasado» used to
+    // start a day early, on the last day of grace.
+    const paid = lempiras(160_000 + 3 * 25_000);
+
+    for (const graceDays of [0, 1, 3, 5, 10]) {
+      const account = moraAccount(CONTRACT, onTimeThroughCuota3(), [since({ graceDays })], "2026-10-31");
+      const chargedOn = account.charges[0]!.incurredOn;
+      const dayBefore = shiftDays(chargedOn, -1);
+      const health = { graceDays, atRiskPayments: 2 };
+      const label = `${graceDays} días de gracia`;
+
+      assert.equal(chargedOn, shiftDays("2026-10-05", graceDays + 1), label);
+      assert.equal(assessContract(TERMS, paid, dayBefore, health).status, "due_soon", `${label}, ${dayBefore}`);
+      assert.equal(assessContract(TERMS, paid, chargedOn, health).status, "overdue", `${label}, ${chargedOn}`);
+      assert.equal(oldestLate(TERMS, paid, dayBefore, graceDays), null, `${label}, ${dayBefore}`);
+      assert.notEqual(oldestLate(TERMS, paid, chargedOn, graceDays), null, `${label}, ${chargedOn}`);
+    }
   });
 });
