@@ -388,8 +388,13 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
    * (`appliedInstallments`, `assessContract`), so the line and the receipt
    * cannot disagree. Nothing is written.
    *
-   * Counted from everything paid so far. A payment dated before later ones is
-   * placed in its own spot when it is saved; this preview does not reorder.
+   * `paidOn` is the date typed in the form, today when left out (or in the
+   * future). With mora the payment is placed on that day, among the others,
+   * as the save will place it: `mora` and the cuotas named are what it pays
+   * THERE (a payment dated 30 April pays no mora charged in November), while
+   * `newBalance`, `moraPending` and what is owed next are the lot as it stands
+   * TODAY with the payment in its place. Without mora the cuotas named are
+   * counted from everything paid so far.
    *
    * With mora owed, the preview divides the money as lib/mora.ts will once it
    * is saved: `mora` is the part that pays mora, and the cuotas named are the
@@ -399,7 +404,10 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
    * payment, changed in the form (lib/moraAtPayment.ts): the preview replays
    * the same «Perdonar» or «Cargar mora» rows the receipt would write.
    */
-  app.get<{ Params: { id: string }; Querystring: { amountCents?: string; moraCents?: string } }>(
+  app.get<{
+    Params: { id: string };
+    Querystring: { amountCents?: string; moraCents?: string; paidOn?: string };
+  }>(
     "/contracts/:id/after-payment",
     { onRequest: app.requireUser },
     async (request, reply) => {
@@ -452,10 +460,20 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
         firstDueOn: contract.firstDueOn,
       };
       const asOf = today();
+      const typedOn = request.query.paidOn ?? "";
+      const paidOn = /^\d{4}-\d{2}-\d{2}$/.test(typedOn) && typedOn < asOf ? typedOn : asOf;
       let adjusting: NonNullable<MoraAccountsOptions["adjusting"]> | undefined;
 
       if (request.query.moraCents !== undefined) {
         const target = Number(request.query.moraCents);
+
+        // As POST /receipts: a changed mora goes only with a payment dated today.
+        if (paidOn !== asOf) {
+          return reply.code(400).send({
+            error: "mora_needs_today",
+            message: "La mora solo se cambia en un pago con la fecha de hoy.",
+          });
+        }
 
         if (!Number.isInteger(target) || target < 0) {
           return reply.code(400).send({ error: "invalid_mora", message: "Indica la mora, en centavos." });
@@ -482,17 +500,22 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
         };
       }
 
-      const preview = loadMoraAccount(app.db, request.params.id, {
+      const account = loadMoraAccount(app.db, request.params.id, {
         asOf,
         timeZone: options.timeZone,
-        adding: { id: "preview", contractId: request.params.id, amountCents, paidOn: asOf },
+        adding: { id: "preview", contractId: request.params.id, amountCents, paidOn },
         ...(adjusting ? { adjusting } : {}),
-      })?.splits.find((split) => split.creditId === "preview");
+      });
+      const preview = account?.splits.find((split) => split.creditId === "preview");
 
+      // What this payment pays, at its own place in the ledger.
       const before = preview ? preview.pricePaidBeforeCents : (paid?.total ?? 0);
       const after = preview ? preview.pricePaidAfterCents : before + amountCents;
-      const moraPendingAfter = preview?.moraPendingAfterCents ?? 0;
-      const health = assessContract(terms, after, asOf);
+      // The lot today, with this payment in its place: the splits run in
+      // ledger order, so the last one has everything paid towards the price.
+      const pricePaidNow = preview ? account!.splits.at(-1)!.pricePaidAfterCents : after;
+      const moraPendingNow = preview ? account!.pendingCents : 0;
+      const health = assessContract(terms, pricePaidNow, asOf);
 
       return {
         appliedTo: appliedInstallments(terms, before, after).map((installment) => ({
@@ -506,14 +529,81 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
         installmentCount: buildSchedule(terms).length,
         /** The part of the payment that would pay mora. */
         mora: preview?.toMoraCents ?? 0,
-        /** Mora still owed after it. */
-        moraPending: moraPendingAfter,
-        newBalance: Math.max(0, terms.salePriceCents - after) + moraPendingAfter,
-        settled: health.settled && moraPendingAfter === 0,
+        /** The part that would go to the prima; the cuotas' parts are in `appliedTo`. */
+        toDownPayment: Math.max(
+          0,
+          Math.min(after, terms.downPaymentCents) - Math.min(before, terms.downPaymentCents),
+        ),
+        /** Mora still owed today, with this payment in its place. */
+        moraPending: moraPendingNow,
+        newBalance: Math.max(0, terms.salePriceCents - pricePaidNow) + moraPendingNow,
+        settled: health.settled && moraPendingNow === 0,
         nextDueAmount: health.nextDueAmountCents,
         nextInstallment: health.nextInstallmentCents,
         nextDueCredit: health.nextDueCreditCents,
         nextDueIsDownPayment: health.nextDueIsDownPayment,
+      };
+    },
+  );
+
+  /**
+   * What each of a customer's lots owed on a day, as a payment dated that day
+   * finds it: the «Balance Anterior» its receipt prints, mora included, and
+   * how much of it was mora. For «Registrar un pago» with a past date, whose
+   * saldo column then shows that day rather than today (owner, 13 Nov 2026).
+   *
+   * The receipt's own replay (lib/ledger.ts): a payment of nothing is put on
+   * that day, after the ones already entered for it, and what it found owed is
+   * read. No charge up to that day depends on the payment, so the amount
+   * typed makes no difference to it.
+   */
+  app.get<{ Params: { id: string }; Querystring: { on?: string } }>(
+    "/customers/:id/balances-on",
+    { onRequest: app.requireUser },
+    async (request, reply) => {
+      const on = request.query.on ?? "";
+
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(on)) {
+        return reply.code(400).send({ error: "invalid_date", message: "Indica la fecha, AAAA-MM-DD." });
+      }
+
+      const asOf = today();
+      const rows = app.db
+        .select({ id: contracts.id, salePriceCents: contracts.salePriceCents })
+        .from(contracts)
+        .where(and(eq(contracts.customerId, request.params.id), eq(contracts.status, "active")))
+        .all();
+
+      return {
+        on,
+        contracts: rows.map((row) => {
+          const probe = { id: "probe", contractId: row.id, amountCents: 0, paidOn: on };
+          const account = loadMoraAccount(app.db, row.id, { asOf, timeZone: options.timeZone, adding: probe });
+          const credits = app.db
+            .select({
+              id: payments.id,
+              amountCents: payments.amountCents,
+              paidOn: payments.paidOn,
+              createdAt: payments.createdAt,
+              reversedAt: payments.reversedAt,
+            })
+            .from(payments)
+            .where(eq(payments.contractId, row.id))
+            .all();
+          const line = replayContract({
+            salePriceCents: row.salePriceCents,
+            credits: [...credits, { ...probe, createdAt: new Date().toISOString(), reversedAt: null }],
+            charges: ledgerChargesOf(account),
+          }).lines.find((entry) => entry.entry.id === "probe");
+          const split = account?.splits.find((entry) => entry.creditId === "probe");
+
+          return {
+            contractId: row.id,
+            balance: line?.balanceBeforeCents ?? 0,
+            // What was owed of mora just before it: a payment of nothing pays none.
+            moraPending: split ? split.moraPendingAfterCents + split.toMoraCents : 0,
+          };
+        }),
       };
     },
   );

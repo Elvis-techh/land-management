@@ -78,9 +78,9 @@ describe("why a lot has mora: a line per cuota", () => {
     // In the order the server sends them: by date, cuota 3's charge before cuota 1's last.
     const charges = [...CUOTA_1.slice(0, 2), CUOTA_3[0]!, CUOTA_1[2]!];
     assert.deepEqual(cuotaSentences(lot({ pending: L(700), charges }), HNL).map(plain), [
-      "Cuota 1, venció el 25 ago: L. 500. Pasados 5 días de gracia, se cargó el 10 % de los L. 2,000 " +
+      "Cuota 1, venció el 25 ago: L. 500 por pagar. Pasados 5 días de gracia, se cargó el 10 % de los L. 2,000 " +
         "que faltaban: L. 200 el 31 ago, L. 200 el 30 sep y L. 100 el 31 oct (llegó al máximo de L. 500 por cuota).",
-      "Cuota 3, venció el 25 oct: L. 200. Pasados 5 días de gracia, el 31 oct se cargó el 10 % de los L. 2,000 " +
+      "Cuota 3, venció el 25 oct: L. 200 por pagar. Pasados 5 días de gracia, el 31 oct se cargó el 10 % de los L. 2,000 " +
         "que faltaban.",
     ]);
   });
@@ -88,7 +88,7 @@ describe("why a lot has mora: a line per cuota", () => {
   it("a single charge cut short by the maximum, and one that was not", () => {
     assert.equal(
       plain(cuotaSentence([PRIMA], HNL)),
-      "Prima, venció el 27 oct: L. 500. Pasados 5 días de gracia, el 2 nov se cargó " +
+      "Prima, venció el 27 oct: L. 500 por pagar. Pasados 5 días de gracia, el 2 nov se cargó " +
         "el 10 % de los L. 30,000 que faltaban, hasta el máximo de L. 500 por cuota.",
     );
 
@@ -103,14 +103,14 @@ describe("why a lot has mora: a line per cuota", () => {
     ];
     assert.equal(
       plain(cuotaSentence(settled, HNL)),
-      "Cuota 1, venció el 25 ago: L. 150. Pasados 5 días de gracia, se cargó el 10 % de los L. 2,000 " +
+      "Cuota 1, venció el 25 ago: L. 150 por pagar. Pasados 5 días de gracia, se cargó el 10 % de los L. 2,000 " +
         "que faltaban: L. 200 el 31 ago y L. 200 el 30 sep. Ya se pagaron L. 200 y se perdonaron L. 50.",
     );
 
     // One charge partly paid: its own amount has to be said, as the line's figure is what is left.
     assert.equal(
       plain(cuotaSentence([charge({ pending: L(100) })], HNL)),
-      "Cuota 1, venció el 25 ago: L. 100. Pasados 5 días de gracia, el 31 ago se cargaron L. 200: " +
+      "Cuota 1, venció el 25 ago: L. 100 por pagar. Pasados 5 días de gracia, el 31 ago se cargaron L. 200: " +
         "el 10 % de los L. 2,000 que faltaban. Ya se pagaron L. 100.",
     );
   });
@@ -120,7 +120,7 @@ describe("why a lot has mora: a line per cuota", () => {
     const each = { amount: L(300), pending: L(300), rule: fixed };
     assert.match(
       plain(cuotaSentence([charge(each), charge({ ...each, incurredOn: "2026-09-30", repeat: true })], HNL)),
-      /: L. 600\. Pasados 5 días de gracia, se cargó un monto fijo de L. 300: el 31 ago y el 30 sep\.$/,
+      /: L. 600 por pagar\. Pasados 5 días de gracia, se cargó un monto fijo de L. 300: el 31 ago y el 30 sep\.$/,
     );
 
     const halfPaid = charge({
@@ -136,8 +136,8 @@ describe("why a lot has mora: a line per cuota", () => {
     );
 
     const graceOf = (graceDays: number) => plain(cuotaSentence([charge({ rule: { ...RULE, graceDays } })], HNL));
-    assert.match(graceOf(1), /L. 200\. Pasado 1 día de gracia, el 31 ago/);
-    assert.match(graceOf(0), /L. 200\. El 31 ago se cargó el 10 %/);
+    assert.match(graceOf(1), /L. 200 por pagar\. Pasado 1 día de gracia, el 31 ago/);
+    assert.match(graceOf(0), /L. 200 por pagar\. El 31 ago se cargó el 10 %/);
   });
 
   it("says a mora put on by hand, alone or beside the rule's, and no «venció» before the cuota fell due", () => {
@@ -150,16 +150,16 @@ describe("why a lot has mora: a line per cuota", () => {
       manual: true,
       rule: null,
     });
-    assert.equal(plain(cuotaSentence([manual], HNL)), "Cuota 2, venció el 25 sep: L. 500. Se cargó a mano el 4 nov.");
+    assert.equal(plain(cuotaSentence([manual], HNL)), "Cuota 2, venció el 25 sep: L. 500 por pagar. Se cargó a mano el 4 nov.");
 
     assert.equal(
       plain(cuotaSentence([charge({ installment: 2, dueOn: "2026-09-25", incurredOn: "2026-10-01" }), manual], HNL)),
-      "Cuota 2, venció el 25 sep: L. 700. Pasados 5 días de gracia, el 1 oct se cargaron L. 200: " +
+      "Cuota 2, venció el 25 sep: L. 700 por pagar. Pasados 5 días de gracia, el 1 oct se cargaron L. 200: " +
         "el 10 % de los L. 2,000 que faltaban. Cargada a mano: L. 500 el 4 nov.",
     );
 
     const early = { ...manual, installment: 5, dueOn: "2026-12-25" };
-    assert.equal(plain(cuotaSentence([early], HNL)), "Cuota 5: L. 500. Se cargó a mano el 4 nov.");
+    assert.equal(plain(cuotaSentence([early], HNL)), "Cuota 5: L. 500 por pagar. Se cargó a mano el 4 nov.");
   });
 
   it("puts the prima first, and past four cuotas sums the rest, but never a single one", () => {
@@ -177,7 +177,7 @@ describe("why a lot has mora: a line per cuota", () => {
 
     const six = cuotaSentences(lot({ charges: cuotas(6) }), HNL).map(plain);
     assert.equal(six.length, 5);
-    assert.equal(six[4], "Y las cuotas 5 y 6: L. 200.");
+    assert.equal(six[4], "Y las cuotas 5 y 6: L. 200 por pagar.");
   });
 
   it("writes a date as day and month", () => {

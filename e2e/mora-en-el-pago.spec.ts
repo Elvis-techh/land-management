@@ -110,7 +110,7 @@ test("the supervisor charges one lot no mora and another L 200, each with a reas
   await page.reload();
 
   const dialog = await openPayment(page, customer);
-  const moraA = dialog.locator(".lot-mora").filter({ hasText: "Mora L. 500" });
+  const moraA = dialog.locator(".lot-mora").filter({ hasText: "Mora por pagar L. 500" });
 
   // Why A has mora, and that B is late with none.
   // A line per cuota: when it fell due, what it owes, and how (2026-11-09, the owner's «B»).
@@ -140,9 +140,19 @@ test("the supervisor charges one lot no mora and another L 200, each with a reas
   await dialog.getByRole("button", { name: "Repartir el monto entre los lotes" }).click();
   await expect(dialog.locator(`#receipt-amount-${a.contractId}`)).toHaveValue("10,000.00");
   await expect(dialog.locator(`#receipt-amount-${b.contractId}`)).toHaveValue("10,200.00");
-  const afterOf = (code: string) => dialog.locator("tr", { hasText: code }).locator(".after-payment");
+  // Each lot's money in parts (the owner's «A»): the mora as changed, then its cuota.
+  const partsOf = (code: string) =>
+    dialog
+      .getByRole("group", { name: `Este pago en ${code}` })
+      .locator(".lot-parts-list > div")
+      .evaluateAll((rows) =>
+        rows.map((row) => `${row.querySelector("dt")!.textContent} ${row.querySelector("dd")!.textContent}`),
+      );
+  await expect.poll(() => partsOf(a.code)).toEqual(["Mora L. 0", "Cuota L. 10,000", "Total L. 10,000"]);
+  await expect.poll(() => partsOf(b.code)).toEqual(["Mora L. 200", "Cuota L. 10,000", "Total L. 10,200"]);
+  const afterOf = (code: string) => dialog.getByRole("group", { name: `Este pago en ${code}` }).locator(".after-payment");
   await expect(afterOf(a.code)).not.toContainText("mora");
-  await expect(afterOf(b.code)).toContainText("mora L. 200");
+  await expect(afterOf(b.code)).not.toContainText("mora");
   // A: 120,500 − its L 500 − 10,000; B: 120,000 + L 200 − 10,200. L 110,000 each.
   await expect(dialog).toContainText("Saldo restante L. 220,000");
 
@@ -193,7 +203,7 @@ test("the associate sees why a lot has mora and cannot change it", async ({ page
   await logIn(page, accounts.staff);
   const dialog = await openPayment(page, customer);
 
-  await expect(dialog.locator(".lot-mora").filter({ hasText: "Mora L. 500" })).toContainText(
+  await expect(dialog.locator(".lot-mora").filter({ hasText: "Mora por pagar L. 500" })).toContainText(
     "Se cargó a mano el",
   );
   await expect(dialog.getByRole("button", { name: `Cambiar la mora de ${a.code}` })).toHaveCount(0);

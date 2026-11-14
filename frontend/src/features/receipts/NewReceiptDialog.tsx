@@ -22,11 +22,12 @@ import {
 } from "./paymentType";
 import type { PendingProof, ProofLot } from "./ProofDropzone";
 import { MAX_PROOFS, ProofDropzone, acceptProofFiles } from "./ProofDropzone";
-import type { AfterPayment, PaymentMoraLot, ReceiptDraft, ReceiptDraftLine } from "./api";
+import type { AfterPayment, BalanceOn, PaymentMoraLot, ReceiptDraft, ReceiptDraftLine } from "./api";
 import {
   createReceipt,
   fetchLastPayer,
   fetchAfterPayment,
+  fetchBalancesOn,
   fetchCustomerSplit,
   fetchDuplicates,
   fetchPaymentMora,
@@ -46,6 +47,7 @@ import {
   shortDate,
 } from "./moraAtPayment";
 import { afterPaymentLabel } from "./afterPaymentLabel";
+import { paymentParts } from "./paymentParts";
 import type { DuplicateMatch } from "./api";
 import { AMOUNT_FIELD, CUSTOMER_FIELD, receiptBlocker } from "./receiptBlocker";
 
@@ -467,6 +469,50 @@ export function NewReceiptDialog({
   const isToday = paidOn === businessToday();
   const canEditMoraNow = canChangeMora && isToday;
 
+  /*
+   * With a past date the saldo column shows the lots as they stood THAT day:
+   * the «Balance Anterior» the receipt will print (owner, 13 Nov 2026).
+   * Today's saldo holds mora charged after it, which that payment never
+   * meets. Read again when the date, the customer or a balance moves; until it
+   * answers, or if it fails, the column stays on today.
+   */
+  const [balancesOn, setBalancesOn] = useState<{ key: string; byContract: Record<string, BalanceOn> } | null>(null);
+  const isPastDate = /^\d{4}-\d{2}-\d{2}$/.test(paidOn) && paidOn < businessToday();
+  const balancesOnKey = isPastDate && customerId !== "" ? `${customerId}|${paidOn}` : "";
+
+  useEffect(() => {
+    if (balancesOnKey === "") {
+      setBalancesOn(null);
+      return;
+    }
+
+    let live = true;
+
+    fetchBalancesOn(customerId, paidOn)
+      .then((found) => {
+        if (live) {
+          setBalancesOn({
+            key: balancesOnKey,
+            byContract: Object.fromEntries(found.map((lot) => [lot.contractId, lot])),
+          });
+        }
+      })
+      .catch(() => {
+        if (live) {
+          setBalancesOn(null);
+        }
+      });
+
+    return () => {
+      live = false;
+    };
+  }, [balancesOnKey, customerId, paidOn, balancesKey]);
+
+  /** Is the column showing the payment's day? Only once that day's figures are in. */
+  const showsDay = balancesOnKey !== "" && balancesOn?.key === balancesOnKey;
+  const dayOf = (contract: Contract): BalanceOn | null =>
+    showsDay ? (balancesOn!.byContract[contract.id] ?? null) : null;
+
   const startMoraEdit = (contract: Contract) => {
     const lot = moraLots[contract.id];
     setMoraEdits((current) => ({
@@ -495,14 +541,16 @@ export function NewReceiptDialog({
    * never shown against the new one.
    */
   const [afterByContract, setAfterByContract] = useState<
-    Record<string, { amountCents: number; moraCents: number | undefined; after: AfterPayment }>
+    Record<string, { amountCents: number; moraCents: number | undefined; paidOn: string; after: AfterPayment }>
   >({});
 
   /* What the previews depend on: the amount and the changed mora of each line,
-     not the reason being typed for it. */
-  const previewKey = lines
-    .map((line) => `${line.contractId}:${line.amountCents}:${line.mora?.amountCents ?? ""}`)
-    .join("|");
+     not the reason being typed for it, and the date. A payment dated 30 April
+     pays no mora charged in November: the server places it on its day. */
+  const previewKey =
+    paidOn +
+    "|" +
+    lines.map((line) => `${line.contractId}:${line.amountCents}:${line.mora?.amountCents ?? ""}`).join("|");
 
   useEffect(() => {
     if (lines.length === 0) {
@@ -514,12 +562,12 @@ export function NewReceiptDialog({
       for (const line of lines) {
         const moraCents = line.mora?.amountCents;
 
-        fetchAfterPayment(line.contractId, line.amountCents, moraCents)
+        fetchAfterPayment(line.contractId, line.amountCents, moraCents, paidOn)
           .then((after) => {
             if (current) {
               setAfterByContract((known) => ({
                 ...known,
-                [line.contractId]: { amountCents: line.amountCents, moraCents, after },
+                [line.contractId]: { amountCents: line.amountCents, moraCents, paidOn, after },
               }));
             }
           })
@@ -539,30 +587,68 @@ export function NewReceiptDialog({
     const known = afterByContract[contract.id];
     const moraCents = draftMora(moraLots[contract.id], moraEdits[contract.id])?.amountCents;
 
-    return known !== undefined && known.amountCents === amountCentsFor(contract) && known.moraCents === moraCents
+    return known !== undefined &&
+      known.amountCents === amountCentsFor(contract) &&
+      known.moraCents === moraCents &&
+      known.paidOn === paidOn
       ? known.after
       : null;
   };
 
   /**
-   * Saldo actual − Monto, across the lots this receipt actually puts money on.
+   * What the lots this receipt puts money on will owe, added up.
    *
    * Over the LINES rather than over `payable`, so a customer with three lots
    * who is paying one is told what that lot will owe, not a figure blended
    * with two contracts this receipt never touches.
+   *
+   * Each lot's figure is the server's preview once it has answered: with a
+   * past date the payment can change the mora (a cuota paid before it was
+   * late is never charged), which no subtraction here can know. Until then,
+   * Saldo actual − Monto.
    */
-  const balanceAfter = useMemo(() => {
-    const balances = new Map<string, number>(payable.map((contract) => [contract.id, contract.balance]));
+  const balanceAfter = lines.reduce((sum, line) => {
+    const contract = payable.find((entry) => entry.id === line.contractId);
+    const after = contract ? afterFor(contract) : null;
 
-    return lines.reduce(
-      (sum, line) =>
-        sum +
-        ((balances.get(line.contractId) ?? 0) - line.amountCents) +
-        // The balance carries the mora owed; a changed mora moves it.
-        (line.mora ? line.mora.amountCents - (moraLots[line.contractId]?.pending ?? 0) : 0),
-      0,
+    if (after) {
+      return sum + after.newBalance;
+    }
+
+    return (
+      sum +
+      ((contract?.balance ?? 0) - line.amountCents) +
+      // The balance carries the mora owed; a changed mora moves it.
+      (line.mora ? line.mora.amountCents - (moraLots[line.contractId]?.pending ?? 0) : 0)
     );
-  }, [payable, lines, moraLots]);
+  }, 0);
+
+  /*
+   * With a past date, a lot's saldo on THAT day once this payment is in: the
+   * receipt's «Nuevo Balance Pendiente», so «Saldo al …» minus the money adds
+   * up. Today's figure above stays beside it, and is what the server checks
+   * an overpayment against.
+   */
+  const dayAfterOf = (line: ReceiptDraftLine): number | null => {
+    const contract = payable.find((entry) => entry.id === line.contractId);
+    const day = contract ? dayOf(contract) : null;
+
+    if (!day) {
+      return null;
+    }
+
+    return (
+      day.balance -
+      line.amountCents +
+      (line.mora ? line.mora.amountCents - (moraLots[line.contractId]?.pending ?? 0) : 0)
+    );
+  };
+  const balanceAfterOn = showsDay
+    ? lines.reduce<number | null>((sum, line) => {
+        const after = dayAfterOf(line);
+        return sum === null || after === null ? null : sum + after;
+      }, 0)
+    : null;
 
   /*
    * Is this payment already in the ledger?
@@ -961,7 +1047,7 @@ export function NewReceiptDialog({
    * «Cambiar» it or «Cobrar mora» on a late lot that has none. Null when
    * there is nothing to say: no mora, and nothing this user could do about it.
    */
-  const moraRow = (contract: Contract) => {
+  const moraRow = (contract: Contract, joined = false) => {
     const lot = moraLots[contract.id];
     const edit = moraEdits[contract.id];
 
@@ -970,8 +1056,11 @@ export function NewReceiptDialog({
     }
 
     const offerCharge = lot.pending === 0 && lot.late !== null && canEditMoraNow;
+    // Late, no mora, and «Cobrar mora» held back only by the date: say so,
+    // rather than leave the button missing with no reason.
+    const chargeNeedsToday = lot.pending === 0 && lot.late !== null && canChangeMora && !isToday;
 
-    if (lot.pending === 0 && !offerCharge && !edit) {
+    if (lot.pending === 0 && !offerCharge && !chargeNeedsToday && !edit) {
       return null;
     }
 
@@ -979,13 +1068,14 @@ export function NewReceiptDialog({
     const code = contract.lot.code;
 
     return (
-      <tr className="split-mora-row">
+      // `joined`: the list of this payment's parts comes under it, as one card.
+      <tr className={joined ? "split-mora-row has-mora-row" : "split-mora-row"}>
         <td colSpan={isMultiLot ? 4 : 2}>
           <div className="lot-mora">
             {lot.pending > 0 ? (
               <>
                 <p className="lot-mora-head">
-                  <strong>Mora {formatMoney(lot.pending, money)}</strong>
+                  <strong>Mora por pagar {formatMoney(lot.pending, money)}</strong>
                   {canEditMoraNow && !edit && (
                     <button
                       type="button"
@@ -1002,26 +1092,37 @@ export function NewReceiptDialog({
                     <li key={line}>{line}</li>
                   ))}
                 </ul>
-                {canChangeMora && !isToday && (
-                  <p className="field-hint">Para cambiar la mora, registra el pago con la fecha de hoy.</p>
+                {!isToday && (
+                  <p className="field-hint">
+                    Este pago es del {shortDate(paidOn)}: se acomoda en ese día y solo paga la mora
+                    cargada hasta entonces.
+                    {canChangeMora && " Para cambiar la mora, registra el pago con la fecha de hoy."}
+                  </p>
                 )}
               </>
             ) : (
               !edit &&
               lot.late && (
-                <p className="lot-mora-head">
-                  <span>
-                    Atrasado: {itemName(lot.late.installment)} venció el {shortDate(lot.late.dueOn)}.
-                  </span>
-                  <button
-                    type="button"
-                    className="link-btn"
-                    aria-label={`Cobrar mora a ${code}`}
-                    onClick={() => startMoraEdit(contract)}
-                  >
-                    Cobrar mora
-                  </button>
-                </p>
+                <>
+                  <p className="lot-mora-head">
+                    <span>
+                      Atrasado: {itemName(lot.late.installment)} venció el {shortDate(lot.late.dueOn)}.
+                    </span>
+                    {offerCharge && (
+                      <button
+                        type="button"
+                        className="link-btn"
+                        aria-label={`Cobrar mora a ${code}`}
+                        onClick={() => startMoraEdit(contract)}
+                      >
+                        Cobrar mora
+                      </button>
+                    )}
+                  </p>
+                  {chargeNeedsToday && (
+                    <p className="field-hint">Para cobrar mora, registra el pago con la fecha de hoy.</p>
+                  )}
+                </>
               )
             )}
 
@@ -1077,6 +1178,59 @@ export function NewReceiptDialog({
                 </button>
               </div>
             )}
+          </div>
+        </td>
+      </tr>
+    );
+  };
+
+  /**
+   * What this lot's money does, in parts, once the server has answered: Mora
+   * (L. 0 too, when the lot carries mora), Prima, Cuota, Adelanto, Total; then,
+   * with several lots, what this one will owe; then the receipt's own words
+   * for it (the owner's «A», 10 Nov 2026). See paymentParts.ts. Null while
+   * nothing is typed for it or the answer is not in yet.
+   */
+  const partsRow = (contract: Contract) => {
+    const after = afterFor(contract);
+    const amount = amountCentsFor(contract);
+
+    if (!after || amount <= 0) {
+      return null;
+    }
+
+    const parts = paymentParts(after, cents(amount), paidOn, moraLots[contract.id]?.carriesMora ?? false);
+    const line = lines.find((entry) => entry.contractId === contract.id);
+    const dayAfter = line ? dayAfterOf(line) : null;
+
+    return (
+      <tr className="split-parts-row">
+        <td colSpan={isMultiLot ? 4 : 2}>
+          <div className="lot-parts" role="group" aria-label={`Este pago en ${contract.lot.code}`}>
+            <p className="lot-parts-head">Este pago{isToday ? "" : `, del ${shortDate(paidOn)}`}</p>
+            <dl className="lot-parts-list">
+              {parts.map((part) => (
+                <div key={part.label} className={part.label === "Total" ? "is-total" : undefined}>
+                  <dt>{part.label}</dt>
+                  <dd>{formatMoney(part.amount, money)}</dd>
+                </div>
+              ))}
+            </dl>
+            {isMultiLot && (
+              <p className="lot-parts-left">
+                {dayAfter !== null ? (
+                  <>
+                    Saldo restante al {shortDate(paidOn)} <strong>{formatMoney(cents(dayAfter), money)}</strong>
+                    {" · "}hoy {formatMoney(after.newBalance, money)}
+                  </>
+                ) : (
+                  <>
+                    Saldo restante <strong>{formatMoney(after.newBalance, money)}</strong>
+                  </>
+                )}
+              </p>
+            )}
+            <p className="after-payment">Después: {afterPaymentLabel(after, money)}</p>
           </div>
         </td>
       </tr>
@@ -1417,7 +1571,7 @@ export function NewReceiptDialog({
             <thead>
               <tr>
                 <th>Lote</th>
-                <th className="col-money">Saldo actual</th>
+                <th className="col-money">{showsDay ? `Saldo al ${shortDate(paidOn)}` : "Saldo actual"}</th>
                 {/* Only when there is a division to see. One lot receives the
                     Monto typed above, in full, and a column repeating it would
                     be a second place for the same figure to live. The type
@@ -1430,7 +1584,7 @@ export function NewReceiptDialog({
             <tbody>
               {payable.map((contract) => (
                 <Fragment key={contract.id}>
-                <tr className={moraRow(contract) ? "has-mora-row" : undefined}>
+                <tr className={moraRow(contract) || partsRow(contract) ? "has-mora-row" : undefined}>
                   <td>
                     <span className="code-badge">{contract.lot.code}</span>
                     {/* Truncated by CSS when the column is tight, so the whole
@@ -1441,23 +1595,40 @@ export function NewReceiptDialog({
                   </td>
                   <td className="col-money">
                     <span className="cell-money is-balance">
-                      {formatMoney(contract.balance, money)}
+                      {formatMoney(dayOf(contract)?.balance ?? contract.balance, money)}
                     </span>
+                    {/* The saldo keeps the mora in it, as the receipt's «Balance
+                        Anterior» does, and says how much (owner, 10 Nov 2026).
+                        With a past date, both as of that day, and today's saldo
+                        under them (owner, 13 Nov 2026). */}
+                    {dayOf(contract) ? (
+                      <>
+                        {dayOf(contract)!.moraPending > 0 && (
+                          <span className="cell-sub">
+                            incluye mora {formatMoney(dayOf(contract)!.moraPending, money)}
+                          </span>
+                        )}
+                        <span className="cell-sub">hoy {formatMoney(contract.balance, money)}</span>
+                      </>
+                    ) : (
+                      contract.mora.pending > 0 && (
+                        <span className="cell-sub">incluye mora {formatMoney(contract.mora.pending, money)}</span>
+                      )
+                    )}
                     {contract.health.nextDueOn && contract.health.nextDueIsDownPayment && (
                       <span className="cell-sub">
                         prima pendiente {formatMoney(contract.health.nextDueAmount, money)}
                       </span>
                     )}
+                    {/* What is still missing of the cuota due, the figure to ask
+                        for. Its full amount only beside it once some of it is
+                        paid: «próxima L. 2,000 · adelanto L. 1,000» read as
+                        L. 2,000 still to pay (owner, 10 Nov 2026). */}
                     {contract.health.nextDueOn && !contract.health.nextDueIsDownPayment && (
                       <span className="cell-sub">
-                        próxima {formatMoney(contract.health.nextInstallment, money)}
-                        {contract.health.nextDueCredit > 0 &&
-                          ` · adelanto ${formatMoney(contract.health.nextDueCredit, money)}`}
-                      </span>
-                    )}
-                    {afterFor(contract) && (
-                      <span className="cell-sub after-payment">
-                        después: {afterPaymentLabel(afterFor(contract)!, money)}
+                        {contract.health.nextDueCredit > 0
+                          ? `próxima: faltan ${formatMoney(contract.health.nextDueAmount, money)} de ${formatMoney(contract.health.nextInstallment, money)}`
+                          : `próxima ${formatMoney(contract.health.nextInstallment, money)}`}
                       </span>
                     )}
                   </td>
@@ -1510,7 +1681,8 @@ export function NewReceiptDialog({
                     </td>
                   )}
                 </tr>
-                {moraRow(contract)}
+                {moraRow(contract, partsRow(contract) !== null)}
+                {partsRow(contract)}
                 </Fragment>
               ))}
             </tbody>
@@ -1536,9 +1708,21 @@ export function NewReceiptDialog({
           */}
           {total > 0 && (
             <>
-              <p className={`receipt-running-total${balanceAfter < 0 ? " is-over" : ""}`}>
-                Saldo restante <strong>{formatMoney(cents(balanceAfter), money)}</strong>
-              </p>
+              {balanceAfterOn !== null ? (
+                <>
+                  <p className="receipt-running-total">
+                    Saldo restante al {shortDate(paidOn)}{" "}
+                    <strong>{formatMoney(cents(balanceAfterOn), money)}</strong>
+                  </p>
+                  <p className={`receipt-running-today${balanceAfter < 0 ? " is-over" : ""}`}>
+                    hoy {formatMoney(cents(balanceAfter), money)}
+                  </p>
+                </>
+              ) : (
+                <p className={`receipt-running-total${balanceAfter < 0 ? " is-over" : ""}`}>
+                  Saldo restante <strong>{formatMoney(cents(balanceAfter), money)}</strong>
+                </p>
+              )}
 
               {balanceAfter < 0 && (
                 <p className="receipt-over-note">
