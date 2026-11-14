@@ -5,7 +5,8 @@ import { amountInWords } from "../../lib/amountInWords";
 import { contactLine, thankYou, thankYouFinal } from "../../lib/business";
 import { code128Geometry } from "../../lib/code128";
 import type { MoneyView } from "../../lib/money";
-import { cents, formatDocumentMoney } from "../../lib/money";
+import type { Cents } from "../../lib/money";
+import { cents, formatDocumentMoney, formatDocumentMoneyParts } from "../../lib/money";
 import { formatPhone } from "../../lib/phone";
 import type { Receipt } from "../../types";
 import { useSettings } from "../settings/SettingsContext";
@@ -136,6 +137,29 @@ function printBaseFor(receipt: Receipt): string {
 }
 
 /**
+ * An amount as two cells of its column: «L.» and the digits.
+ *
+ * The figures of a column are read down, so the «L.» stands in a column of its
+ * own and the digits are right-aligned at one width (`tabular-nums`), the way
+ * an accountant writes them: L. 250.00 sits under L. 245,000.00 with its point
+ * under the other point. Printed as one string, each «L.» landed wherever its
+ * number started and the column looked ragged (owner, 10 Nov 2026).
+ */
+function Figure({ amount, money }: { amount: Cents; money: MoneyView }) {
+  const { symbol, value } = formatDocumentMoneyParts(amount, money);
+
+  // The space after the «L.» is not drawn (it ends its cell, where a space is
+  // dropped), but it keeps «L. 400.00» whole when the figure is copied or read
+  // aloud.
+  return (
+    <>
+      <span className="receipt-cur">{`${symbol} `}</span>
+      <span className="receipt-num">{value}</span>
+    </>
+  );
+}
+
+/**
  * The document itself — what gets printed and handed to the customer.
  *
  * The layout is the official receipt, ported from the Puppeteer template in
@@ -259,13 +283,17 @@ export function ReceiptPaper({ receipt, money }: ReceiptPaperProps) {
         <thead>
           <tr>
             <th>DESCRIPCIÓN / LOTE</th>
-            <th className="receipt-right">MONTO PAGADO</th>
+            {/* Over both cells of the amount: its «L.» and its digits. */}
+            <th className="receipt-right" colSpan={2}>
+              MONTO PAGADO
+            </th>
           </tr>
         </thead>
         <tbody>
           {receipt.lines.map((line) => {
             const applied = appliedLabel(line, money);
             const mora = moraLabel(line, money);
+            const amount = formatDocumentMoneyParts(line.amount, money);
 
             return (
               <tr key={line.paymentId}>
@@ -285,7 +313,8 @@ export function ReceiptPaper({ receipt, money }: ReceiptPaperProps) {
                       its own so a fee is never read as a cuota. */}
                   {mora && <span className="receipt-item-detail">{mora}</span>}
                 </td>
-                <td className="receipt-right">{formatDocumentMoney(line.amount, money)}</td>
+                <td className="receipt-cur-cell">{`${amount.symbol} `}</td>
+                <td className="receipt-right receipt-num">{amount.value}</td>
               </tr>
             );
           })}
@@ -296,36 +325,30 @@ export function ReceiptPaper({ receipt, money }: ReceiptPaperProps) {
         <div className="receipt-summary-col">
           <div className="receipt-summary-row">
             <span>Valor Total del Contrato</span>
-            <span className="receipt-summary-value">{formatDocumentMoney(contractTotal, money)}</span>
+            <Figure amount={contractTotal} money={money} />
           </div>
           {/* Only once there is mora: with it, valor + mora − total pagado
               is the new balance, and the page has to show all three. */}
           {receipt.moraCharged > 0 && (
             <div className="receipt-summary-row">
               <span>Mora Cobrada</span>
-              <span className="receipt-summary-value">
-                {formatDocumentMoney(receipt.moraCharged, money)}
-              </span>
+              <Figure amount={receipt.moraCharged} money={money} />
             </div>
           )}
           <div className="receipt-summary-row">
             <span>Total Pagado Acumulado</span>
-            <span className="receipt-summary-value">
-              {formatDocumentMoney(receipt.cumulativePaid, money)}
-            </span>
+            <Figure amount={receipt.cumulativePaid} money={money} />
           </div>
         </div>
 
         <div className="receipt-summary-col is-wide">
           <div className="receipt-summary-row">
             <span>Balance Anterior Total</span>
-            <span className="receipt-summary-value">
-              {formatDocumentMoney(receipt.previousBalance, money)}
-            </span>
+            <Figure amount={receipt.previousBalance} money={money} />
           </div>
           <div className="receipt-summary-row is-bold">
             <span>Total Pagado Hoy</span>
-            <span>{formatDocumentMoney(receipt.totalPaid, money)}</span>
+            <Figure amount={receipt.totalPaid} money={money} />
           </div>
 
           {/* The figure the customer came to read. Boxed and red on the
@@ -339,16 +362,12 @@ export function ReceiptPaper({ receipt, money }: ReceiptPaperProps) {
                 <small>Contrato pagado en su totalidad</small>
                 Saldo Cancelado
               </span>
-              <span className="receipt-highlight-value">
-                {formatDocumentMoney(receipt.newBalance, money)}
-              </span>
+              <Figure amount={receipt.newBalance} money={money} />
             </div>
           ) : (
             <div className="receipt-highlight">
               <span className="receipt-highlight-label">Nuevo Balance Pendiente</span>
-              <span className="receipt-highlight-value">
-                {formatDocumentMoney(receipt.newBalance, money)}
-              </span>
+              <Figure amount={receipt.newBalance} money={money} />
             </div>
           )}
         </div>
