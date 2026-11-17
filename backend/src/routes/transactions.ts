@@ -70,6 +70,9 @@ const transactionsQuery = (db: Db) => {
       // The receipt's internal note, so a row can say "there is a message here"
       // without the list having to open every receipt to find out.
       receiptNote: receipts.note,
+      // Who the receipt says paid, when it was not the customer, so the
+      // correction form can show it without opening the receipt.
+      receiptPaidBy: receipts.paidBy,
       receiptVoidedAt: receipts.voidedAt,
       recordedByName: users.name,
     })
@@ -116,6 +119,19 @@ const editBody = z.object({
    * permission `PATCH /receipts/:id/note` is gated on.
    */
   receiptNote: z.string().trim().max(500).nullish(),
+  /**
+   * «Pagado por» on the receipt this payment is a line of: who handed over the
+   * money, when it was not the customer.
+   *
+   * The same three states as `receiptNote`. ABSENT leaves it alone, so a
+   * correction that never touched it cannot erase it. Blank or `null` puts the
+   * customer's name back. Text sets it. It is written here, in the same
+   * transaction as the correction, only so the two cannot half-happen, and it
+   * is filed in the Historial exactly as `PATCH /receipts/:id/paid-by` files it,
+   * with the same reason. Same permission as that route, `payment:edit`, which
+   * this route already needs.
+   */
+  paidBy: z.string().trim().max(120).nullish(),
   /**
    * Required, and at least a sentence.
    *
@@ -887,6 +903,47 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
         }
       }
 
+      /*
+       * The «Pagado por» this correction also writes, if it changes it.
+       *
+       * Like the note, it belongs to the RECEIPT: one piece of paper names one
+       * payer, on every line of it. Only a name that actually differs counts,
+       * so a form that always sends the field does not file a change that
+       * changed nothing.
+       */
+      let paidByChange: {
+        receiptId: string;
+        receiptCode: string;
+        before: string | null;
+        after: string | null;
+      } | null = null;
+
+      if (body.paidBy !== undefined) {
+        if (existing.receiptId === null) {
+          return reply.code(400).send({
+            error: "no_receipt",
+            message: "Esa transacción no está en un recibo, así que no tiene «Pagado por».",
+          });
+        }
+
+        const receipt = app.db
+          .select({ id: receipts.id, code: receipts.code, paidBy: receipts.paidBy })
+          .from(receipts)
+          .where(eq(receipts.id, existing.receiptId))
+          .get();
+
+        const nextPayer = body.paidBy === null || body.paidBy === "" ? null : body.paidBy;
+
+        if (receipt && nextPayer !== (receipt.paidBy ?? null)) {
+          paidByChange = {
+            receiptId: receipt.id,
+            receiptCode: receipt.code,
+            before: receipt.paidBy ?? null,
+            after: nextPayer,
+          };
+        }
+      }
+
       const before = {
         amountCents: existing.amountCents,
         paidOn: existing.paidOn,
@@ -942,6 +999,26 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
             .set({ note: noteChange.after })
             .where(eq(receipts.id, noteChange.receiptId))
             .run();
+        }
+
+        // In the Historial, the same entry `PATCH /receipts/:id/paid-by` writes:
+        // it changes what a document somebody may already be holding says.
+        // `receiptCode` on both sides so the Historial can name the receipt.
+        if (paidByChange) {
+          tx.update(receipts)
+            .set({ paidBy: paidByChange.after })
+            .where(eq(receipts.id, paidByChange.receiptId))
+            .run();
+
+          recordAudit(tx, {
+            actorId: request.user!.id,
+            entityType: "payment",
+            entityId: paidByChange.receiptId,
+            action: "update",
+            reason: body.reason,
+            before: { receiptCode: paidByChange.receiptCode, paidBy: paidByChange.before },
+            after: { receiptCode: paidByChange.receiptCode, paidBy: paidByChange.after },
+          });
         }
 
         /*

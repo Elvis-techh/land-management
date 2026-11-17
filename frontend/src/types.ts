@@ -621,6 +621,8 @@ export interface Transaction {
    * next, never printed. Shared by every line of the same receipt.
    */
   receiptNote: string | null;
+  /** Who this row's receipt says paid, when it was not the customer; null otherwise. */
+  receiptPaidBy: string | null;
   receiptVoidedAt: string | null;
   recordedByName: string;
   /**

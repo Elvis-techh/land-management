@@ -16,6 +16,7 @@ import {
   deleteAttachment,
   storedProof,
   updateReceiptNote,
+  updateReceiptPaidBy,
   updateTransaction,
   uploadAttachment,
 } from "./api";
@@ -119,6 +120,12 @@ export function TransactionEditDialog({
   const noteLocked = receiptBacked && !canAttachProof;
 
   const [notes, setNotes] = useState(savedNote ?? "");
+  /*
+   * «Pagado por» is the RECEIPT's, like the team note: one piece of paper names
+   * one payer, on every line. Money recorded before there were receipts has no
+   * receipt to name one, so the field is not offered for it.
+   */
+  const [paidBy, setPaidBy] = useState(transaction.receiptPaidBy ?? "");
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [overpaymentPrompt, setOverpaymentPrompt] = useState<string | null>(null);
@@ -138,6 +145,7 @@ export function TransactionEditDialog({
     type !== (transaction.type as PaymentType) ||
     reference !== (transaction.reference ?? "") ||
     notes !== (savedNote ?? "") ||
+    paidBy !== (transaction.receiptPaidBy ?? "") ||
     reason.trim() !== "";
 
   /*
@@ -287,13 +295,24 @@ export function TransactionEditDialog({
    * and still counts as a correction.
    */
   const teamNoteChanged = receiptBacked && noteChanged;
-  const correctionChanged =
+  /*
+   * A figure of the payment itself moved: the ones that rewrite a row the
+   * ledger stands on.
+   */
+  const figuresChanged =
     amountCents !== transaction.amount ||
     paidOn !== transaction.paidOn ||
     method !== transaction.method ||
     type !== transaction.type ||
     (reference.trim() || null) !== (transaction.reference ?? null) ||
     (!receiptBacked && noteChanged);
+  /*
+   * «Pagado por» changes what the receipt says, which somebody may already be
+   * holding on paper, so it takes a motive like a correction does, even though
+   * no figure moves.
+   */
+  const paidByChanged = receiptBacked && paidBy.trim() !== (transaction.receiptPaidBy ?? "");
+  const correctionChanged = figuresChanged || paidByChanged;
   const hasChanges = correctionChanged || teamNoteChanged;
   const isNoteOnly = teamNoteChanged && !correctionChanged;
 
@@ -375,6 +394,9 @@ export function TransactionEditDialog({
           ? { receiptNote: noteValue }
           : {}
         : { notes: noteValue }),
+      // Only when it moved, so a correction that never touched it cannot put
+      // the customer's name back over a payer's.
+      ...(paidByChanged ? { paidBy: paidBy.trim() === "" ? null : paidBy.trim() } : {}),
       reason: trimmedReason,
       allowOverpayment,
       /*
@@ -393,6 +415,21 @@ export function TransactionEditDialog({
         // Nothing here was corrected, so this is the same write the box in the
         // receipt panel makes — no motive, nothing for the ledger to re-derive.
         await updateReceiptNote(transaction.receiptId, noteValue);
+      } else if (!figuresChanged && transaction.receiptId !== null) {
+        // Only the receipt moved: the payer, and maybe the team note. No row of
+        // the ledger is rewritten, so this is the same write the receipt panel
+        // makes, with the same motive in the Historial. The note goes first: it
+        // can be repeated harmlessly if the second write fails and this is
+        // pressed again, and the payer, which cannot, goes last.
+        if (teamNoteChanged) {
+          await updateReceiptNote(transaction.receiptId, noteValue);
+        }
+
+        await updateReceiptPaidBy(
+          transaction.receiptId,
+          paidBy.trim() === "" ? null : paidBy.trim(),
+          trimmedReason,
+        );
       } else {
         await updateTransaction(transaction.id, edit);
       }
@@ -642,6 +679,28 @@ export function TransactionEditDialog({
               />
             </div>
 
+            {/* On a line with a receipt only: the payer is the receipt's. */}
+            {receiptBacked && (
+              <div className="form-field full-width">
+                <label htmlFor="edit-paid-by">Pagado por (opcional)</label>
+                <input
+                  id="edit-paid-by"
+                  type="text"
+                  maxLength={120}
+                  value={paidBy}
+                  onChange={(event) => setPaidBy(event.target.value)}
+                  placeholder="Solo si entregó el dinero otra persona"
+                />
+                <span className="field-hint">
+                  Vacío: el recibo sale a nombre del cliente.
+                  {siblings.length > 0
+                    ? ` Vale para todo el recibo, que cubre ${siblings.length + 1} lotes.`
+                    : ""}{" "}
+                  Cambiarlo pide motivo.
+                </span>
+              </div>
+            )}
+
             <div className="form-field full-width">
               <label htmlFor="edit-notes">{receiptBacked ? "Nota del equipo" : "Nota"}</label>
               <textarea
@@ -758,9 +817,19 @@ export function TransactionEditDialog({
                 touches no figure on the receipt. */}
             {transaction.receiptId && !isNoteOnly && (
               <p className="form-warning full-width">
-                Esta transacción está impresa en el recibo {transaction.receiptCode}. Al guardar,
-                los montos de ese recibo cambian — si el cliente ya tiene una copia en papel,
-                conviene volver a imprimírselo.
+                {paidByChanged && !figuresChanged ? (
+                  <>
+                    Cambiar «Pagado por» cambia lo que dice el recibo {transaction.receiptCode}, no
+                    sus montos — si el cliente ya tiene una copia en papel, conviene volver a
+                    imprimírsela.
+                  </>
+                ) : (
+                  <>
+                    Esta transacción está impresa en el recibo {transaction.receiptCode}. Al
+                    guardar, los montos de ese recibo cambian — si el cliente ya tiene una copia
+                    en papel, conviene volver a imprimírselo.
+                  </>
+                )}
               </p>
             )}
 
