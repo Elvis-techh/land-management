@@ -14,36 +14,44 @@ import type { Contract, ContractStatus, PaymentHealth, SaleType } from "../../ty
 /**
  * Payment health, escalating through four steps.
  *
- * Note that `due_soon` covers the five-day grace as well as the week before an
- * installment falls due. That is deliberate: green would tell staff there is
- * nothing to do on day three of the grace, when a phone call is exactly what is
- * wanted. Amber says "worth a call", red says "this is now a debt".
+ * Note that `due_soon` covers the grace days, their last day included, as well
+ * as the week before an installment falls due. That is deliberate: green would
+ * tell staff there is nothing to do on day three of the grace, when a phone
+ * call is exactly what is wanted. Amber says "worth a call", red says "this is
+ * now a debt". The sentence that explains each one is `healthHint`.
  */
-export const HEALTH_PRESENTATION: Record<
-  PaymentHealth,
-  { label: string; stampClass: string; hint: string }
-> = {
-  current: {
-    label: "Al día",
-    stampClass: "stamp success",
-    hint: "No debe nada vencido.",
-  },
-  due_soon: {
-    label: "Por vencer",
-    stampClass: "stamp warning",
-    hint: "Tiene una cuota próxima o dentro de los cinco días de gracia.",
-  },
-  overdue: {
-    label: "Atrasado",
-    stampClass: "stamp clay",
-    hint: "Pasaron los cinco días de gracia y la cuota no entró.",
-  },
-  at_risk: {
-    label: "En riesgo",
-    stampClass: "stamp danger",
-    hint: "Dos meses o más sin pagar.",
-  },
+export const HEALTH_PRESENTATION: Record<PaymentHealth, { label: string; stampClass: string }> = {
+  current: { label: "Al día", stampClass: "stamp success" },
+  due_soon: { label: "Por vencer", stampClass: "stamp warning" },
+  overdue: { label: "Atrasado", stampClass: "stamp clay" },
+  at_risk: { label: "En riesgo", stampClass: "stamp danger" },
 };
+
+/**
+ * The sentence that explains a payment health, under a contract's chip and on
+ * the Panel. It names the grace days set on Configuración: it used to say
+ * «cinco» whatever they were.
+ */
+export function healthHint(health: PaymentHealth, graceDays: number): string {
+  switch (health) {
+    case "current":
+      return "No debe nada vencido.";
+    case "due_soon":
+      return graceDays === 0
+        ? "Tiene una cuota próxima o que vence hoy."
+        : graceDays === 1
+          ? "Tiene una cuota próxima o dentro de su día de gracia."
+          : `Tiene una cuota próxima o dentro de los ${graceDays} días de gracia.`;
+    case "overdue":
+      return graceDays === 0
+        ? "Venció una cuota y no entró."
+        : graceDays === 1
+          ? "Pasó el día de gracia y la cuota no entró."
+          : `Pasaron los ${graceDays} días de gracia y la cuota no entró.`;
+    case "at_risk":
+      return "Dos meses o más sin pagar.";
+  }
+}
 
 /** The contract's own lifecycle — a different question from payment health. */
 export const STATUS_PRESENTATION: Record<

@@ -428,8 +428,10 @@ export interface HealthReport {
  * Note the two different expectations, which is the part worth reading twice:
  *
  * - Arrears are measured against what was due AFTER the grace days, so with
- *   five of them a customer who pays on the 8th for a due date of the 5th is
- *   never called late.
+ *   five of them a customer who pays on the 10th for a due date of the 5th is
+ *   never called late. Late starts on the 11th, the day after the grace, the
+ *   same day lib/mora.ts charges the mora: on the last day of grace the
+ *   customer can still pay without mora, so «Atrasado» would be wrong.
  * - Being ahead is measured against the plain schedule, with no grace. Using
  *   the graced figure for both would announce that somebody who paid exactly on
  *   their due date is a month ahead, every month, for the life of the contract.
@@ -444,7 +446,10 @@ export function assessContract(
   const balanceCents = Math.max(0, terms.salePriceCents - paidToDateCents);
   const settled = terms.salePriceCents - paidToDateCents <= 0;
 
-  const graceDate = shiftDays(asOf, -rules.graceDays);
+  // The latest due date whose grace is over today: anything due on or before it
+  // is late. One day more than the grace days, because the grace includes its
+  // last day.
+  const graceDate = shiftDays(asOf, -(rules.graceDays + 1));
   const dueBySchedule = expectedByCents(terms, schedule, asOf);
   const dueAfterGrace = expectedByCents(terms, schedule, graceDate);
 

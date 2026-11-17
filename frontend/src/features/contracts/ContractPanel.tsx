@@ -8,16 +8,17 @@ import { formatPhone } from "../../lib/phone";
 import type { User } from "../../lib/permissions";
 import { can } from "../../lib/permissions";
 import type { Contract, ContractAmendmentLink } from "../../types";
+import { useSettings } from "../settings/SettingsContext";
 import { ContractDocuments } from "./ContractDocuments";
 import { ContractMora } from "./ContractMora";
 import {
-  HEALTH_PRESENTATION,
   KIND_LABELS,
   SALE_TYPE_LABELS,
   SETTLEMENT_LABELS,
   STATUS_PRESENTATION,
   formatDate,
   healthDetail,
+  healthHint,
   paidPercent,
   pricePaid,
   primaryStamp,
@@ -174,6 +175,7 @@ export function ContractPanel({
   onDocumentsChanged,
   onMoraChanged,
 }: ContractPanelProps) {
+  const { graceDays } = useSettings().mora;
   const stamp = primaryStamp(contract);
   const detail = healthDetail(contract);
   const percent = paidPercent(contract);
@@ -250,7 +252,7 @@ export function ContractPanel({
           </p>
 
           {isOpen && detail !== "" && <p className="cp-note">{detail}.</p>}
-          {isOpen && <p className="cp-note">{HEALTH_PRESENTATION[contract.health.status].hint}</p>}
+          {isOpen && <p className="cp-note">{healthHint(contract.health.status, graceDays)}</p>}
           {contract.status === "replaced" && contract.replacedBy && (
             <p className="cp-note">
               Ya no se cobra: lo reemplazó {contract.replacedBy.code} el{" "}
