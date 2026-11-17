@@ -23,6 +23,7 @@ import {
 import type { PendingProof, ProofLot } from "./ProofDropzone";
 import { MAX_PROOFS, ProofDropzone, acceptProofFiles } from "./ProofDropzone";
 import type { AfterPayment, BalanceOn, PaymentMoraLot, ReceiptDraft, ReceiptDraftLine } from "./api";
+import { saldoDifference } from "./saldoDifference";
 import {
   createReceipt,
   fetchLastPayer,
@@ -524,6 +525,24 @@ export function NewReceiptDialog({
   const dayOf = (contract: Contract): BalanceOn | null =>
     showsDay ? (balancesOn!.byContract[contract.id] ?? null) : null;
 
+  /**
+   * Why this lot's saldo on the payment's day and its saldo today differ, or
+   * null when they do not (owner, 17 Nov 2026: two figures for one lot read as
+   * one of them being wrong). The mora is what is owed of it today minus what
+   * was owed that day; the rest of the difference is money paid after it.
+   */
+  const saldoWhyOf = (contract: Contract): string | null => {
+    const day = dayOf(contract);
+
+    return day
+      ? saldoDifference(
+          { then: day.balance, now: contract.balance, moraChange: contract.mora.pending - day.moraPending },
+          paidOn,
+          money,
+        )
+      : null;
+  };
+
   const startMoraEdit = (contract: Contract) => {
     const lot = moraLots[contract.id];
     setMoraEdits((current) => ({
@@ -660,6 +679,40 @@ export function NewReceiptDialog({
         return sum === null || after === null ? null : sum + after;
       }, 0)
     : null;
+
+  /*
+   * Why that saldo restante and today's differ, when they do. The mora that is
+   * charged after the payment's date and is still owed once the payment is in:
+   * the server's preview says it, and until it answers it is the difference in
+   * mora the lot's own two saldos already show.
+   */
+  const moraLaterOf = (line: ReceiptDraftLine): number | null => {
+    const contract = payable.find((entry) => entry.id === line.contractId);
+    const day = contract ? dayOf(contract) : null;
+
+    if (!contract || !day) {
+      return null;
+    }
+
+    const after = afterFor(contract);
+
+    return after ? after.moraPendingLater : contract.mora.pending - day.moraPending;
+  };
+  const moraLaterTotal =
+    balanceAfterOn === null
+      ? null
+      : lines.reduce<number | null>((sum, line) => {
+          const later = moraLaterOf(line);
+          return sum === null || later === null ? null : sum + later;
+        }, 0);
+  const saldoRestanteWhy =
+    balanceAfterOn !== null && moraLaterTotal !== null
+      ? saldoDifference(
+          { then: cents(balanceAfterOn), now: cents(balanceAfter), moraChange: moraLaterTotal },
+          paidOn,
+          money,
+        )
+      : null;
 
   /*
    * Is this payment already in the ledger?
@@ -1635,6 +1688,9 @@ export function NewReceiptDialog({
                           </span>
                         )}
                         <span className="cell-sub">Saldo actual {formatMoney(contract.balance, money)}</span>
+                        {saldoWhyOf(contract) !== null && (
+                          <span className="cell-sub cell-why">{saldoWhyOf(contract)}</span>
+                        )}
                       </>
                     ) : (
                       contract.mora.pending > 0 && (
@@ -1743,6 +1799,7 @@ export function NewReceiptDialog({
                   <p className={`receipt-running-today${balanceAfter < 0 ? " is-over" : ""}`}>
                     saldo actual {formatMoney(cents(balanceAfter), money)}
                   </p>
+                  {saldoRestanteWhy !== null && <p className="receipt-running-why">{saldoRestanteWhy}</p>}
                 </>
               ) : (
                 <p className={`receipt-running-total${balanceAfter < 0 ? " is-over" : ""}`}>

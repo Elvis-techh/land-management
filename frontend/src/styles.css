@@ -3503,6 +3503,15 @@ body.is-dragging-file .proof-dropzone.is-slot:not(.is-disabled) {
   color: var(--red-dark);
 }
 
+/* With a past date and a saldo that moved since: how today's differs from that
+   day's, in words (owner, 17 Nov 2026). Only there when the two differ. */
+.receipt-running-why {
+  margin: 2px 0 0;
+  text-align: right;
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+}
+
 .receipt-over-note {
   margin: 4px 0 0;
   text-align: right;
