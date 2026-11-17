@@ -112,6 +112,8 @@ test("the payment's parts: the mora first today, none on a date before it was ch
   await expect(parts.locator(".lot-parts-head")).toHaveText("Este pago");
   await expect(parts.locator(".after-payment")).toContainText("Faltan L. 500 de prima");
   await expect(dialog.locator(".receipt-running-total")).toContainText("L. 120,500");
+  // Dated today there is one saldo, so nothing to explain.
+  await expect(dialog.locator(".cell-why, .receipt-running-why")).toHaveCount(0);
   await shot("pago-partes-hoy.png");
 
   // Dated the day after signing: that mora did not exist yet. The whole amount
@@ -137,6 +139,14 @@ test("the payment's parts: the mora first today, none on a date before it was ch
   await expect(balance).toContainText("Saldo actual L. 135,500");
   await expect(dialog.locator(".receipt-running-total")).toContainText(/Saldo restante al \d+ \S+ L\. 120,000/);
   await expect(dialog.locator(".receipt-running-today")).toHaveText("saldo actual L. 120,500");
+  // Two saldos for one lot, so one line under each says why they differ: the
+  // L 500 was charged after that day (owner, 17 Nov 2026).
+  await expect(balance.locator(".cell-why")).toHaveText(
+    /^L\. 135,000 \+ L\. 500 de mora cargada después del \d+ \S+$/,
+  );
+  await expect(dialog.locator(".receipt-running-why")).toHaveText(
+    /^L\. 120,000 \+ L\. 500 de mora cargada después del \d+ \S+$/,
+  );
   await shot("pago-partes-fecha-pasada.png");
 
   // Saved with that date, the receipt and the lot say what the form said.
