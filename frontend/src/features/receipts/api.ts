@@ -332,6 +332,12 @@ export interface TransactionEdit {
    * Left out, the note is untouched; blank clears it.
    */
   receiptNote?: string | null;
+  /**
+   * «Pagado por» on the receipt this payment belongs to, shared by every line
+   * of it. Left out, it is untouched; blank puts the customer's name back.
+   * Filed in the Historial with the reason, like `updateReceiptPaidBy`.
+   */
+  paidBy?: string | null;
   reason: string;
   allowOverpayment?: boolean;
   /**
