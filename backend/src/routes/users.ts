@@ -4,7 +4,7 @@ import { and, asc, eq, isNull, ne, sql } from "drizzle-orm";
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 
-import { users } from "../db/schema.js";
+import { userCapabilities, users } from "../db/schema.js";
 import { deleteSessionsForUser } from "../auth/session.js";
 import { recordAudit } from "../lib/audit.js";
 import { hashPassword } from "../lib/password.js";
@@ -131,12 +131,23 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
       .orderBy(asc(users.name))
       .all();
 
+    // Associates with a permissions list of their own, so the screen can say
+    // which ones the general Permisos switches don't reach.
+    const withOwn = new Set(
+      app.db
+        .selectDistinct({ userId: userCapabilities.userId })
+        .from(userCapabilities)
+        .all()
+        .map((row) => row.userId),
+    );
+
     return reply.send({
       users: rows.map((row) => ({
         ...row,
         // So the screen can grey out the actions that would lock this person
         // out of their own session. The server refuses them anyway.
         isSelf: row.id === request.user!.id,
+        ownPermissions: row.role === "staff" && withOwn.has(row.id),
       })),
     });
   });
@@ -276,13 +287,38 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
           .returning()
           .get();
 
+        /*
+         * A new role starts from that role's rules. An associate's own
+         * permissions are cleared when they become a supervisor — who can do
+         * everything anyway — so that a later step back to associate follows
+         * the general Permisos instead of reviving a list set for somebody
+         * else's job. Filed on the same row as the role change.
+         */
+        const clearedOwn =
+          roleIsChanging &&
+          tx
+            .delete(userCapabilities)
+            .where(eq(userCapabilities.userId, existing.id))
+            .returning({ userId: userCapabilities.userId })
+            .all().length > 0;
+
         recordAudit(tx, {
           actorId: actor.id,
           entityType: "user",
           entityId: existing.id,
           action: "update",
-          before: { name: existing.name, email: existing.email, role: existing.role },
-          after: { name: next.name, email: next.email, role: next.role },
+          before: {
+            name: existing.name,
+            email: existing.email,
+            role: existing.role,
+            ...(clearedOwn ? { permissionMode: "own" } : {}),
+          },
+          after: {
+            name: next.name,
+            email: next.email,
+            role: next.role,
+            ...(clearedOwn ? { permissionMode: "general" } : {}),
+          },
         });
 
         return next;

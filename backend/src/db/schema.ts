@@ -109,6 +109,34 @@ export const roleCapabilities = sqliteTable(
 );
 
 /**
+ * One associate's own permissions, when the supervisor has given that person a
+ * list of their own instead of the general one (QI-5 step 3).
+ *
+ * No rows for a user means they follow `role_capabilities`, like every other
+ * associate. Rows mean a complete list of their own, written whole the way the
+ * role's is: every editable switch, the ones turned OFF included, so "this
+ * person may do none of it" is stored as a decision rather than read back as
+ * "never configured". Going back to the general permissions deletes the rows.
+ *
+ * Only associates have rows. A supervisor can do everything whatever is here,
+ * and changing someone's role clears their rows (routes/users.ts).
+ */
+export const userCapabilities = sqliteTable(
+  "user_capabilities",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    capability: text("capability").notNull(),
+    enabled: integer("enabled", { mode: "boolean" }).notNull(),
+    /** Who set it, and when — the same question the audit log answers. */
+    grantedBy: text("granted_by").references(() => users.id),
+    grantedAt: timestamp("granted_at"),
+  },
+  (table) => [uniqueIndex("user_capabilities_unique").on(table.userId, table.capability)],
+);
+
+/**
  * Per-user settings that are a matter of TASTE rather than of record.
  *
  * The first one is the order of the bands on the Panel General. Every land

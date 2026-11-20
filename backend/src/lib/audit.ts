@@ -42,6 +42,10 @@ export interface AuditEntry {
     | "contract"
     | "payment"
     | "user"
+    /**
+     * Permissions. `entityId` is "staff" for the general list on the Permisos
+     * screen, or an associate's user id for that person's own list.
+     */
     | "role"
     | "exchange_rate"
     /** A section of the Configuración screen; `entityId` is "mora", "contracts" or "business". */

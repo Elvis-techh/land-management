@@ -23,6 +23,11 @@ export interface UserAccount {
   lastSignInAt: string | null;
   /** Whether this is the signed-in supervisor's own account. */
   isSelf: boolean;
+  /**
+   * An associate with a permissions list of their own, set on the Permisos
+   * screen, rather than the general one. Older servers don't send it.
+   */
+  ownPermissions?: boolean;
 }
 
 interface UsersResponse {

@@ -30,7 +30,7 @@ import {
   sendStoredFile,
 } from "../lib/storedFiles.js";
 import { recordAudit } from "../lib/audit.js";
-import { roleCan } from "../lib/capabilities.js";
+import { userCan } from "../lib/capabilities.js";
 import { moneyRefusal, syncContractLifecycle } from "../lib/contractLifecycle.js";
 import type { ContractTerms, SaleType } from "../lib/contracts.js";
 import { appliedInstallments, assessContract, buildSchedule } from "../lib/contracts.js";
@@ -1024,7 +1024,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
       const moraLines = body.lines.filter((line) => line.mora && byId.has(line.contractId));
 
       if (moraLines.length > 0) {
-        if (!roleCan(app.db, actor.role, "mora:charge")) {
+        if (!userCan(app.db, actor, "mora:charge")) {
           return reply.code(403).send({
             error: "forbidden",
             message: "Tu usuario no tiene permiso para cambiar la mora.",

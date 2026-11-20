@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 
 import { recordAudit } from "../lib/audit.js";
-import { roleCan } from "../lib/capabilities.js";
+import { userCan } from "../lib/capabilities.js";
 import type { AppSettings, SettingsSection } from "../lib/settings.js";
 import {
   SECTION_CAPABILITY,
@@ -63,7 +63,7 @@ export const settingsRoutes: FastifyPluginAsync<SettingsRouteOptions> = async (a
     // Asked per section, of the database, like every other guard: `mora:edit`
     // can never be granted to the associate role, `settings:edit` can.
     const refused = changed.filter(
-      (section) => !roleCan(app.db, actor.role, SECTION_CAPABILITY[section]),
+      (section) => !userCan(app.db, actor, SECTION_CAPABILITY[section]),
     );
 
     if (refused.length > 0) {

@@ -3,7 +3,7 @@ import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 
 import { users } from "../db/schema.js";
-import { resolveCapabilities } from "../lib/capabilities.js";
+import { resolveUserCapabilities } from "../lib/capabilities.js";
 import { verifyPassword } from "../lib/password.js";
 import type { Role } from "../lib/permissions.js";
 import { SESSION_COOKIE, createSession, destroySession } from "../auth/session.js";
@@ -118,7 +118,7 @@ export const authRoutes: FastifyPluginAsync<AuthRoutesOptions> = async (app, opt
           role: user.role,
           // Sent so the interface can hide what this user cannot do. It is a
           // convenience only — every write re-checks server-side.
-          capabilities: [...resolveCapabilities(app.db, user.role as Role)],
+          capabilities: [...resolveUserCapabilities(app.db, { id: user.id, role: user.role as Role })],
         },
         businessTimeZone: options.timeZone,
       });
@@ -145,7 +145,7 @@ export const authRoutes: FastifyPluginAsync<AuthRoutesOptions> = async (app, opt
     return reply.send({
       user: {
         ...request.user,
-        capabilities: [...resolveCapabilities(app.db, request.user.role)],
+        capabilities: [...resolveUserCapabilities(app.db, request.user)],
       },
       businessTimeZone: options.timeZone,
     });

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { useRememberedState } from "../../lib/viewMemory";
 
 import { businessTimeZone } from "../../lib/businessTime";
@@ -14,6 +14,7 @@ import { NO_AUDIT_FILTERS, fetchAudit } from "./api";
 import type { AuditOrder } from "./AuditToolbar";
 import { AuditToolbar, countActiveAuditFilters } from "./AuditToolbar";
 import { formatAuditList } from "./auditLines";
+import { capabilityChanges } from "./capabilityChanges";
 
 const PAGE_SIZE = 25;
 
@@ -61,6 +62,8 @@ const fieldLabels: Record<string, string> = {
   role: "Rol",
   deactivatedAt: "Cuenta desactivada",
   passwordResetAt: "Contraseña cambiada",
+  // Permisos: the general list, or one associate's own (QI-5 step 3).
+  permissionMode: "Permisos",
   // A contract's terms — edits, reprices, and the two sides of an adenda.
   status: "Situación",
   kind: "Reserva o contrato",
@@ -129,6 +132,7 @@ const settingChoiceLabels: Record<string, Record<string, string>> = {
   frequency: { once: "Una vez por cuota atrasada", monthly: "Cada mes que siga atrasada" },
   paymentOrder: { mora: "La mora", cuota: "La cuota" },
   moraRule: { general: "La general", none: "Sin mora", own: "Regla propia" },
+  permissionMode: { general: "Los generales", own: "Propios" },
 };
 
 /** Money fields are stored in centavos and must not be printed raw. */
@@ -399,20 +403,46 @@ export function AuditPage({ money }: AuditPageProps) {
 
                   {fields.length > 0 && (
                     <div className="audit-diff">
-                      {fields.map((field) => (
-                        <div key={field} className="audit-diff-row">
-                          <span className="audit-field">{fieldLabels[field] ?? field}</span>
-                          <span className="audit-before">
-                            {formatValue(field, event.before?.[field], money)}
-                          </span>
-                          <span className="audit-arrow" aria-hidden="true">
-                            →
-                          </span>
-                          <span className="audit-after">
-                            {formatValue(field, event.after?.[field], money)}
-                          </span>
-                        </div>
-                      ))}
+                      {fields.map((field) => {
+                        const changes =
+                          field === "capabilities"
+                            ? capabilityChanges(event.before?.[field], event.after?.[field])
+                            : null;
+
+                        if (changes) {
+                          return (
+                            <Fragment key={field}>
+                              {changes.added.length > 0 && (
+                                <div className="audit-diff-row is-list">
+                                  <span className="audit-field">Ahora puede</span>
+                                  <span className="audit-list">{changes.added.join(", ")}</span>
+                                </div>
+                              )}
+                              {changes.removed.length > 0 && (
+                                <div className="audit-diff-row is-list">
+                                  <span className="audit-field">Ya no puede</span>
+                                  <span className="audit-list">{changes.removed.join(", ")}</span>
+                                </div>
+                              )}
+                            </Fragment>
+                          );
+                        }
+
+                        return (
+                          <div key={field} className="audit-diff-row">
+                            <span className="audit-field">{fieldLabels[field] ?? field}</span>
+                            <span className="audit-before">
+                              {formatValue(field, event.before?.[field], money)}
+                            </span>
+                            <span className="audit-arrow" aria-hidden="true">
+                              →
+                            </span>
+                            <span className="audit-after">
+                              {formatValue(field, event.after?.[field], money)}
+                            </span>
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
 

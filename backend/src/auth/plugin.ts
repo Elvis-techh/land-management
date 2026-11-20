@@ -2,7 +2,7 @@ import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from "fastify";
 import fp from "fastify-plugin";
 
 import type { Db } from "../db/client.js";
-import { roleCan } from "../lib/capabilities.js";
+import { userCan } from "../lib/capabilities.js";
 import type { Capability } from "../lib/permissions.js";
 import type { SessionUser } from "./session.js";
 import { SESSION_COOKIE, getSessionUser } from "./session.js";
@@ -53,9 +53,9 @@ const authPlugin: FastifyPluginAsync<AuthPluginOptions> = async (app, options) =
       }
 
       // Asked of the database, not of a hard-coded table: the supervisor can
-      // change what the associate role may do, and a revoked capability has to
-      // stop working on the associate's very next request.
-      if (!roleCan(options.db, request.user.role, capability)) {
+      // change what the associate role, or one associate, may do, and a revoked
+      // capability has to stop working on that person's very next request.
+      if (!userCan(options.db, request.user, capability)) {
         request.log.warn(
           { userId: request.user.id, role: request.user.role, capability },
           "Capability denied",
