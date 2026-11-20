@@ -31,36 +31,34 @@ app.
 
 ```text
 src/
-├── main.tsx                  Entry point. Mounts React into index.html.
-├── App.tsx                   App shell: sidebar, topbar, and which screen shows.
-├── types.ts                  Shared domain types (Lot, LotStatus, TabId).
-├── styles.css                The design. Ported unchanged from the prototype.
-├── lib/
-│   └── money.ts              Cents type + formatting. All money goes through here.
-├── components/               Reusable pieces (Sidebar, Topbar, Icons).
-└── features/
-    └── lots/                 One folder per business feature.
-        ├── LotsPage.tsx      The screen.
-        └── lotsData.ts       Temporary seed data; replaced by the API next.
+├── main.tsx           Entry point. Mounts React into index.html.
+├── App.tsx            App shell: sidebar, top bar, and which screen shows.
+├── types.ts           Shared domain types.
+├── styles.css         The design.
+├── lib/               Shared helpers. money.ts is the one way money is
+│                      typed, shown and converted to centavos.
+├── components/        Reusable pieces: dialogs, search box, menus, banners.
+└── features/          One folder per screen or business feature:
+                       dashboard (Panel general), projects, lots, contracts,
+                       customers, receipts, constancias, audit (Historial),
+                       permissions, users, settings (Configuración), rate
+                       (the lempira/dollar rate) and auth (log in).
 ```
 
 New features get their own folder under `features/`. Files are grouped by what
-they do for the business, not by file type.
+they do for the business, not by file type. Tests for the logic that has no
+screen (`lib/` and the presentation helpers) live in `test/`; the screens
+themselves are tested in a real browser from `e2e/` at the repository root.
 
-## Status
+## Where the numbers come from
 
-- **Lotes** — ported to React. Filter chips work. Data is still hard-coded seed
-  data in `features/lots/lotsData.ts`.
-- **Panel general, Contratos, Clientes, Recibos** — placeholders. Built one at a
-  time, each all the way down to the database.
+Every figure on screen comes from the backend. The frontend never decides a
+balance, a lot's status, a receipt number or whether a customer is late; it
+shows what the server worked out. See `docs/architecture.md`.
 
 ## The prototype
 
-The original single-file mockup is frozen at `docs/prototype/index.html` and can
-be opened directly in a browser. It is the **visual** reference for screens not
-yet built.
-
-It is not a reference for data: it let users type a lot's status, type a paid
-amount, and generated receipt numbers in the browser. Lindero derives status
-from contracts, derives balances from payments, and assigns receipt numbers on
-the server. See `docs/architecture.md`.
+The original single-file mockup is kept at `docs/prototype/index.html` for
+history. Every screen it showed is now built for real, so it is no longer the
+reference for anything. It also did things Lindero must not: it let users type
+a lot's status and a paid amount, and made receipt numbers in the browser.
