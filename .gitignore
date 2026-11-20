@@ -20,5 +20,6 @@ backend/backups/
 
 # Browser tests (Playwright): its throwaway database and its reports
 e2e/.data/
+e2e/.build/
 test-results/
 playwright-report/

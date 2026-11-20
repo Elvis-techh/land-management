@@ -26,9 +26,6 @@ that the weight software starts on its own after a reboot
 
 **The security items left from the October 2026 review.**
 
-- The browser security policy (CSP) only reports problems today; it does not
-  block anything. Switch it to enforce (`deploy/nginx-headers.conf`) after
-  checking the reports are clean.
 - An upload is accepted when the browser says it is an image or a PDF
   (`lib/storedFiles.ts`). Also check the file's first bytes, so a file that
   claims to be a photo really is one.

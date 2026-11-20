@@ -27,7 +27,9 @@ test("a newer version on the server is offered as a reload", async ({ page }) =>
     (url) => url.pathname === "/",
     async (route) => {
       const response = await route.fetch();
-      const html = (await response.text()).replace("/src/main.tsx", "/src/main.tsx?build=next");
+      // A build names its script by content, `/assets/index-<hash>.js`; a new
+      // build names another one. Same file, other name, is what a deploy looks like.
+      const html = (await response.text()).replace(/\/assets\/index-[^"]+\.js/, "$&?build=next");
       await route.fulfill({ response, body: html });
     },
   );

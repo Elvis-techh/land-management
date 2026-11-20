@@ -9,12 +9,20 @@ import { defineConfig, devices } from "@playwright/test";
  *   npm run test:e2e          run them (headless)
  *   npm run test:e2e:ui       watch them run, step by step
  *
- * Playwright starts its own backend (fresh demo database, port 3100) and Vite
- * (port 5174), so a dev server on 3000/5173 can keep running meanwhile.
+ * Playwright starts its own backend (fresh demo database, port 3100) and a
+ * server on 5174 with a BUILD of the frontend, sent with the real site's
+ * security headers (e2e/serve-built.mjs), so a dev server on 3000/5173 can keep
+ * running meanwhile. The build, not Vite's dev server: the policy that matters
+ * is the one the people on the real site get.
  */
 const apiPort = Number(process.env.E2E_API_PORT ?? 3100);
 const webPort = Number(process.env.E2E_WEB_PORT ?? 5174);
 const testSitePort = Number(process.env.E2E_TEST_SITE_PORT ?? 5175);
+
+/** Build the frontend into its own folder, then serve it on `port` like nginx does. */
+const builtFrontend = (folder: string, port: number) =>
+  `npm exec --workspace @lindero/frontend -- vite build --outDir ../e2e/.build/${folder} --emptyOutDir` +
+  ` && node e2e/serve-built.mjs e2e/.build/${folder} ${port} ${apiPort}`;
 
 export default defineConfig({
   testDir: "./e2e",
@@ -44,18 +52,16 @@ export default defineConfig({
       timeout: 60_000,
     },
     {
-      command: `npm run dev --workspace @lindero/frontend -- --port ${webPort}`,
+      command: builtFrontend("web", webPort),
       url: `http://localhost:${webPort}`,
-      env: { LINDERO_API_URL: `http://127.0.0.1:${apiPort}` },
       reuseExistingServer: false,
       timeout: 60_000,
     },
     // The same frontend as the test site is built: e2e/test-site.spec.ts.
     {
-      command: `npm run dev --workspace @lindero/frontend -- --port ${testSitePort}`,
+      command: builtFrontend("test-site", testSitePort),
       url: `http://localhost:${testSitePort}`,
       env: {
-        LINDERO_API_URL: `http://127.0.0.1:${apiPort}`,
         VITE_SITE: "test",
         VITE_TEST_BRANCH: "ccr-9a01639b-hz7sp2",
         VITE_TEST_COMMIT: "abc1234",

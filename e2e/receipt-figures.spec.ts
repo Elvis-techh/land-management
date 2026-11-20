@@ -112,14 +112,15 @@ test("the receipt's «L.» and digits line up in every column", async ({ page },
   await ver.click();
   const shown = page.getByRole("dialog").locator('img[src^="blob:"]');
   await expect(shown).toBeVisible();
-  // Saved at its own size, the picture the customer receives.
-  const dataUrl = await shown.evaluate(async (img: HTMLImageElement) => {
-    const blob = await (await fetch(img.src)).blob();
-    return new Promise<string>((resolve) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.readAsDataURL(blob);
-    });
+  // Saved at its own size, the picture the customer receives. Drawn onto a
+  // canvas rather than fetch()ed: the page's security policy lets it show a
+  // blob: picture but not connect to one, and the app never needs to.
+  const dataUrl = await shown.evaluate((img: HTMLImageElement) => {
+    const canvas = document.createElement("canvas");
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    canvas.getContext("2d")!.drawImage(img, 0, 0);
+    return canvas.toDataURL("image/png");
   });
   writeFileSync(testInfo.outputPath("recibo-cifras-imagen.png"), Buffer.from(dataUrl.split(",")[1]!, "base64"));
 });

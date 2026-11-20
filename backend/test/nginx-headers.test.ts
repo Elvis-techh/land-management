@@ -6,6 +6,7 @@ import { describe, it } from "node:test";
 const repo = join(import.meta.dirname, "..", "..");
 const example = readFileSync(join(repo, "docs", "nginx.conf.example"), "utf8");
 const snippet = readFileSync(join(repo, "deploy", "nginx-headers.conf"), "utf8");
+const ops = readFileSync(join(repo, "deploy", "claude-ops.sh"), "utf8");
 
 const withoutComments = (text: string) => text.replace(/^\s*#.*$/gm, "");
 
@@ -47,11 +48,11 @@ describe("nginx security headers", () => {
     assert.doesNotMatch(outsideLocations, /add_header|lindero-headers/);
   });
 
+  const sentHeaders = () =>
+    [...snippet.matchAll(/^add_header ([\w-]+) "([^"]*)" always;$/gm)].map(([, name, value]) => [name!, value!] as const);
+
   it("send HSTS for this host only, and the rest of the set", () => {
-    const sent = [...snippet.matchAll(/^add_header ([\w-]+) "([^"]*)" always;$/gm)].map(([, name, value]) => [
-      name,
-      value,
-    ]);
+    const sent = sentHeaders();
     const names = sent.map(([name]) => name);
 
     assert.deepEqual(names, [
@@ -60,11 +61,40 @@ describe("nginx security headers", () => {
       "X-Content-Type-Options",
       "Referrer-Policy",
       "Permissions-Policy",
-      "Content-Security-Policy-Report-Only",
+      "Content-Security-Policy",
     ]);
     // Other names under the domain are not Lindero's to put on HTTPS-only.
     assert.doesNotMatch(Object.fromEntries(sent)["Strict-Transport-Security"]!, /includeSubDomains/i);
     // The viewer previews a scan from a blob: URL before it is uploaded.
-    assert.match(Object.fromEntries(sent)["Content-Security-Policy-Report-Only"]!, /frame-src[^;]*blob:/);
+    assert.match(Object.fromEntries(sent)["Content-Security-Policy"]!, /frame-src[^;]*blob:/);
+  });
+
+  it("enforce the page policy instead of only reporting it (code review P2-2)", () => {
+    // Report-only logs to a console nobody on a phone reads, and blocks nothing.
+    assert.doesNotMatch(snippet, /^add_header Content-Security-Policy-Report-Only/m);
+  });
+
+  it("keep scripts to this site and Google's Drive scripts, with no inline or eval", () => {
+    const policy = Object.fromEntries(sentHeaders())["Content-Security-Policy"]!;
+    const directive = (name: string) => policy.split(";").map((part) => part.trim()).find((part) => part.startsWith(`${name} `));
+
+    assert.equal(directive("script-src"), "script-src 'self' https://apis.google.com https://accounts.google.com");
+    assert.match(directive("default-src")!, /^default-src 'self'$/);
+    assert.match(directive("frame-ancestors")!, /^frame-ancestors 'none'$/);
+    assert.match(directive("object-src")!, /^object-src 'none'$/);
+    assert.doesNotMatch(policy, /unsafe-eval/);
+  });
+
+  it("are all counted by the droplet script that installs them", () => {
+    // `install-headers` (deploy/claude-ops.sh) counts the page's headers after
+    // reloading nginx and puts the old files back if the count is not six. A
+    // header renamed here and not there makes every install roll itself back.
+    const counted = /grep -ciE '\^\(([^)]*)\):'/.exec(ops)?.[1]?.split("|");
+    assert.ok(counted, "no header count in claude-ops.sh");
+
+    assert.deepEqual(
+      [...counted].sort(),
+      sentHeaders().map(([name]) => name.toLowerCase()).sort(),
+    );
   });
 });
