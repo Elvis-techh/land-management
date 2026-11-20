@@ -1083,6 +1083,11 @@ export default function App() {
                   .me()
                   .then((refreshed) => setSession({ status: "signed-in", user: refreshed }))
                   .catch(() => undefined);
+                // Usuarios says which associates have permissions of their
+                // own, and its list is otherwise only read when it changes.
+                if (canManageUsers) {
+                  void reloadUsers();
+                }
               }}
             />
           )}

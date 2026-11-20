@@ -5174,6 +5174,12 @@ body.modal-open {
   margin-top: 8px;
 }
 
+/* Under the role stamp, on an associate with a list of their own. */
+.user-own-permissions {
+  display: block;
+  margin-top: 4px;
+}
+
 .permission-group-head {
   margin-bottom: 12px;
 }
@@ -5254,6 +5260,55 @@ body.modal-open {
 
 .permission-row .stamp {
   flex-shrink: 0;
+}
+
+/* «Todos los asociados» and one chip per associate (QI-5 step 3). */
+.permission-people {
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.permission-people-own {
+  opacity: .75;
+}
+
+/* «Los permisos generales» or «Permisos propios», in the intro card. */
+.permission-mode {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.permissions-intro .permission-mode-summary {
+  margin-top: 10px;
+}
+
+/* A switch that makes this person different from every other associate. */
+.permission-row.is-different {
+  background: var(--clay-bg);
+  box-shadow: inset 3px 0 0 var(--clay);
+}
+
+.permission-differs {
+  color: var(--clay-dark);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+/* Following the general list: shown, not movable. */
+.permission-row.is-readonly {
+  cursor: default;
+}
+
+.permission-row.is-readonly:hover {
+  background: none;
+}
+
+.permission-switch:disabled {
+  cursor: default;
+  opacity: .45;
 }
 
 .permission-actions {
@@ -7336,6 +7391,17 @@ input:disabled {
   color: var(--text-muted);
 }
 
+/* «Ahora puede» / «Ya no puede»: one list, no before and after. */
+.audit-diff-row.is-list {
+  grid-template-columns: minmax(90px, 140px) 1fr;
+}
+
+.audit-list {
+  color: var(--ink);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
 .audit-after {
   font-family: var(--font-mono);
   color: var(--ink);
@@ -7371,7 +7437,8 @@ input:disabled {
 }
 
 @media (max-width: 760px) {
-  .audit-diff-row {
+  .audit-diff-row,
+  .audit-diff-row.is-list {
     grid-template-columns: 1fr;
     gap: 2px;
     padding: 6px 0;

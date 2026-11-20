@@ -6,7 +6,7 @@ import { z } from "zod";
 
 import { contracts, customers, lots, payments, projects } from "../db/schema.js";
 import { recordAudit } from "../lib/audit.js";
-import { roleCan } from "../lib/capabilities.js";
+import { userCan } from "../lib/capabilities.js";
 import { holdsLot } from "../lib/holding.js";
 import { loadMoraAccounts, moraOwedOf } from "../lib/moraAccounts.js";
 import { businessToday } from "../lib/time.js";
@@ -320,7 +320,7 @@ export const lotRoutes: FastifyPluginAsync<LotRoutesOptions> = async (app, optio
       const isRepricing = parsed.data.basePriceCents !== existing.basePriceCents;
       const needsJustification = isRepricing && activeContract !== undefined;
 
-      if (needsJustification && !roleCan(app.db, actor.role, "price:change")) {
+      if (needsJustification && !userCan(app.db, actor, "price:change")) {
         return reply.code(403).send({
           error: "forbidden",
           message: "Tu usuario no puede cambiar el precio de un lote con contrato.",

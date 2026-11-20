@@ -13,7 +13,7 @@ import { dataVersion } from "../lib/changes.js";
 import { appliedInstallments, assessContract, buildSchedule } from "../lib/contracts.js";
 import type { ContractTerms, SaleType } from "../lib/contracts.js";
 import { syncContractLifecycle } from "../lib/contractLifecycle.js";
-import { roleCan } from "../lib/capabilities.js";
+import { userCan } from "../lib/capabilities.js";
 import { openContract } from "../lib/holding.js";
 import { replayContract } from "../lib/ledger.js";
 import type { MoraAccountsOptions } from "../lib/moraAccounts.js";
@@ -892,7 +892,7 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
         // correction that sends the note back unchanged — which a form that
         // always includes the field will — is not refused for it.
         if (receipt && nextNote !== (receipt.note ?? null)) {
-          if (!roleCan(app.db, request.user!.role, "payment:record")) {
+          if (!userCan(app.db, request.user!, "payment:record")) {
             return reply.code(403).send({
               error: "forbidden",
               message: "Tu usuario puede corregir transacciones, pero no cambiar la nota del recibo.",

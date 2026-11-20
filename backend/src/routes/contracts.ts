@@ -38,7 +38,7 @@ import {
   firstDueDate,
   isReservationExpired,
 } from "../lib/contracts.js";
-import { roleCan } from "../lib/capabilities.js";
+import { userCan } from "../lib/capabilities.js";
 import { voidConstancias } from "../lib/constancias.js";
 import { syncContractLifecycle } from "../lib/contractLifecycle.js";
 import { holdsLot, openContract } from "../lib/holding.js";
@@ -1037,7 +1037,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
       // to hand over the first without the second.
       const isRepricing = parsed.data.salePriceCents !== existing.salePriceCents;
 
-      if (isRepricing && !roleCan(app.db, actor.role, "contract:reprice")) {
+      if (isRepricing && !userCan(app.db, actor, "contract:reprice")) {
         return reply.code(403).send({
           error: "forbidden",
           message: "Tu usuario puede editar contratos, pero no cambiar el precio de venta.",
@@ -1630,7 +1630,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
 
       // Reversing money is a bigger power than closing a contract, so the refund
       // option carries its own capability.
-      if (settlement === "refunded" && !roleCan(app.db, actor.role, "payment:reverse")) {
+      if (settlement === "refunded" && !userCan(app.db, actor, "payment:reverse")) {
         return reply.code(403).send({
           error: "forbidden",
           message:

@@ -13,7 +13,7 @@ import {
   receipts,
   users,
 } from "../db/schema.js";
-import { roleCan } from "../lib/capabilities.js";
+import { userCan } from "../lib/capabilities.js";
 import { DASHBOARD_LAYOUT, clearPreference, readPreference, writePreference } from "../lib/preferences.js";
 import type { MoraAccount } from "../lib/mora.js";
 import { moraEverOn, moraPaidThrough, moraPendingThrough } from "../lib/mora.js";
@@ -853,7 +853,7 @@ export const dashboardRoutes: FastifyPluginAsync<DashboardRoutesOptions> = async
      * Inventing a second switch for the same question would mean two ways to
      * grant one thing, and a supervisor who revoked one and not the other.
      */
-    const control = roleCan(app.db, request.user!.role, "audit:view")
+    const control = userCan(app.db, request.user!, "audit:view")
       ? {
           byUser: [...byUser]
             .map(([userId, totals]) => ({

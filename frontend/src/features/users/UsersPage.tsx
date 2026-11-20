@@ -124,7 +124,8 @@ export function UsersPage({
         </p>
         <p className="field-hint">
           Lo que un asociado <strong>puede hacer</strong> no se decide aquí, sino en la
-          pantalla de Permisos, y aplica a todas las cuentas de asociado por igual.
+          pantalla de Permisos: los permisos generales valen para todos los asociados, y ahí
+          mismo puedes darle a una persona permisos propios.
         </p>
       </div>
 
@@ -194,6 +195,11 @@ export function UsersPage({
                       >
                         {isDeactivated ? "Desactivada" : ROLE_LABELS[account.role]}
                       </span>
+                      {/* Said here because these are the accounts the general
+                          Permisos switches no longer reach. */}
+                      {!isDeactivated && account.ownPermissions && (
+                        <span className="field-hint user-own-permissions">Permisos propios</span>
+                      )}
                     </td>
                     <td>
                       {account.lastSignInAt === null ? (
