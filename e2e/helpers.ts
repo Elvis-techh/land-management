@@ -36,16 +36,29 @@ export async function goTo(page: Page, tab: string) {
 }
 
 /**
- * `test` with one extra rule for every browser test: the page must not crash
- * (an uncaught error in the browser) and the server must not answer any /api
- * request with a 5xx. Either one fails the test even when the screen happened
- * to look right.
+ * `test` with extra rules for every browser test: the page must not crash (an
+ * uncaught error in the browser), the server must not answer any /api request
+ * with a 5xx, and the browser must not refuse anything on the page's security
+ * policy (CSP). Any of them fails the test even when the screen happened to
+ * look right: a refused script or font often leaves the screen looking fine
+ * until somebody tries the one button that needed it.
+ *
+ * The pages are served with the same headers as the real site
+ * (e2e/serve-built.mjs), so a refusal here is a refusal there.
  */
 export const test = base.extend<{ watchForBreakage: void }>({
   watchForBreakage: [
     async ({ page }, use) => {
       const problems: string[] = [];
       page.on("pageerror", (error) => problems.push(`Browser error: ${error.message}`));
+      // Chrome words every refusal "Refused to … because it violates … Content
+      // Security Policy …", with "[Report Only]" in front when the policy only
+      // reports. Frames' messages arrive here too.
+      page.on("console", (message) => {
+        if (/Content Security Policy/i.test(message.text())) {
+          problems.push(`Security policy: ${message.text()}`);
+        }
+      });
       page.on("response", (response) => {
         if (response.url().includes("/api/") && response.status() >= 500) {
           problems.push(`Server error ${response.status()} on ${response.request().method()} ${response.url()}`);

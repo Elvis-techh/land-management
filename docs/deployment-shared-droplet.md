@@ -513,8 +513,11 @@ matters most is HSTS: without it, someone who types the address on a hostile
 wifi can be shown a fake login page before the redirect to HTTPS happens.
 `deploy/nginx-headers.conf` adds HSTS (one year, this host only), refuses to be
 framed by other sites, stops content-type guessing, trims the referrer, turns
-off camera/microphone/location, and adds a Content-Security-Policy in
-**report-only** mode (it logs, it does not block).
+off camera/microphone/location, and adds a Content-Security-Policy that the
+browser **enforces**: a page may load scripts, fonts, images and frames only
+from the addresses the policy lists, and everything else is refused. (From
+11 Oct it only reported: it logged what it would have refused, and blocked
+nothing.)
 
 It goes inside each of the five static locations (`/`, `= /index.html`,
 `/assets/`, `= /sw.js`, `= /manifest.webmanifest`), never at server level and
@@ -561,10 +564,39 @@ curl -sI https://lindero.basculacentral.com/api/health | grep -ci "x-frame"     
 Then open a receipt's comprobante and a contract's scan in the app: the viewer
 frames files from `/api/`, so a blank viewer would mean a header landed there.
 
-**After a week**, open the browser's DevTools console on a few screens
-(Recibos, a contract with a scan, the Drive picker). No `[Report Only]` lines
-means the policy fits; a follow-up change renames the header to
-`Content-Security-Policy` so it starts blocking.
+**The Content-Security-Policy is enforced, so the order of a change to it
+matters.** `install-headers` checks that the page answers with six headers, and
+it counts the policy by its name. The droplet runs a pinned copy of that script
+(see [claude-ops-key.md](claude-ops-key.md)), so when the policy's name changes
+the copy has to change first. Otherwise the check finds five, takes it for a
+failed install and puts the old headers back (safe, but confusing):
+
+1. Deploy the pull request, as always.
+2. In the droplet console, once: refresh the pinned copy of the script, the two
+   lines under "When `claude-ops.sh` changes" in
+   [claude-ops-key.md](claude-ops-key.md).
+3. `ssh lindero-ops install-headers`, or the commands above by hand.
+4. Check: `curl -sI https://lindero.basculacentral.com/ | grep -i content-security`
+   must name `content-security-policy:` and not `content-security-policy-report-only:`.
+5. Open the site and use it: a receipt's image («Ver»), a receipt's comprobante,
+   a contract's scan, and the Google Drive button. The browser tests run the
+   whole app under this exact policy, but they cannot sign in to Google or see
+   Chrome's PDF viewer. If something is blank or a button does nothing, open
+   DevTools → Console: a refusal reads `Refused to … because it violates the
+   following Content Security Policy directive`, and names what was refused.
+
+**To go back to report-only at once**, without a deploy (the line is also in
+the snippet's own comments). It keeps every other header and only stops the
+blocking:
+
+```bash
+sudo sed -i 's/^add_header Content-Security-Policy /add_header Content-Security-Policy-Report-Only /' /etc/nginx/snippets/lindero-headers.conf && sudo nginx -t && sudo systemctl reload nginx
+```
+
+Do not run `install-headers` again until the cause is fixed: it puts the
+snippet from the repository back. Then fix the policy in
+`deploy/nginx-headers.conf` (a new address goes in its list) and go through
+the steps above again.
 
 To take HSTS back, removing the line is not enough: browsers keep the promise
 they already have. Send `max-age=0` for a while instead, then remove it.

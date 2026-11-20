@@ -271,7 +271,7 @@ install_headers() {
   local lindero_after bascula_after page_headers api_frame
   lindero_after=$(code "$LINDERO_HOST" /api/health)
   bascula_after=$(code "$BASCULA_HOST" /api/health)
-  page_headers=$(headers "$LINDERO_HOST" / | grep -ciE '^(strict-transport-security|x-frame-options|x-content-type-options|referrer-policy|permissions-policy|content-security-policy-report-only):' || true)
+  page_headers=$(headers "$LINDERO_HOST" / | grep -ciE '^(strict-transport-security|x-frame-options|x-content-type-options|referrer-policy|permissions-policy|content-security-policy):' || true)
   api_frame=$(headers "$LINDERO_HOST" /api/health | grep -ci '^x-frame-options:' || true)
   echo "Lindero $lindero_after, bascula $bascula_after, page headers $page_headers (expect 6), X-Frame-Options on /api/ $api_frame (expect 0)"
 

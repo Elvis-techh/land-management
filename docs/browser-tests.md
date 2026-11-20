@@ -14,11 +14,21 @@ a person would, on a desktop-sized screen and again on a phone-sized one.
 | `e2e/receipt-image.spec.ts` | The receipt image that «Ver» shows and WhatsApp sends has the logo, even when the logo file is slow to arrive. |
 | `e2e/settings.spec.ts` | Configuración: the supervisor changes a business detail, it stays after a reload and shows in Historial; the supervisor sets the mora with the switch, the tiles and the − / + buttons, and the sentence under the switch follows; the associate can read the mora rules but not change them. |
 | `e2e/sale.spec.ts` | A whole sale: new customer → new lot → credit contract → the lot shows *Financiado* with the customer → the prima is paid and appears in Recibos. |
-| `e2e/test-site.spec.ts` | The test site says «SITIO DE PRUEBA» before and after logging in, is hidden from search engines, lets taps through the banner, and opens WhatsApp with no recipient; the real site shows none of it. Runs against a second copy of the frontend started with `VITE_SITE=test`. |
+| `e2e/test-site.spec.ts` | The test site says «SITIO DE PRUEBA» before and after logging in, is hidden from search engines, lets taps through the banner, and opens WhatsApp with no recipient; the real site shows none of it. Runs against a second copy of the frontend built with `VITE_SITE=test`. |
 
-Every test also fails if the page crashes or the server answers any request
-with an error (5xx), even when the screen happened to look right
-(`watchForBreakage` in `e2e/helpers.ts`).
+Every test also fails if the page crashes, if the server answers any request
+with an error (5xx), or if the browser refuses something on the page's security
+policy (CSP), even when the screen happened to look right (`watchForBreakage`
+in `e2e/helpers.ts`).
+
+The pages are not Vite's dev server but a **build** of the frontend, sent with
+the very headers the real site sends (`e2e/serve-built.mjs` reads them from
+`deploy/nginx-headers.conf`), and `/api/` goes through without them, as in
+nginx. So a script, font or frame that the real policy would refuse fails a
+test here, before it reaches anybody's phone. What they cannot see: Google
+Drive (it needs a real Google sign-in) and Chrome's own PDF viewer (the test
+browser has none). After touching those, or the policy's address list, try
+them once on the site.
 
 ## Running them
 
@@ -32,8 +42,10 @@ npm run test:e2e:ui               # watch them run, step by step
 ```
 
 Playwright starts its own backend on port 3100, with a fresh copy of the demo
-data each run, and Vite on port 5174. A dev server on 3000/5173 can keep running
-meanwhile, and its database is never touched.
+data each run, and builds the frontend into `e2e/.build/` and serves it on port
+5174 (a second build, made the way the test site is, on 5175). A dev server on
+3000/5173 can keep running meanwhile, and its database is never touched. The
+build takes a few seconds; the first test waits for it.
 
 When one fails, the run's page on GitHub has a **browser-test-report** to
 download, with a screenshot and a recording of every step (`npx playwright
