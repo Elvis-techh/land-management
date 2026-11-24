@@ -13,8 +13,8 @@ on:
   workflow_dispatch:
     inputs:
       before:
-        description: "Version to compare against (a branch name or commit)"
-        default: known-good-2026-10-08
+        description: "Version to compare against (a release tag, branch name or commit)"
+        default: v2026.11.17
       after:
         description: "Version with the change (a branch name or commit)"
         default: main
