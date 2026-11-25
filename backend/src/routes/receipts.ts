@@ -55,23 +55,35 @@ const PAYMENT_TYPES = ["down_payment", "installment", "full_payment", "adjustmen
 /* -------------------------------------------------------------------------- */
 
 /**
- * Every payment belonging to a set of customers, in one query.
+ * Every payment on every contract a batch of receipts touches, in one query.
  *
- * The whole history is loaded, not just the receipted part, because a balance
- * is a replay from the beginning — see src/lib/ledger.ts. Loading it per
- * receipt instead would be the N+1 that turns a list of fifty receipts into
- * fifty round trips, so the callers below fetch once and replay in memory.
+ * The whole history of those contracts is loaded, not just the receipted part,
+ * because a balance is a replay from the beginning — see src/lib/ledger.ts.
+ * Loading it per receipt instead would be the N+1 that turns a list of fifty
+ * receipts into fifty round trips, so the callers below fetch once and replay
+ * in memory.
+ *
+ * Found through the receipts' own payments, never through the customer the
+ * receipt is made out to. The two used to be the same question, until a
+ * contract could be handed to somebody else («Traspasar»): a receipt issued
+ * before that keeps its customer, while the contract it paid has a new holder,
+ * and asking by customer then found none of its payments — the receipt read
+ * L 0.00 with no lines.
  */
-function creditsForCustomers(db: Db, customerIds: readonly string[]) {
-  if (customerIds.length === 0) {
+function creditsForReceipts(db: Db, receiptIds: readonly string[]) {
+  if (receiptIds.length === 0) {
     return [];
   }
+
+  const touched = db
+    .selectDistinct({ contractId: payments.contractId })
+    .from(payments)
+    .where(inArray(payments.receiptId, receiptIds));
 
   return db
     .select({
       id: payments.id,
       contractId: payments.contractId,
-      customerId: contracts.customerId,
       amountCents: payments.amountCents,
       paidOn: payments.paidOn,
       createdAt: payments.createdAt,
@@ -81,12 +93,11 @@ function creditsForCustomers(db: Db, customerIds: readonly string[]) {
       method: payments.method,
     })
     .from(payments)
-    .innerJoin(contracts, eq(contracts.id, payments.contractId))
-    .where(inArray(contracts.customerId, customerIds))
+    .where(inArray(payments.contractId, touched))
     .all();
 }
 
-type CustomerCredit = ReturnType<typeof creditsForCustomers>[number];
+type ContractCredit = ReturnType<typeof creditsForReceipts>[number];
 
 /** The sale price of every contract named, so the ledger has its opening charge. */
 function salePricesFor(db: Db, contractIds: readonly string[]): Map<string, number> {
@@ -196,10 +207,13 @@ function contractDetailsFor(db: Db, contractIds: readonly string[]) {
       createdAt: contracts.createdAt,
       lotCode: lots.code,
       projectName: projects.name,
+      holderId: customers.id,
+      holderName: customers.fullName,
     })
     .from(contracts)
     .innerJoin(lots, eq(lots.id, contracts.lotId))
     .innerJoin(projects, eq(projects.id, lots.projectId))
+    .innerJoin(customers, eq(customers.id, contracts.customerId))
     .where(inArray(contracts.id, contractIds))
     .all();
 
@@ -220,6 +234,9 @@ type ContractDetail = {
   createdAt: string;
   lotCode: string;
   projectName: string;
+  /** Who holds the contract NOW, which after a «Traspasar» is not the receipt's customer. */
+  holderId: string;
+  holderName: string;
 };
 
 /**
@@ -288,21 +305,20 @@ function presentReceipts(
 
   const receiptIds = rows.map((row) => row.id);
   // A Set, not `receiptIds.includes`: the loop below runs once per credit of
-  // every customer on the page, which made the full list receipts × payments.
+  // every contract on the page, which made the full list receipts × payments.
   const onThisPage = new Set(receiptIds);
-  const customerIds = [...new Set(rows.map((row) => row.customerId))];
 
-  const allCredits = creditsForCustomers(db, customerIds);
+  const allCredits = creditsForReceipts(db, receiptIds);
 
-  const creditsByCustomer = new Map<string, CustomerCredit[]>();
-  const paymentsByReceipt = new Map<string, CustomerCredit[]>();
+  const creditsByContract = new Map<string, ContractCredit[]>();
+  const paymentsByReceipt = new Map<string, ContractCredit[]>();
 
   for (const credit of allCredits) {
-    const forCustomer = creditsByCustomer.get(credit.customerId);
-    if (forCustomer) {
-      forCustomer.push(credit);
+    const forContract = creditsByContract.get(credit.contractId);
+    if (forContract) {
+      forContract.push(credit);
     } else {
-      creditsByCustomer.set(credit.customerId, [credit]);
+      creditsByContract.set(credit.contractId, [credit]);
     }
 
     if (credit.receiptId && onThisPage.has(credit.receiptId)) {
@@ -322,24 +338,24 @@ function presentReceipts(
     ? attachmentsForReceipts(db, receiptIds)
     : new Map<string, never[]>();
 
-  const touchedContractIds = [
-    ...new Set([...paymentsByReceipt.values()].flat().map((credit) => credit.contractId)),
-  ];
+  const touchedContractIds = [...creditsByContract.keys()];
   const details = includeLines
     ? contractDetailsFor(db, touchedContractIds)
     : new Map<string, ContractDetail>();
-  const customerContractIds = [...new Set(allCredits.map((credit) => credit.contractId))];
-  const salePriceByContract = salePricesFor(db, customerContractIds);
-  const mora = loadMoraAccounts(db, { ...at, contractIds: customerContractIds });
+  const salePriceByContract = salePricesFor(db, touchedContractIds);
+  const mora = loadMoraAccounts(db, { ...at, contractIds: touchedContractIds });
   const chargesByContract = new Map<string, LedgerCharge[]>(
     [...mora].map(([contractId, account]) => [contractId, ledgerChargesOf(account)]),
   );
 
   return rows.map((row) => {
     const own = orderLedger(paymentsByReceipt.get(row.id) ?? []);
+    // The full history of the lots this receipt paid — all `receiptFigures`
+    // reads, whoever holds them today.
+    const ownContractIds = [...new Set(own.map((credit) => credit.contractId))];
     const figures = receiptFigures({
       paymentIds: own.map((credit) => credit.id),
-      customerCredits: creditsByCustomer.get(row.customerId) ?? [],
+      customerCredits: ownContractIds.flatMap((id) => creditsByContract.get(id) ?? []),
       salePriceByContract,
       chargesByContract,
     });
@@ -403,6 +419,13 @@ function presentReceipts(
                 paymentId: credit.id,
                 contractId: credit.contractId,
                 contractCode: detail?.code ?? null,
+                /**
+                 * Who holds this lot today. The same person as `customer` until
+                 * the contract is handed over («Traspasar»); after that the
+                 * screen says so BESIDE the receipt. Never printed on it: the
+                 * paper names who it was made out to.
+                 */
+                holder: detail ? { id: detail.holderId, fullName: detail.holderName } : null,
                 lotCode: detail?.lotCode ?? null,
                 projectName: detail?.projectName ?? null,
                 amount: credit.amountCents,
@@ -1806,7 +1829,9 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
           salePriceCents: contracts.salePriceCents,
         })
         .from(contracts)
-        .where(inArray(contracts.id, [...seen]))
+        // The lots it is moving to, and the lots it holds now: both sides are
+        // asked who they belong to below.
+        .where(inArray(contracts.id, [...new Set([...seen, ...liveRows.map((row) => row.contractId)])]))
         .all();
 
       const asOf = today();
@@ -1814,6 +1839,37 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
       const contractById = new Map(contractRows.map((row) => [row.id, row]));
       const liveByContract = new Map(liveRows.map((row) => [row.contractId, row]));
       const liveIds = new Set(liveRows.map((row) => row.id));
+
+      /*
+       * One person's lots, before and after. Since a contract can be handed to
+       * somebody else («Traspasar»), the lots on an old receipt may not all be
+       * its customer's any more. Dividing it differently between lots that
+       * passed to the same person together is still a correction; moving its
+       * money from one person's lot to another's would change whose money it
+       * is, and that is not what this route is for.
+       */
+      //
+      // A lot that is neither the customer's nor already on the receipt is
+      // refused on its own below, as somebody else's lot.
+      const holders = new Set(
+        [...seen, ...liveByContract.keys()]
+          .map((id) => contractById.get(id))
+          .filter(
+            (contract) =>
+              contract !== undefined &&
+              (contract.customerId === receipt.customerId || liveByContract.has(contract.id)),
+          )
+          .map((contract) => contract!.customerId),
+      );
+
+      if (holders.size > 1) {
+        return reply.code(400).send({
+          error: "different_holders",
+          message:
+            "Los lotes de este recibo ya son de personas distintas, por un traspaso: " +
+            "repartirlo movería dinero de un titular a otro.",
+        });
+      }
 
       for (const line of body.lines) {
         const contract = contractById.get(line.contractId);
@@ -1827,7 +1883,9 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
         // The receipt names one customer. Redistribution moves money between
         // that person's lots and nowhere else — without this, a typo in a
         // contract id could file somebody's prima against a stranger's lot.
-        if (contract.customerId !== receipt.customerId) {
+        // A lot already on the receipt may have been handed over since; the
+        // check above keeps its money with the one person who holds them all.
+        if (contract.customerId !== receipt.customerId && !liveByContract.has(contract.id)) {
           return reply.code(400).send({
             error: "contract_not_customers",
             message: `El contrato ${contract.code} no es del cliente de este recibo.`,

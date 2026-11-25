@@ -20,6 +20,7 @@ import { ContractCancelDialog } from "./features/contracts/ContractCancelDialog"
 import { ContractCreateDialog } from "./features/contracts/ContractCreateDialog";
 import { ContractEditDialog } from "./features/contracts/ContractEditDialog";
 import { ContractReassignLotDialog } from "./features/contracts/ContractReassignLotDialog";
+import { ContractTransferDialog } from "./features/contracts/ContractTransferDialog";
 import { ConstanciaDialog } from "./features/constancias/ConstanciaDialog";
 import { ContractPanel } from "./features/contracts/ContractPanel";
 import { ContractsPage } from "./features/contracts/ContractsPage";
@@ -31,6 +32,7 @@ import {
   createContract,
   defaultContract,
   reassignContractLot,
+  transferContracts,
   updateContract,
 } from "./features/contracts/api";
 import type {
@@ -38,6 +40,7 @@ import type {
   CancelSettlement,
   ContractCreateDraft,
   ContractTermsDraft,
+  TransferDraft,
 } from "./features/contracts/api";
 import { useContracts } from "./features/contracts/useContracts";
 import { LoginPage } from "./features/auth/LoginPage";
@@ -218,6 +221,7 @@ export default function App() {
   const [contractLotBeingReassigned, setContractLotBeingReassigned] = useState<Contract | null>(
     null,
   );
+  const [contractBeingTransferred, setContractBeingTransferred] = useState<Contract | null>(null);
   const [contractBeingCancelled, setContractBeingCancelled] = useState<Contract | null>(null);
   const [contractBeingDefaulted, setContractBeingDefaulted] = useState<Contract | null>(null);
   // The lots of ONE purchase, while their split is being previewed.
@@ -780,6 +784,22 @@ export default function App() {
     await reloadCustomers();
     await reloadTransactions();
     setContractLotBeingReassigned(null);
+    setContractBeingViewed(null);
+  };
+
+  const handleTransferContracts = async (draft: TransferDraft) => {
+    await transferContracts(draft).catch(handleApiError);
+
+    // Who holds the contract is read from it on every screen: the Lotes
+    // holder, each customer's holdings, the transactions grouped by customer
+    // and the Panel's lists. This tab skips its own live-update event, so all
+    // of them are re-read here.
+    await reloadContracts();
+    await reloadLots();
+    await reloadCustomers();
+    await reloadTransactions();
+    await reloadDashboard();
+    setContractBeingTransferred(null);
     setContractBeingViewed(null);
   };
 
@@ -1563,6 +1583,7 @@ export default function App() {
           onClose={() => setContractBeingViewed(null)}
           onEditContract={setContractBeingEdited}
           onReassignLot={setContractLotBeingReassigned}
+          onTransferContract={setContractBeingTransferred}
           onCancelContract={setContractBeingCancelled}
           onDefaultContract={setContractBeingDefaulted}
           onOpenConstancia={setConstanciaContract}
@@ -1602,6 +1623,29 @@ export default function App() {
           money={money}
           onCancel={() => setContractLotBeingReassigned(null)}
           onConfirm={handleReassignLot}
+        />
+      )}
+
+      {contractBeingTransferred && customersState.status === "ready" && (
+        <ContractTransferDialog
+          contract={contractBeingTransferred}
+          // The rest of the same purchase that is still open: those lots are
+          // normally handed over with it.
+          siblings={
+            contractBeingTransferred.saleGroupId === null || contractsState.status !== "ready"
+              ? []
+              : contractsState.contracts.filter(
+                  (candidate) =>
+                    candidate.saleGroupId === contractBeingTransferred.saleGroupId &&
+                    candidate.id !== contractBeingTransferred.id &&
+                    candidate.customer.id === contractBeingTransferred.customer.id &&
+                    (candidate.status === "active" || candidate.status === "paid_off"),
+                )
+          }
+          customers={customersState.customers}
+          money={money}
+          onCancel={() => setContractBeingTransferred(null)}
+          onConfirm={handleTransferContracts}
         />
       )}
 

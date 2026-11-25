@@ -10,6 +10,7 @@ import type { Db } from "../db/client.js";
 import {
   contractAmendments,
   contractDocuments,
+  contractTransfers,
   contracts,
   customers,
   lots,
@@ -46,6 +47,8 @@ import type { MoraAccount } from "../lib/mora.js";
 import { loadMoraAccounts } from "../lib/moraAccounts.js";
 import { healthRulesOf, readSettings } from "../lib/settings.js";
 import { businessToday } from "../lib/time.js";
+import type { TransferView } from "../lib/transfers.js";
+import { transfersByContract } from "../lib/transfers.js";
 
 /**
  * What this plugin needs from the configuration.
@@ -306,6 +309,7 @@ function present(
   documentCount = 0,
   links: AmendmentLinks = NO_LINKS,
   mora?: MoraAccount,
+  transfers: TransferView[] = [],
 ) {
   const terms: ContractTerms = {
     saleType: row.saleType as SaleType,
@@ -427,6 +431,12 @@ function present(
      */
     replaces: links.bySuccessor.get(row.id) ?? null,
     replacedBy: links.byPredecessor.get(row.id) ?? null,
+    /**
+     * Who held this contract before, oldest first: every «Traspasar», with
+     * the day it was signed and why. Empty for a contract that never changed
+     * hands, which is nearly all of them.
+     */
+    transfers,
   };
 }
 
@@ -483,7 +493,11 @@ const termsSnapshot = (row: typeof contracts.$inferSelect) => ({
   notes: row.notes,
 });
 
-/** Editing terms keeps the same lot and customer: a different lot is a different sale. */
+/**
+ * Editing terms keeps the same lot and customer: a different lot is a different
+ * sale, and a contract that passed to another person is a «Traspasar» (POST
+ * /contracts/transfers), which keeps a record of who held it before.
+ */
 const updateBody = contractBody
   .omit({ customerId: true, lotId: true, joinGroupOfContractId: true })
   .extend({
@@ -551,6 +565,25 @@ const amendmentBody = z.object({
 
 /** Thrown inside the adenda transaction when a contract closed under it. */
 class AmendmentConflict extends Error {}
+
+/**
+ * A «Traspasar», as its dialog sends it: the contracts handed over, to whom,
+ * on what day and why.
+ *
+ * Several contracts at once for the lots of one purchase, which are normally
+ * handed over together, as they were bought.
+ */
+const transferBody = z.object({
+  contractIds: z.array(z.string().uuid()).min(1).max(50),
+  /** Who holds them from now on. Already a customer: registered on Clientes first. */
+  toCustomerId: z.string().uuid(),
+  /** The day the new holder signed. */
+  effectiveOn: isoDate,
+  reason: z.string().trim().min(10).max(500),
+});
+
+/** Thrown inside the transfer transaction when a contract changed under it. */
+class TransferConflict extends Error {}
 
 /**
  * The number an adenda gives the contract it writes: CT-2026-011 becomes
@@ -722,10 +755,19 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
     const links = amendmentLinksFor(app.db);
     const rules = healthRulesOf(readSettings(app.db));
     const mora = loadMoraAccounts(app.db, { asOf, timeZone: options.timeZone });
+    const transfers = transfersByContract(app.db);
 
     return reply.send({
       contracts: rows.map((row) =>
-        present(row, asOf, rules, documentCounts.get(row.id) ?? 0, links, mora.get(row.id)),
+        present(
+          row,
+          asOf,
+          rules,
+          documentCounts.get(row.id) ?? 0,
+          links,
+          mora.get(row.id),
+          transfers.get(row.id),
+        ),
       ),
     });
   });
@@ -1249,6 +1291,240 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
       });
 
       return reply.send({ contract: { id: updated.id, code: updated.code } });
+    },
+  );
+
+  /**
+   * «Traspasar»: a contract handed to another person, who signed a new promesa
+   * de venta for it — a cesión, not a new sale and not a correction.
+   *
+   * Everything that belongs to the lot goes with it: the price, the schedule,
+   * every payment already made, the mora, the balance and the contract number.
+   * The new holder owes exactly what was owed, and what was paid counts for
+   * them. So the only thing written to the contract is its `customer_id`, and a
+   * row in `contract_transfers` keeps who held it before, from what day, and why.
+   *
+   * Receipts already issued keep the name they were made out to
+   * (`receipts.customer_id`): they were true on their day, and the paper is in
+   * somebody's hands. Their figures read from the contract, so those do not
+   * move either. The next receipt is in the new holder's name.
+   *
+   * Lots bought together are normally handed over together, and keep being one
+   * purchase. When only some of a purchase moves, the ones that move become a
+   * purchase of their own, because a purchase is one person's: a single payment
+   * must not be split across two people's lots.
+   */
+  app.post(
+    "/contracts/transfers",
+    { onRequest: app.requireCapability("contract:transfer") },
+    async (request, reply) => {
+      const parsed = transferBody.safeParse(request.body);
+
+      if (!parsed.success) {
+        return reply.code(400).send({
+          error: "invalid_body",
+          message: "Elige a quién pasa el contrato y explica el motivo (mínimo 10 caracteres).",
+          issues: parsed.error.issues.map((issue) => issue.message),
+        });
+      }
+
+      const body = parsed.data;
+      const actor = request.user!;
+
+      if (new Set(body.contractIds).size !== body.contractIds.length) {
+        return reply.code(400).send({
+          error: "duplicate_contract",
+          message: "Un mismo contrato aparece dos veces en el traspaso.",
+        });
+      }
+
+      // The day it was signed, never ahead of it: a future date would hand the
+      // lot over today while saying it had not happened yet.
+      if (body.effectiveOn > today()) {
+        return reply.code(400).send({
+          error: "future_date",
+          message: "La fecha del traspaso no puede ser futura: es el día en que se firmó.",
+        });
+      }
+
+      const recipient = app.db
+        .select({ id: customers.id, fullName: customers.fullName })
+        .from(customers)
+        .where(eq(customers.id, body.toCustomerId))
+        .get();
+
+      if (!recipient) {
+        return reply.code(400).send({
+          error: "unknown_customer",
+          message: "Esa persona no está registrada. Regístrala primero en Clientes.",
+        });
+      }
+
+      const rows = app.db
+        .select()
+        .from(contracts)
+        .where(inArray(contracts.id, body.contractIds))
+        .all();
+      const byId = new Map(rows.map((row) => [row.id, row]));
+
+      let fromCustomerId: string | null = null;
+
+      for (const id of body.contractIds) {
+        const contract = byId.get(id);
+
+        if (!contract) {
+          return reply
+            .code(404)
+            .send({ error: "not_found", message: "Uno de los contratos del traspaso no existe." });
+        }
+
+        // A closed contract is history, the same rule as every other change.
+        // Its lot is not anybody's to hand over.
+        if (contract.status !== "active" && contract.status !== "paid_off") {
+          return reply.code(409).send({
+            error: "not_active",
+            message: `${contract.code} está cerrado: solo un contrato vigente o pagado se traspasa.`,
+          });
+        }
+
+        if (fromCustomerId !== null && contract.customerId !== fromCustomerId) {
+          return reply.code(400).send({
+            error: "customer_mismatch",
+            message: "Un traspaso cubre contratos de un solo titular.",
+          });
+        }
+        fromCustomerId = contract.customerId;
+
+        const signedOn = contract.signedOn ?? contract.createdAt.slice(0, 10);
+
+        if (body.effectiveOn < signedOn) {
+          return reply.code(400).send({
+            error: "before_signing",
+            message: `El traspaso no puede ser anterior a la firma de ${contract.code} (${signedOn}).`,
+          });
+        }
+      }
+
+      // Every id was found above, so there is a holder.
+      const holderId = fromCustomerId!;
+
+      if (holderId === recipient.id) {
+        return reply.code(400).send({
+          error: "same_customer",
+          message: `Ese contrato ya es de ${recipient.fullName}.`,
+        });
+      }
+
+      const previous = app.db
+        .select({ fullName: customers.fullName })
+        .from(customers)
+        .where(eq(customers.id, holderId))
+        .get();
+
+      /*
+       * The purchase each moved contract belongs to afterwards. A purchase
+       * moved whole stays the same purchase. Part of one becomes a purchase of
+       * its own when two or more lots move, and a lot on its own when only one
+       * does. Every member counts here, closed ones included, so no purchase
+       * is ever left with lots of two different people.
+       */
+      const movedIds = new Set(body.contractIds);
+      const groupIds = [
+        ...new Set(rows.map((row) => row.saleGroupId).filter((id): id is string => id !== null)),
+      ];
+      const members =
+        groupIds.length === 0
+          ? []
+          : app.db
+              .select({ id: contracts.id, saleGroupId: contracts.saleGroupId })
+              .from(contracts)
+              .where(inArray(contracts.saleGroupId, groupIds))
+              .all();
+      const groupAfter = new Map<string, string | null>();
+
+      for (const groupId of groupIds) {
+        const inGroup = members.filter((member) => member.saleGroupId === groupId);
+        const moving = inGroup.filter((member) => movedIds.has(member.id)).length;
+
+        groupAfter.set(
+          groupId,
+          moving === inGroup.length ? groupId : moving > 1 ? randomUUID() : null,
+        );
+      }
+
+      const now = new Date().toISOString();
+
+      try {
+        app.db.transaction((tx) => {
+          for (const id of body.contractIds) {
+            const contract = byId.get(id)!;
+
+            // Conditional on nothing having changed since the checks above,
+            // which ran outside this transaction: still this holder's, still
+            // open.
+            const moved = tx
+              .update(contracts)
+              .set({
+                customerId: recipient.id,
+                saleGroupId:
+                  contract.saleGroupId === null ? null : groupAfter.get(contract.saleGroupId)!,
+                updatedAt: now,
+              })
+              .where(
+                and(
+                  eq(contracts.id, id),
+                  eq(contracts.customerId, holderId),
+                  inArray(contracts.status, ["active", "paid_off"]),
+                ),
+              )
+              .run();
+
+            if (moved.changes !== 1) {
+              throw new TransferConflict(contract.code);
+            }
+
+            tx.insert(contractTransfers)
+              .values({
+                id: randomUUID(),
+                contractId: id,
+                fromCustomerId: holderId,
+                toCustomerId: recipient.id,
+                effectiveOn: body.effectiveOn,
+                reason: body.reason,
+                recordedBy: actor.id,
+                createdAt: now,
+              })
+              .run();
+
+            // A constancia says this person's contract is paid and the
+            // escritura can be theirs. It is not theirs any more, so it stops
+            // counting; the new holder is issued their own.
+            voidConstancias(tx, id, `Contrato traspasado a ${recipient.fullName}`, now);
+
+            recordAudit(tx, {
+              actorId: actor.id,
+              entityType: "contract",
+              entityId: id,
+              action: "transfer",
+              reason: body.reason,
+              before: { customerName: previous?.fullName ?? null },
+              after: { customerName: recipient.fullName, transferredOn: body.effectiveOn },
+            });
+          }
+        });
+      } catch (error) {
+        if (error instanceof TransferConflict) {
+          return reply.code(409).send({
+            error: "not_active",
+            message: `${error.message} cambió mientras se registraba el traspaso. Ábrelo de nuevo.`,
+          });
+        }
+        throw error;
+      }
+
+      return reply.code(201).send({
+        transfers: body.contractIds.map((id) => ({ contractId: id, code: byId.get(id)!.code })),
+      });
     },
   );
 

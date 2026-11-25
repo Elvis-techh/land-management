@@ -204,6 +204,13 @@
       "when": 1795139524296,
       "tag": "0028_user_capabilities",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "6",
+      "when": 1795569080212,
+      "tag": "0029_contract_transfers",
+      "breakpoints": true
     }
   ]
 }

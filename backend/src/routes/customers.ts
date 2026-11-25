@@ -1,10 +1,18 @@
 import { randomUUID } from "node:crypto";
 
-import { asc, eq, sql } from "drizzle-orm";
+import { asc, eq, or, sql } from "drizzle-orm";
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 
-import { contracts, customers, lots, payments, projects } from "../db/schema.js";
+import {
+  contractTransfers,
+  contracts,
+  customers,
+  lots,
+  payments,
+  projects,
+  receipts,
+} from "../db/schema.js";
 import { recordAudit } from "../lib/audit.js";
 import { openContract } from "../lib/holding.js";
 import { loadMoraAccounts, moraOwedOf } from "../lib/moraAccounts.js";
@@ -446,6 +454,45 @@ export const customerRoutes: FastifyPluginAsync<CustomerRoutesOptions> = async (
             `(${held.map((contract) => contract.code).join(", ")}). ` +
             "Borrar al cliente dejaría esos pagos sin dueño.",
           contractCodes: held.map((contract) => contract.code),
+        });
+      }
+
+      /*
+       * Somebody who handed their contracts to another person («Traspasar»)
+       * holds none now, so the checks above let them through. But the receipts
+       * issued while the contracts were theirs are still in their name, and
+       * the traspaso names them as the holder before: deleting them would
+       * leave both pointing at nobody.
+       */
+      const hasReceipts =
+        app.db
+          .select({ id: receipts.id })
+          .from(receipts)
+          .where(eq(receipts.customerId, existing.id))
+          .limit(1)
+          .get() !== undefined;
+      const inATransfer =
+        app.db
+          .select({ id: contractTransfers.id })
+          .from(contractTransfers)
+          .where(
+            or(
+              eq(contractTransfers.fromCustomerId, existing.id),
+              eq(contractTransfers.toCustomerId, existing.id),
+            ),
+          )
+          .limit(1)
+          .get() !== undefined;
+
+      if (hasReceipts || inATransfer) {
+        return reply.code(409).send({
+          error: "customer_has_history",
+          message:
+            `No se puede eliminar a ${existing.fullName}: traspasó sus contratos, pero ` +
+            (hasReceipts
+              ? "los recibos que se le emitieron siguen a su nombre"
+              : "el traspaso queda registrado a su nombre") +
+            ". Borrar al cliente los dejaría sin dueño.",
         });
       }
 

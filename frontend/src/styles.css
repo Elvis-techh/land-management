@@ -1232,6 +1232,25 @@ tbody tr:hover {
   }
 }
 
+/* Beside a receipt issued before its lot was handed over («Traspasar»): why
+   the paper names somebody else. For the office only; never printed. */
+.receipt-holder-note {
+  margin: 0 20px 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--amber-bg);
+  border: 1px solid var(--amber);
+  color: var(--text-primary);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+@media print {
+  .receipt-holder-note {
+    display: none;
+  }
+}
+
 .receipt-preview-label {
   font-size: 0.6875rem;
   text-transform: uppercase;
@@ -4258,8 +4277,9 @@ body.modal-open {
 }
 
 /* Beats `.form-field input` (same file, later, would otherwise make the radio a
-   full-width 42px box). */
-.settlement-option input[type="radio"] {
+   full-width 42px box). The checkbox is «Traspasar»'s other lots of a purchase. */
+.settlement-option input[type="radio"],
+.settlement-option input[type="checkbox"] {
   flex: 0 0 auto;
   margin: 2px 0 0;
   width: 16px;

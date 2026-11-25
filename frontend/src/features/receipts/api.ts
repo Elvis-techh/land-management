@@ -42,6 +42,7 @@ interface ReceiptResponse {
     paymentId: string;
     contractId: string;
     contractCode: string | null;
+    holder: { id: string; fullName: string } | null;
     lotCode: string | null;
     projectName: string | null;
     amount: number;

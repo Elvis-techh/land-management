@@ -19,6 +19,7 @@ import {
 import { allocateConstanciaCode } from "../lib/constancias.js";
 import { generateLookupCode, nextReceiptNumber, toStoredLookupCode } from "../lib/receipts.js";
 import { businessToday } from "../lib/time.js";
+import { holderAt } from "../lib/transfers.js";
 
 /*
  * «Constancia de Cancelación Total» — the document that says paid-off
@@ -109,21 +110,33 @@ function presentConstancia(db: Db, id: string) {
       issuedOn: constancias.issuedOn,
       voidedAt: constancias.voidedAt,
       voidReason: constancias.voidReason,
+      createdAt: constancias.createdAt,
+      contractId: constancias.contractId,
+      holderId: contracts.customerId,
       issuedByName: users.name,
-      customerName: customers.fullName,
-      customerIdentification: customers.identification,
-      customerPhone: customers.phone,
     })
     .from(constancias)
     .innerJoin(users, eq(users.id, constancias.issuedBy))
     .innerJoin(contracts, eq(contracts.id, constancias.contractId))
-    .innerJoin(customers, eq(customers.id, contracts.customerId))
     .where(eq(constancias.id, id))
     .get();
 
   if (!row) {
     return null;
   }
+
+  // The person it was made out to, which is not who holds the contract today
+  // if it has been handed over since («Traspasar»). A constancia is a document
+  // somebody took to a notary: it keeps their name, voided or not.
+  const customer = db
+    .select({
+      fullName: customers.fullName,
+      identification: customers.identification,
+      phone: customers.phone,
+    })
+    .from(customers)
+    .where(eq(customers.id, holderAt(db, row.contractId, row.createdAt, row.holderId)))
+    .get();
 
   const parts = contractIdsOf(db, id)
     .map((contractId) => presentPart(db, contractId))
@@ -146,9 +159,9 @@ function presentConstancia(db: Db, id: string) {
     voidReason: row.voidReason,
     // The phone is not printed: it is where «Enviar por WhatsApp» sends it.
     customer: {
-      fullName: row.customerName,
-      identification: row.customerIdentification,
-      phone: row.customerPhone,
+      fullName: customer?.fullName ?? "",
+      identification: customer?.identification ?? null,
+      phone: customer?.phone ?? null,
     },
     parts,
     salePriceCents: parts.reduce((total, part) => total + part.contract.salePriceCents, 0),

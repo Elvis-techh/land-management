@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import type { FastifyPluginAsync } from "fastify";
 import { alias } from "drizzle-orm/sqlite-core";
 import { z } from "zod";
@@ -214,9 +214,32 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
       [...new Set(rows.map((row) => row.receiptId).filter((id) => id !== null))],
     );
 
+    /*
+     * A receipt issued before its contract was handed to somebody else
+     * («Traspasar») keeps the name it was made out to, while the row now sits
+     * under the new holder. The list says whose name the paper carries, and
+     * finds it when that name is searched.
+     *
+     * Asked separately, for the few rows it concerns — usually none — and sent
+     * only on those rows. A column on every row of the biggest list in the app
+     * cost a quarter of a megabyte of `null`s per read.
+     */
+    const issuedToOther = new Map(
+      app.db
+        .select({ paymentId: payments.id, name: customers.fullName })
+        .from(payments)
+        .innerJoin(receipts, eq(receipts.id, payments.receiptId))
+        .innerJoin(contracts, eq(contracts.id, payments.contractId))
+        .innerJoin(customers, eq(customers.id, receipts.customerId))
+        .where(ne(receipts.customerId, contracts.customerId))
+        .all()
+        .map((row) => [row.paymentId, row.name]),
+    );
+
     return {
       transactions: rows.map((row) => ({
         ...row,
+        ...(issuedToOther.has(row.id) ? { receiptCustomerName: issuedToOther.get(row.id)! } : {}),
         attachments:
           row.receiptId === null
             ? []

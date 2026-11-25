@@ -172,6 +172,9 @@ export function searchTransactions(
       transaction.reference,
       transaction.notes,
       transaction.receiptNote,
+      // A receipt issued before a «Traspasar» is still in the previous
+      // holder's name: searching that name has to find it.
+      transaction.receiptCustomerName,
     ],
     identities: [transaction.customerIdentification],
   }));

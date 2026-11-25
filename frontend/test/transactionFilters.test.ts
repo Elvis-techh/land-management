@@ -104,3 +104,24 @@ describe("searching by the note on a receipt", () => {
     assert.deepEqual(searchTransactions(noted, "luis").map((row) => row.id), ["2"]);
   });
 });
+
+describe("searching by the name on a receipt issued before a traspaso", () => {
+  /*
+   * Once a contract is handed to somebody else, its payments sit under the new
+   * holder, but the receipts issued before keep the previous holder's name.
+   * Somebody looking for "the receipt we gave Ana in July" types Ana.
+   */
+  const handedOver = [
+    { id: "1", customerName: "Titular Nuevo", receiptCustomerName: "Ana Valle" },
+    { id: "2", customerName: "Titular Nuevo" },
+    { id: "3", customerName: "Luis Mejía" },
+  ] as Transaction[];
+
+  it("finds the payment under the previous holder's name", () => {
+    assert.deepEqual(searchTransactions(handedOver, "ana valle").map((row) => row.id), ["1"]);
+  });
+
+  it("still finds both under the new holder's", () => {
+    assert.deepEqual(searchTransactions(handedOver, "nuevo").map((row) => row.id), ["1", "2"]);
+  });
+});

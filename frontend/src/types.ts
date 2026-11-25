@@ -419,6 +419,28 @@ export interface Contract {
   replaces: ContractAmendmentLink | null;
   /** The contract an adenda replaced this one with, or `null`. */
   replacedBy: ContractAmendmentLink | null;
+  /**
+   * Who held this contract before, oldest first: every «Traspasar». Empty for
+   * a contract that never changed hands, which is nearly all of them.
+   */
+  transfers: ContractTransfer[];
+}
+
+/**
+ * A contract handed from one customer to another — a cesión with a new
+ * promesa de venta. The payments, the balance and the cuotas went with the
+ * lot; the receipts already issued kept the name they were made out to.
+ */
+export interface ContractTransfer {
+  id: string;
+  from: { id: string; fullName: string };
+  to: { id: string; fullName: string };
+  /** YYYY-MM-DD, the day the new holder signed. */
+  effectiveOn: string;
+  reason: string;
+  /** The name of whoever entered it. */
+  recordedBy: string;
+  recordedAt: string;
 }
 
 /**
@@ -471,6 +493,12 @@ export interface ReceiptLine {
   paymentId: string;
   contractId: string;
   contractCode: string | null;
+  /**
+   * Who holds this lot today. The receipt's own customer until the contract
+   * is handed over («Traspasar»); after that, the new holder. Shown beside the
+   * receipt, never printed on it.
+   */
+  holder: { id: string; fullName: string } | null;
   lotCode: string | null;
   projectName: string | null;
   amount: Cents;
@@ -623,6 +651,12 @@ export interface Transaction {
   receiptNote: string | null;
   /** Who this row's receipt says paid, when it was not the customer; null otherwise. */
   receiptPaidBy: string | null;
+  /**
+   * The customer this row's receipt was made out to, when it is not who holds
+   * the contract now: a receipt issued before a «Traspasar». Absent otherwise,
+   * which is nearly every row, so the list does not carry it for nothing.
+   */
+  receiptCustomerName?: string;
   receiptVoidedAt: string | null;
   recordedByName: string;
   /**

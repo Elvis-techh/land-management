@@ -77,6 +77,14 @@ export const CAPABILITY_GROUPS: ReadonlyArray<{
           "Exige escribir un motivo.",
       },
       {
+        capability: "contract:transfer",
+        label: "Traspasar contratos a otra persona",
+        hint:
+          "Cambia quién es el titular: los pagos, el saldo y las cuotas pasan con el lote al " +
+          "nuevo titular. Los recibos ya emitidos se quedan con su nombre. Exige escribir un " +
+          "motivo.",
+      },
+      {
         capability: "contract:cancel",
         label: "Cancelar contratos",
         hint: "Libera el lote y deja el contrato en el historial.",

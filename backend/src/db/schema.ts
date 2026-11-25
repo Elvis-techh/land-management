@@ -778,6 +778,56 @@ export const contractAmendments = sqliteTable("contract_amendments", {
 });
 
 /**
+ * A «Traspaso»: a contract handed from one person to another, a cesión with a
+ * new promesa de venta signed by whoever holds it now.
+ *
+ * Not an edit and not a new sale. Everything that belongs to the LOT goes with
+ * it — the price, the schedule, every payment, the mora, the balance, the
+ * contract's number — so the only column that moves is
+ * `contracts.customer_id`. This row is the record of that move: from whom, to
+ * whom, on what day, and why. One row per contract, so three lots of one
+ * purchase handed over together are three rows with the same date and motive.
+ *
+ * Receipts already issued are deliberately NOT moved with it. Each one keeps
+ * `receipts.customer_id`, the person it was made out to, because it was true
+ * on its day and the paper is already in somebody's hands. Their figures still
+ * follow the contract, which is where they are read from.
+ *
+ * Never deleted. A transfer made by mistake is undone with another transfer
+ * back, so both stay on file.
+ */
+export const contractTransfers = sqliteTable(
+  "contract_transfers",
+  {
+    id: text("id").primaryKey(),
+    contractId: text("contract_id")
+      .notNull()
+      .references(() => contracts.id),
+    /** Who held the contract until this transfer. */
+    fromCustomerId: text("from_customer_id")
+      .notNull()
+      .references(() => customers.id),
+    /** Who holds it from this transfer on. */
+    toCustomerId: text("to_customer_id")
+      .notNull()
+      .references(() => customers.id),
+    /** YYYY-MM-DD: the day the new holder signed. Never ahead of the day it is entered. */
+    effectiveOn: text("effective_on").notNull(),
+    /** Why, in the office's words. Required, like every change to who owes what. */
+    reason: text("reason").notNull(),
+    recordedBy: text("recorded_by")
+      .notNull()
+      .references(() => users.id),
+    /**
+     * When it was entered. Also what decides whose name a document issued
+     * before or after it carries — see `holderAt` in src/lib/transfers.ts.
+     */
+    createdAt: timestamp("created_at"),
+  },
+  (table) => [index("contract_transfers_contract_idx").on(table.contractId)],
+);
+
+/**
  * A receipt: the DOCUMENT, not the money.
  *
  * This is the table that replaces the frozen "previous balance / new balance /
