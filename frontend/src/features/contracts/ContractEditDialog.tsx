@@ -294,10 +294,10 @@ export function ContractEditDialog({
               fix the wrong lot should find that out now rather than after
               filling in nine fields. */}
           <p className="form-blocked full-width">
-            El cliente no se cambia aquí: un cliente distinto es otra venta, no una corrección. El
-            lote tampoco se cambia en este formulario — si se capturó mal, usa «Corregir lote» en
-            el contrato. Todo lo demás queda registrado en el Historial con tu nombre, la fecha y
-            el motivo que escribas abajo.
+            El cliente no se cambia aquí: si el contrato pasó a otra persona, usa «Traspasar» en
+            el contrato. El lote tampoco se cambia en este formulario — si se capturó mal, usa
+            «Corregir lote». Todo lo demás queda registrado en el Historial con tu nombre, la
+            fecha y el motivo que escribas abajo.
           </p>
 
           <div className="form-field">

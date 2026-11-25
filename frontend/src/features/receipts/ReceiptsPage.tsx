@@ -32,6 +32,7 @@ import {
   uploadAttachment,
 } from "./api";
 import { ReceiptNote } from "./ReceiptNote";
+import { holderNote } from "./holderNote";
 import { receiptToPng } from "./receiptImage";
 import { copyGesture, pasteInstruction, receiptCaption, sendReceiptOnWhatsApp } from "./whatsapp";
 import type { TransactionFilters } from "./transactionFilters";
@@ -478,6 +479,16 @@ function TransactionRow({
             </span>
           )}
           {isReversed && <span className="txn-void">anulada</span>}
+          {/* A receipt from before the contract was handed over: it stays in
+              the previous holder's name, though the row is the new holder's. */}
+          {transaction.receiptCustomerName !== undefined && (
+            <span
+              className="txn-note"
+              title={`El recibo se emitió a nombre de ${transaction.receiptCustomerName}, antes del traspaso.`}
+            >
+              Recibo: {transaction.receiptCustomerName}
+            </span>
+          )}
         </span>
 
         <span className="txn-amount">{formatMoney(transaction.amount, money)}</span>
@@ -1595,6 +1606,10 @@ export function ReceiptsPage({
               canWrite={canRecord}
               onSave={saveNote}
             />
+
+            {holderNote(detail) !== null && (
+              <p className="receipt-holder-note">{holderNote(detail)}</p>
+            )}
 
             <div className="receipt-actions">
               <div className="receipt-actions-main">

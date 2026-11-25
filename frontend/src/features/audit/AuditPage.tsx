@@ -28,6 +28,7 @@ const actionPresentation: Record<AuditAction, { label: string; stampClass: strin
   cancel: { label: "Cancelado", stampClass: "stamp danger" },
   reassign_lot: { label: "Lote corregido", stampClass: "stamp clay" },
   replace: { label: "Reemplazado por adenda", stampClass: "stamp clay" },
+  transfer: { label: "Traspaso", stampClass: "stamp clay" },
   reverse: { label: "Reversado", stampClass: "stamp danger" },
   mora_charge: { label: "Mora cargada", stampClass: "stamp clay" },
   mora_remove: { label: "Mora quitada", stampClass: "stamp danger" },
@@ -80,6 +81,8 @@ const fieldLabels: Record<string, string> = {
   settlement: "Lo ya pagado",
   replacedBy: "Reemplazado por",
   replaces: "Reemplaza a",
+  // A contract handed to another customer — see POST /contracts/transfers.
+  transferredOn: "Fecha del traspaso",
   // A payment corrected, and a receipt voided — which restates the whole
   // receipt, since issuing one leaves no row of its own.
   amountCents: "Monto",

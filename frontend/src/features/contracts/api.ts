@@ -159,6 +159,28 @@ export function reassignContractLot(contractId: string, lotId: string, reason: s
   );
 }
 
+/** A «Traspasar», as ContractTransferDialog sends it. */
+export interface TransferDraft {
+  /** The contract, plus the other lots of its purchase that go with it. */
+  contractIds: string[];
+  toCustomerId: string;
+  /** YYYY-MM-DD, the day the new holder signed. */
+  effectiveOn: string;
+  reason: string;
+}
+
+/**
+ * Hand contracts to another customer — a cesión, with a new promesa de venta.
+ * The payments, the balance and the cuotas go with the lot; the receipts
+ * already issued keep the name they were made out to.
+ */
+export function transferContracts(draft: TransferDraft) {
+  return api.post<{ transfers: Array<{ contractId: string; code: string }> }>(
+    "/api/contracts/transfers",
+    draft,
+  );
+}
+
 /** What happens to money the customer already paid — see ContractCancelDialog. */
 export type CancelSettlement = "none" | "held" | "refunded";
 

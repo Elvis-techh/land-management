@@ -40,6 +40,8 @@ interface ContractPanelProps {
   onClose: () => void;
   onEditContract: (contract: Contract) => void;
   onReassignLot: (contract: Contract) => void;
+  /** Opens «Traspasar»: the contract passes to another customer. */
+  onTransferContract: (contract: Contract) => void;
   onCancelContract: (contract: Contract) => void;
   onDefaultContract: (contract: Contract) => void;
   /** Opens the constancia de cancelación total of a paid-off contract. */
@@ -167,6 +169,7 @@ export function ContractPanel({
   onClose,
   onEditContract,
   onReassignLot,
+  onTransferContract,
   onCancelContract,
   onDefaultContract,
   onOpenConstancia,
@@ -188,6 +191,7 @@ export function ContractPanel({
   const isOpen = contract.status === "active" || contract.status === "paid_off";
   const canEdit = can(user, "contract:edit");
   const canReassignLot = can(user, "contract:reassign_lot");
+  const canTransfer = can(user, "contract:transfer");
   const canCancel = can(user, "contract:cancel");
   const canDefault = can(user, "contract:default");
   // A reservation is converted with «Editar términos», not amended.
@@ -502,6 +506,42 @@ export function ContractPanel({
           )}
         </section>
 
+        {/* Who held it before, so "why does the July receipt say somebody
+            else?" is answered here and not in the Historial. */}
+        {contract.transfers.length > 0 && (
+          <section className="cp-section">
+            <h3 className="cp-section-title">Traspasos</h3>
+            {contract.transfers.map((transfer, index) => (
+              <div key={transfer.id}>
+                {index > 0 && <hr className="cp-divider" />}
+                <div className="cp-row">
+                  <span>De</span>
+                  <span>{transfer.from.fullName}</span>
+                </div>
+                <div className="cp-row">
+                  <span>A</span>
+                  <span>{transfer.to.fullName}</span>
+                </div>
+                <div className="cp-row">
+                  <span>Fecha del traspaso</span>
+                  <span>{formatDate(transfer.effectiveOn)}</span>
+                </div>
+                <div className="cp-row">
+                  <span>Registró</span>
+                  <span>
+                    {transfer.recordedBy} · {formatRecordedOn(transfer.recordedAt)}
+                  </span>
+                </div>
+                <p className="cp-note-body">{transfer.reason}</p>
+              </div>
+            ))}
+            <p className="cp-note">
+              Lo pagado pasó con el lote. Los recibos emitidos antes del traspaso siguen a nombre
+              de quien los recibió.
+            </p>
+          </section>
+        )}
+
         {/*
           The actual legal document, beside everything derived from it.
 
@@ -562,6 +602,16 @@ export function ContractPanel({
             title="Nuevo precio o plazo acordado: cierra este contrato y abre uno nuevo, sin tocar sus pagos ni sus recibos."
           >
             <span>Adenda</span>
+          </button>
+        )}
+        {isOpen && canTransfer && (
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => onTransferContract(contract)}
+            title="El contrato pasa a otra persona con una nueva promesa de venta: lo pagado y el saldo van con el lote."
+          >
+            <span>Traspasar</span>
           </button>
         )}
         {isOpen && canReassignLot && (

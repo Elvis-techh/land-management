@@ -175,6 +175,23 @@ agreed with the business before schema implementation.
     settlement above, not something to fake by lowering the new price.
   - A payment on an old contract dated after the adenda is refused, since the
     adenda would strand it there; it has to be moved first.
+- **Traspasos** (`POST /contracts/transfers`, capability `contract:transfer`):
+  a contract handed to another customer, who signed a new promesa de venta. The
+  lot's whole account goes with it — price, schedule, payments, mora, balance,
+  contract number — so the only column written is `contracts.customer_id`;
+  `contract_transfers` keeps from whom, to whom, the day and the motive. To
+  change the price or the plazo as well, an adenda follows.
+  - Receipts already issued keep `receipts.customer_id`, the name they were
+    made out to, and their figures. That is why a receipt's payments are found
+    through the receipt (`creditsForReceipts`), never through its customer's
+    current contracts, and why a constancia reads its name as of the day it
+    was issued (`holderAt`).
+  - Lots of one purchase are normally handed over together and stay one
+    purchase; when only some move, those become a purchase of their own, since
+    a purchase is one person's. A receipt whose lots now belong to two people
+    can no longer be redistributed between them.
+  - A customer left with no contracts but with receipts in their name cannot
+    be deleted.
 
 ## API boundaries
 
