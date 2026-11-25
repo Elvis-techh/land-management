@@ -11,6 +11,7 @@ import type { Contract, ContractAmendmentLink } from "../../types";
 import { useSettings } from "../settings/SettingsContext";
 import { ContractDocuments } from "./ContractDocuments";
 import { ContractMora } from "./ContractMora";
+import { ContractPaidMoney } from "./ContractPaidMoney";
 import {
   KIND_LABELS,
   SALE_TYPE_LABELS,
@@ -23,6 +24,7 @@ import {
   pricePaid,
   primaryStamp,
 } from "./contractPresentation";
+import { carriedInNote, paidMoneySentence } from "./paidMoneyText";
 
 interface ContractPanelProps {
   contract: Contract;
@@ -60,6 +62,11 @@ interface ContractPanelProps {
   onDocumentsChanged: () => void;
   /** Re-read the contracts list after mora is put on or taken off by hand. */
   onMoraChanged: () => void;
+  /**
+   * Re-read after «Decidir lo pagado» moved money to the new contract or
+   * marked it to be given back: both contracts, the transactions, the Panel.
+   */
+  onPaidMoneyChanged: () => void;
 }
 
 /**
@@ -177,6 +184,7 @@ export function ContractPanel({
   onOpenContract,
   onDocumentsChanged,
   onMoraChanged,
+  onPaidMoneyChanged,
 }: ContractPanelProps) {
   const { graceDays } = useSettings().mora;
   const stamp = primaryStamp(contract);
@@ -260,7 +268,8 @@ export function ContractPanel({
           {contract.status === "replaced" && contract.replacedBy && (
             <p className="cp-note">
               Ya no se cobra: lo reemplazó {contract.replacedBy.code} el{" "}
-              {formatDate(contract.replacedBy.amendment.effectiveOn)}. Lo pagado quedó como ingreso.
+              {formatDate(contract.replacedBy.amendment.effectiveOn)}.{" "}
+              {paidMoneySentence(contract.paidMoney, contract.paidToDate, money)}
             </p>
           )}
         </section>
@@ -431,7 +440,7 @@ export function ContractPanel({
                 money={money}
                 paidNote={
                   predecessor
-                    ? `${formatMoney(predecessor.paidToDate, money)} · quedó como ingreso, no se abona a este precio`
+                    ? carriedInNote(predecessor.paidToDate, contract.carriedIn, money)
                     : null
                 }
                 onOpen={onOpenContract}
@@ -450,6 +459,14 @@ export function ContractPanel({
             )}
           </section>
         )}
+
+        <ContractPaidMoney
+          contract={contract}
+          successor={successor}
+          money={money}
+          user={user}
+          onChanged={onPaidMoneyChanged}
+        />
 
         {siblings.length > 0 && (
           <section className="cp-section">
@@ -501,7 +518,11 @@ export function ContractPanel({
           {contract.closedSettlement && (
             <div className="cp-row">
               <span>Lo ya pagado</span>
-              <span>{SETTLEMENT_LABELS[contract.closedSettlement]}</span>
+              <span>
+                {contract.paidMoney
+                  ? paidMoneySentence(contract.paidMoney, contract.paidToDate, money)
+                  : SETTLEMENT_LABELS[contract.closedSettlement]}
+              </span>
             </div>
           )}
         </section>

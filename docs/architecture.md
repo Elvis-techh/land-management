@@ -170,9 +170,17 @@ agreed with the business before schema implementation.
     are derived from moves. Receipts issued after an adenda leave the replaced
     contracts out of "Total Pagado Acumulado", so the new agreement's paper adds
     up on its own.
-  - Money paid before an adenda is kept, never refunded and never credited to
-    the new price. A deal where it should count is the missing "transfer"
-    settlement above, not something to fake by lowering the new price.
+  - Money paid before an adenda stays on the old contract as income until
+    somebody decides otherwise with **«Decidir lo pagado»** on the old
+    contract (`POST /contracts/:id/paid-money`, `contract:amend`, see
+    `backend/src/lib/paidMoney.ts`): part or all of it moves to the new
+    contract as a *traslado* — a payment row carrying
+    `transferred_from_contract_id`, method `carryover`, no receipt — and part
+    or all of it can be owed back as a *devolución* (`contract_refunds`),
+    which counts as money out only from the day it is recorded as handed
+    over. A traslado counts in every balance, prima and mora, and is left out
+    of the Panel's «Cobrado» and «último pago». The old contract's payments
+    and receipts never change. Each step can be taken back with a reason.
   - A payment on an old contract dated after the adenda is refused, since the
     adenda would strand it there; it has to be moved first.
 - **Traspasos** (`POST /contracts/transfers`, capability `contract:transfer`):

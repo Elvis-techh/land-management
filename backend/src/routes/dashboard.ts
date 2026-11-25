@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { Db } from "../db/client.js";
 import {
   attachments,
+  contractRefunds,
   contracts,
   customers,
   lots,
@@ -151,11 +152,14 @@ function contractRows(db: Db, asOf: string, previousAsOf: string) {
             AND ${payments.type} = 'down_payment'
         ), 0)
       `,
+      // A traslado is not a visit to the window: the last time this person
+      // actually paid is the last payment that was money received.
       lastPaymentOn: sql<string | null>`(
         SELECT MAX(${payments.paidOn})
         FROM ${payments}
         WHERE ${payments.contractId} = ${contracts.id}
           AND ${payments.reversedAt} IS NULL
+          AND ${payments.transferredFromContractId} IS NULL
       )`,
     })
     .from(contracts)
@@ -455,6 +459,10 @@ export const dashboardRoutes: FastifyPluginAsync<DashboardRoutesOptions> = async
       .where(
         and(
           isNull(payments.reversedAt),
+          // A traslado moved money already counted, on the day it really came
+          // in, on the contract it came from. Counting it again here would
+          // report money that never arrived. See `transferred_from_contract_id`.
+          isNull(payments.transferredFromContractId),
           gte(payments.paidOn, windowStart),
           // Never past the month being reported: paging back to July must not
           // show August's money in July's total.
@@ -891,6 +899,36 @@ export const dashboardRoutes: FastifyPluginAsync<DashboardRoutesOptions> = async
            * a figure that cannot be matched to a statement later, which is
            * exactly when somebody comes asking.
            */
+          /*
+           * Devoluciones («Trasladar lo pagado»): money owed back to somebody,
+           * and money given back this month. The first is a debt the office
+           * should not lose track of; the second is money that went OUT, and is
+           * kept apart from «Cobrado», which only ever counts what came in.
+           */
+          refunds: (() => {
+            const rows = app.db
+              .select({
+                id: contractRefunds.id,
+                amountCents: contractRefunds.amountCents,
+                returnedOn: contractRefunds.returnedOn,
+                method: contractRefunds.method,
+                contractCode: contracts.code,
+                customerName: customers.fullName,
+              })
+              .from(contractRefunds)
+              .innerJoin(contracts, eq(contracts.id, contractRefunds.contractId))
+              .innerJoin(customers, eq(customers.id, contracts.customerId))
+              .where(isNull(contractRefunds.removedAt))
+              .all();
+
+            return {
+              pending: rows.filter((row) => row.returnedOn === null),
+              returned: rows.filter(
+                (row) => row.returnedOn !== null && monthOf(row.returnedOn) === month,
+              ),
+            };
+          })(),
+
           unprovenTransfers: app.db
             .select({
               count: sql<number>`COUNT(*)`,

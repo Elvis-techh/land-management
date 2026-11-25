@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import type { FastifyPluginAsync } from "fastify";
 import { alias } from "drizzle-orm/sqlite-core";
 import { z } from "zod";
@@ -224,6 +224,22 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
      * only on those rows. A column on every row of the biggest list in the app
      * cost a quarter of a megabyte of `null`s per read.
      */
+    /*
+     * Traslados («Trasladar lo pagado»): money moved from another contract,
+     * which has no receipt and was not received that day. The row says where
+     * it came from instead of «sin recibo». Asked separately and sent only on
+     * those rows, for the same reason as `receiptCustomerName` below.
+     */
+    const carriedFrom = new Map(
+      app.db
+        .select({ paymentId: payments.id, code: contracts.code })
+        .from(payments)
+        .innerJoin(contracts, eq(contracts.id, payments.transferredFromContractId))
+        .where(isNotNull(payments.transferredFromContractId))
+        .all()
+        .map((row) => [row.paymentId, row.code]),
+    );
+
     const issuedToOther = new Map(
       app.db
         .select({ paymentId: payments.id, name: customers.fullName })
@@ -240,6 +256,7 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
       transactions: rows.map((row) => ({
         ...row,
         ...(issuedToOther.has(row.id) ? { receiptCustomerName: issuedToOther.get(row.id)! } : {}),
+        ...(carriedFrom.has(row.id) ? { carriedFromCode: carriedFrom.get(row.id)! } : {}),
         attachments:
           row.receiptId === null
             ? []
@@ -739,6 +756,18 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
         return reply.code(409).send({
           error: "already_reversed",
           message: "Esa transacción está revertida y ya no cuenta en los saldos.",
+        });
+      }
+
+      // A traslado is money from another contract, not a payment received:
+      // its amount and date are decided under «Lo pagado» on the contract it
+      // came from, and changed there by taking it back and deciding again.
+      if (existing.transferredFromContractId !== null) {
+        return reply.code(409).send({
+          error: "carryover",
+          message:
+            "Esta línea es un traslado desde el contrato anterior, no un pago recibido. " +
+            "Se cambia en el contrato anterior, en «Lo pagado con este contrato».",
         });
       }
 

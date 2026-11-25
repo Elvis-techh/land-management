@@ -211,6 +211,13 @@
       "when": 1795569080212,
       "tag": "0029_contract_transfers",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "6",
+      "when": 1795575575974,
+      "tag": "0030_trasladar_lo_pagado",
+      "breakpoints": true
     }
   ]
 }

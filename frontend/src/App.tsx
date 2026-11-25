@@ -1594,6 +1594,15 @@ export default function App() {
           onDocumentsChanged={() => void reloadContracts()}
           // A mora put on by hand moves the saldo and «Mora pendiente» above it.
           onMoraChanged={() => void reloadContracts()}
+          // A traslado moves the new contract's saldo (and so the customer's
+          // holdings and the transactions list), and a devolución shows on the
+          // Panel; this tab skips its own live-update event.
+          onPaidMoneyChanged={() => {
+            void reloadContracts();
+            void reloadCustomers();
+            void reloadTransactions();
+            void reloadDashboard();
+          }}
         />
       )}
 

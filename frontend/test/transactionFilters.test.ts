@@ -125,3 +125,22 @@ describe("searching by the name on a receipt issued before a traspaso", () => {
     assert.deepEqual(searchTransactions(handedOver, "nuevo").map((row) => row.id), ["1", "2"]);
   });
 });
+
+describe("a traslado in the transactions list", () => {
+  /*
+   * Money moved from a replaced contract («Trasladar lo pagado») has no receipt
+   * by nature. «Sin recibo» is for payments nobody printed, so it leaves it out.
+   */
+  const rows = [
+    { id: "1", receiptId: null, reversedAt: null },
+    { id: "2", receiptId: null, reversedAt: null, carriedFromCode: "CT-2026-090" },
+    { id: "3", receiptId: "r-1", reversedAt: null },
+  ] as Transaction[];
+
+  it("is not listed as a payment without a receipt", () => {
+    assert.deepEqual(
+      filterTransactions(rows, { ...NO_TRANSACTION_FILTERS, statuses: ["unreceipted"] }).map((row) => row.id),
+      ["1"],
+    );
+  });
+});

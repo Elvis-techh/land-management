@@ -22,6 +22,7 @@ import { permissionRoutes } from "./routes/permissions.js";
 import { projectRoutes } from "./routes/projects.js";
 import { receiptRoutes } from "./routes/receipts.js";
 import { moraRoutes } from "./routes/mora.js";
+import { paidMoneyRoutes } from "./routes/paidMoney.js";
 import { settingsRoutes } from "./routes/settings.js";
 import { transactionRoutes } from "./routes/transactions.js";
 import { userRoutes } from "./routes/users.js";
@@ -173,6 +174,7 @@ export async function buildApp(config: AppConfig, db: Db) {
       await api.register(exchangeRateRoutes);
       await api.register(settingsRoutes, { timeZone: config.timeZone });
       await api.register(moraRoutes, { timeZone: config.timeZone });
+      await api.register(paidMoneyRoutes, { timeZone: config.timeZone });
       await api.register(dashboardRoutes, { timeZone: config.timeZone });
       await api.register(auditRoutes, { timeZone: config.timeZone });
       await api.register(eventRoutes);

@@ -424,6 +424,46 @@ export interface Contract {
    * a contract that never changed hands, which is nearly all of them.
    */
   transfers: ContractTransfer[];
+  /**
+   * «Trasladar lo pagado», from this contract: what moved to the contract that
+   * replaced it, what is owed back or was given back, and what still counts as
+   * income here. `null` until something was decided.
+   */
+  paidMoney: ContractPaidMoney | null;
+  /** Traslados that arrived on this contract from the one it replaced. */
+  carriedIn: ContractCarryover[];
+}
+
+/** One traslado, seen from either end. Amounts are whole centavos. */
+export interface ContractCarryover {
+  paymentId: string;
+  /** The contract at the other end: where it went, or where it came from. */
+  contractId: string;
+  code: string;
+  amountCents: number;
+  /** YYYY-MM-DD, the day it counts from on the new contract. */
+  on: string;
+  type: "down_payment" | "installment";
+}
+
+/** Money owed back to whoever paid it, or already given back. */
+export interface ContractRefund {
+  id: string;
+  amountCents: number;
+  reason: string;
+  recordedBy: string;
+  recordedAt: string;
+  /** YYYY-MM-DD, or null while it is still owed. */
+  returnedOn: string | null;
+  method: "cash" | "transfer" | null;
+  reference: string | null;
+}
+
+export interface ContractPaidMoney {
+  carryovers: ContractCarryover[];
+  refunds: ContractRefund[];
+  /** What still counts as income on this contract. */
+  keptCents: number;
 }
 
 /**
@@ -657,6 +697,12 @@ export interface Transaction {
    * which is nearly every row, so the list does not carry it for nothing.
    */
   receiptCustomerName?: string;
+  /**
+   * The contract this row was moved from, on a TRASLADO («Trasladar lo
+   * pagado»): money already counted on that contract, with no receipt of its
+   * own. Absent on every payment actually received.
+   */
+  carriedFromCode?: string;
   receiptVoidedAt: string | null;
   recordedByName: string;
   /**

@@ -47,6 +47,8 @@ import type { MoraAccount } from "../lib/mora.js";
 import { loadMoraAccounts } from "../lib/moraAccounts.js";
 import { healthRulesOf, readSettings } from "../lib/settings.js";
 import { businessToday } from "../lib/time.js";
+import type { CarryoverView, PaidMoneyMoves } from "../lib/paidMoney.js";
+import { CARRYOVER_METHOD, paidMoneyMoves } from "../lib/paidMoney.js";
 import type { TransferView } from "../lib/transfers.js";
 import { transfersByContract } from "../lib/transfers.js";
 
@@ -310,7 +312,13 @@ function present(
   links: AmendmentLinks = NO_LINKS,
   mora?: MoraAccount,
   transfers: TransferView[] = [],
+  moves?: PaidMoneyMoves,
 ) {
+  const out = moves?.out.get(row.id);
+  const carriedIn: CarryoverView[] = moves?.in.get(row.id) ?? [];
+  const carriedOutCents = (out?.carryovers ?? []).reduce((total, entry) => total + entry.amountCents, 0);
+  const refundsCents = (out?.refunds ?? []).reduce((total, entry) => total + entry.amountCents, 0);
+
   const terms: ContractTerms = {
     saleType: row.saleType as SaleType,
     salePriceCents: row.salePriceCents,
@@ -437,6 +445,21 @@ function present(
      * hands, which is nearly all of them.
      */
     transfers,
+    /**
+     * «Trasladar lo pagado», from this contract: what moved on to the contract
+     * that replaced it, what is owed back (or was given back), and what still
+     * counts as income here. Only once something was decided; `null` before.
+     */
+    paidMoney:
+      out === undefined
+        ? null
+        : {
+            carryovers: out.carryovers,
+            refunds: out.refunds,
+            keptCents: row.paidToDateCents - carriedOutCents - refundsCents,
+          },
+    /** Traslados that arrived on this contract from the one it replaced. */
+    carriedIn,
   };
 }
 
@@ -756,6 +779,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
     const rules = healthRulesOf(readSettings(app.db));
     const mora = loadMoraAccounts(app.db, { asOf, timeZone: options.timeZone });
     const transfers = transfersByContract(app.db);
+    const moves = paidMoneyMoves(app.db);
 
     return reply.send({
       contracts: rows.map((row) =>
@@ -767,6 +791,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
           links,
           mora.get(row.id),
           transfers.get(row.id),
+          moves,
         ),
       ),
     });
@@ -1880,6 +1905,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
         id: payments.id,
         amountCents: payments.amountCents,
         receiptId: payments.receiptId,
+        method: payments.method,
       })
       .from(payments)
       .where(and(eq(payments.contractId, existing.id), sql`${payments.reversedAt} IS NULL`))
@@ -1903,6 +1929,24 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
       }
 
       settlement = parsed.data.settlement;
+
+      // A traslado is not money this contract received, so it cannot be
+      // refunded from here: reversing it would report cash going back that
+      // never came in on this lot. It is taken back on the contract it came
+      // from («Quitar» under «Lo pagado»), where what becomes of it is decided.
+      const carriedIn = contractPayments
+        .filter((p) => p.method === CARRYOVER_METHOD)
+        .reduce((sum, p) => sum + p.amountCents, 0);
+
+      if (settlement === "refunded" && carriedIn > 0) {
+        return reply.code(409).send({
+          error: "carryover_refund",
+          message:
+            `${existing.code} tiene L ${(carriedIn / 100).toLocaleString("es-HN")} trasladados de ` +
+            "su contrato anterior, que no se reembolsan desde aquí. Quita primero el traslado en el " +
+            "contrato anterior y decide allí qué pasa con ese dinero.",
+        });
+      }
 
       // Reversing money is a bigger power than closing a contract, so the refund
       // option carries its own capability.

@@ -1225,6 +1225,23 @@ export const payments = sqliteTable(
     reversedAt: text("reversed_at"),
     reversedBy: text("reversed_by").references(() => users.id),
     reversalReason: text("reversal_reason"),
+    /**
+     * Set on a TRASLADO: money paid on another contract that was moved to this
+     * one («Trasladar lo pagado»), usually from the contract an adenda
+     * replaced. Null on every payment that is money actually received.
+     *
+     * A traslado is a payment row so that everything that works out what a
+     * contract has paid — its balance, its prima, its cuotas, its mora, the
+     * receipts that come after it — counts it without being told. What it is
+     * NOT is money that came in that day: it has no receipt, and the Panel's
+     * «Cobrado» leaves it out, because the money was already counted once, on
+     * the day it really arrived, on the contract it came from. Its method is
+     * "carryover" for the same reason. It is undone by reversing it, like any
+     * other payment.
+     */
+    transferredFromContractId: text("transferred_from_contract_id").references(
+      (): AnySQLiteColumn => contracts.id,
+    ),
     createdAt: timestamp("created_at"),
   },
   (table) => [
@@ -1233,7 +1250,55 @@ export const payments = sqliteTable(
     // table constantly and neither should ever become a full scan.
     index("payments_contract_idx").on(table.contractId, table.paidOn),
     index("payments_receipt_idx").on(table.receiptId),
+    // Traslados are a handful of rows among thousands; this finds them
+    // without reading every payment — see `transferred_from_contract_id`.
+    index("payments_transferred_from_idx").on(table.transferredFromContractId),
   ],
+);
+
+/**
+ * Money paid on a contract that the business owes back to whoever paid it: a
+ * DEVOLUCIÓN, decided with «Trasladar lo pagado» on a contract that is no
+ * longer running.
+ *
+ * Two moments, kept apart on purpose. Deciding it («por devolver») moves no
+ * money, so it changes no month's figures — only what the old contract says
+ * happened to what was paid on it. Handing the money over is the second
+ * moment: `returned_on`, with how and a reference, and only from that day does
+ * it count as money going out. The payments it came from are never touched:
+ * they were real money on the day they arrived, and their receipts are paper
+ * somebody holds. Reversing them, which is what «Cancelar contrato» with
+ * «Reembolso» does, would rewrite those months as if nothing had come in.
+ *
+ * Never deleted. A devolución entered by mistake is removed with a reason.
+ */
+export const contractRefunds = sqliteTable(
+  "contract_refunds",
+  {
+    id: text("id").primaryKey(),
+    /** The contract the money was paid on, and is given back from. */
+    contractId: text("contract_id")
+      .notNull()
+      .references(() => contracts.id),
+    amountCents: integer("amount_cents").notNull(),
+    reason: text("reason").notNull(),
+    recordedBy: text("recorded_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: timestamp("created_at"),
+    /** YYYY-MM-DD, the day the money was handed back. Null while it is still owed. */
+    returnedOn: text("returned_on"),
+    /** "cash" | "transfer", once returned. */
+    method: text("method"),
+    /** The bank's confirmation number, when it went back by transfer. */
+    reference: text("reference"),
+    returnedBy: text("returned_by").references(() => users.id),
+    returnedAt: text("returned_at"),
+    removedAt: text("removed_at"),
+    removedBy: text("removed_by").references(() => users.id),
+    removalReason: text("removal_reason"),
+  },
+  (table) => [index("contract_refunds_contract_idx").on(table.contractId)],
 );
 
 /* -------------------------------------------------------------------------- */
