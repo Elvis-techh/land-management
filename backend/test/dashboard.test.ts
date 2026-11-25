@@ -184,7 +184,7 @@ describe("panel general — an empty business", () => {
     assert.equal(body.collections.settledContracts, 0);
     assert.deepEqual(
       body.collections.buckets.map((bucket: Dashboard) => bucket.contracts),
-      [0, 0, 0, 0],
+      [0, 0, 0, 0, 0],
     );
     // The windows are still the right length: an empty chart is twelve empty
     // months, not an empty array the axis has nothing to draw from.

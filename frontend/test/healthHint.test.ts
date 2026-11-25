@@ -7,21 +7,27 @@ import { healthHint } from "../src/features/contracts/contractPresentation";
  * The sentence under a contract's chip, and on the Panel's buckets. It used to
  * say «cinco días de gracia» whatever Configuración said.
  */
-describe("the sentence that explains «Por vencer» and «Atrasado»", () => {
+describe("the sentence that explains «Por vencer», «En gracia» and «Atrasado»", () => {
   it("names the grace days set on Configuración", () => {
-    assert.equal(healthHint("due_soon", 5), "Tiene una cuota próxima o dentro de los 5 días de gracia.");
+    assert.equal(healthHint("in_grace", 5), "Venció una cuota y está dentro de los 5 días de gracia.");
     assert.equal(healthHint("overdue", 5), "Pasaron los 5 días de gracia y la cuota no entró.");
     assert.equal(healthHint("overdue", 3), "Pasaron los 3 días de gracia y la cuota no entró.");
   });
 
   it("says one day in the singular", () => {
-    assert.equal(healthHint("due_soon", 1), "Tiene una cuota próxima o dentro de su día de gracia.");
+    assert.equal(healthHint("in_grace", 1), "Venció una cuota y está en su día de gracia.");
     assert.equal(healthHint("overdue", 1), "Pasó el día de gracia y la cuota no entró.");
   });
 
   it("does not mention a grace when there is none", () => {
-    assert.equal(healthHint("due_soon", 0), "Tiene una cuota próxima o que vence hoy.");
+    assert.equal(healthHint("in_grace", 0), "No hay días de gracia: una cuota vencida pasa a «Atrasado».");
     assert.equal(healthHint("overdue", 0), "Venció una cuota y no entró.");
+  });
+
+  it("no longer mentions the grace under «Por vencer», which is not about it now", () => {
+    for (const graceDays of [0, 1, 5]) {
+      assert.equal(healthHint("due_soon", graceDays), "Tiene una cuota próxima o que vence hoy.");
+    }
   });
 
   it("keeps the other two as they were", () => {

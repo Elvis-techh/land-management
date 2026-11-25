@@ -158,18 +158,28 @@ describe("payment health", () => {
     // the grace period is for: a call, not a late notice.
     const report = assessContract(financed, paidThrough(2), "2026-04-09");
 
-    assert.equal(report.status, "due_soon");
+    assert.equal(report.status, "in_grace");
     assert.equal(report.arrearsCents, 0);
     assert.equal(report.monthsBehind, 0);
   });
 
-  it("keeps the last day of grace «Por vencer»: five days after the 5th is the 10th", () => {
+  it("calls it «En gracia» from the day after it falls due, not on the day", () => {
+    assert.equal(assessContract(financed, paidThrough(2), "2026-04-05").status, "due_soon");
+    assert.equal(assessContract(financed, paidThrough(2), "2026-04-06").status, "in_grace");
+  });
+
+  it("leaves «En gracia» as soon as the cuota is paid", () => {
+    // 6 April with April's cuota in: the next one is a month away.
+    assert.equal(assessContract(financed, paidThrough(3), "2026-04-06").status, "current");
+  });
+
+  it("keeps the last day of grace «En gracia»: five days after the 5th is the 10th", () => {
     // The mora is charged on the 11th, the day after the grace (lib/mora.ts).
     // «Atrasado» on the 10th called a customer late on a day they could still
     // pay without mora.
     const report = assessContract(financed, paidThrough(2), "2026-04-10");
 
-    assert.equal(report.status, "due_soon");
+    assert.equal(report.status, "in_grace");
     assert.equal(report.arrearsCents, 0);
     assert.equal(report.monthsBehind, 0);
   });
@@ -201,7 +211,7 @@ describe("payment health", () => {
     // 9 April, the cuota of the 5th unpaid. Five days of grace: not late yet.
     // Three: the grace ran to the 8th, so late since the 9th.
     const shortGrace = { graceDays: 3, atRiskPayments: 2 };
-    assert.equal(assessContract(financed, paidThrough(2), "2026-04-08", shortGrace).status, "due_soon");
+    assert.equal(assessContract(financed, paidThrough(2), "2026-04-08", shortGrace).status, "in_grace");
     assert.equal(assessContract(financed, paidThrough(2), "2026-04-09", shortGrace).status, "overdue");
 
     // Two cuotas behind is «En riesgo» by default, and only «Atrasado» when the
@@ -354,13 +364,13 @@ describe("payment health", () => {
       const report = assessContract(july, 0, "2026-07-19");
 
       assert.equal(report.downPaymentLate, false);
-      assert.equal(report.status, "due_soon");
+      assert.equal(report.status, "in_grace");
     });
 
     it("keeps the prima out of «Atrasado» on its last day of grace, the 20th", () => {
       const lastDay = assessContract(july, 0, "2026-07-20");
       assert.equal(lastDay.downPaymentLate, false);
-      assert.equal(lastDay.status, "due_soon");
+      assert.equal(lastDay.status, "in_grace");
 
       const dayAfter = assessContract(july, 0, "2026-07-21");
       assert.equal(dayAfter.downPaymentLate, true);

@@ -23,6 +23,11 @@
   --amber-bg: #FCF6EA;
   --amber-dark: #D4A352;
 
+  /* «En gracia»: between «Por vencer» (amber) and «Atrasado» (clay). */
+  --orange: #E8923A;
+  --orange-bg: #FDF0E1;
+  --orange-dark: #A85C12;
+
   --red: #E56B6F;
   --red-bg: #FAEBEC;
   --red-dark: #B54A4D;
@@ -700,6 +705,12 @@ nav.nav {
   color: var(--amber-dark);
   background: var(--amber-bg);
   border-color: var(--amber);
+}
+
+.stamp.grace {
+  color: var(--orange-dark);
+  background: var(--orange-bg);
+  border-color: var(--orange);
 }
 
 .stamp.danger {

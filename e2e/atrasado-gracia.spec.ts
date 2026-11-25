@@ -1,11 +1,12 @@
 import { expect, goTo, logIn, screen, test, uniqueTag } from "./helpers";
 
 /*
- * «Atrasado» starts the day after the last day of grace, the day the mora is
- * charged, not on the last day itself. With the seed's 5 días de gracia
- * (settings.spec.ts puts them back to 5): a cuota that fell due 5 days ago is
- * still «Por vencer», and one that fell due 6 days ago is «Atrasado». The
- * sentence under the chip names the 5 days from Configuración.
+ * The three labels around a due date. With the seed's 5 días de gracia
+ * (settings.spec.ts puts them back to 5): a cuota that falls due today is
+ * «Por vencer», one that fell due 5 days ago is «En gracia», and one that fell
+ * due 6 days ago is «Atrasado» — the day the mora is charged, not on the last
+ * day of grace itself. The sentence under the chip names the 5 days from
+ * Configuración.
  *
  * The customers, lots and contracts are the test's own, made through the API.
  */
@@ -28,7 +29,14 @@ function shiftDays(isoDate: string, days: number): string {
   return new Date(Date.parse(`${isoDate}T00:00:00Z`) + days * DAY_MS).toISOString().slice(0, 10);
 }
 
-test("a cuota is «Por vencer» on its last day of grace and «Atrasado» the day after", async ({ page }, testInfo) => {
+/** "05 mar 2026", as the Contratos list writes a date. */
+function listDate(isoDate: string): string {
+  const months = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+  const [year, month, day] = isoDate.split("-");
+  return `${day} ${months[Number(month) - 1]} ${year}`;
+}
+
+test("a cuota is «Por vencer» on its due date, «En gracia» to the last day of grace, then «Atrasado»", async ({ page }, testInfo) => {
   const today = officeToday();
   const tag = uniqueTag();
   const number = (parseInt(tag, 36) % 9000) + 1000;
@@ -78,8 +86,10 @@ test("a cuota is «Por vencer» on its last day of grace and «Atrasado» the da
     return contract.code as string;
   };
 
+  const dueToday = `Hoyvence ${tag}`;
   const lastDay = `Gracia ${tag}`;
   const dayAfter = `Atraso ${tag}`;
+  await cuotaDue(0, dueToday, `HY-${number}`);
   const lastDayCode = await cuotaDue(5, lastDay, `GR-${number}`);
   const dayAfterCode = await cuotaDue(6, dayAfter, `AT-${number}`);
 
@@ -92,8 +102,8 @@ test("a cuota is «Por vencer» on its last day of grace and «Atrasado» the da
   let panel = dialogs.first();
   await expect(panel).toContainText(lastDayCode);
   let headline = panel.locator(".cp-section").first();
-  await expect(headline.locator(".contract-progress-head")).toContainText("Por vencer");
-  await expect(headline).toContainText("Tiene una cuota próxima o dentro de los 5 días de gracia.");
+  await expect(headline.locator(".contract-progress-head")).toContainText("En gracia");
+  await expect(headline).toContainText("Venció una cuota y está dentro de los 5 días de gracia.");
   await headline.screenshot({ path: testInfo.outputPath("ultimo-dia-de-gracia.png") });
   await panel.locator(".modal-close").click();
   await expect(dialogs).toHaveCount(0);
@@ -107,4 +117,50 @@ test("a cuota is «Por vencer» on its last day of grace and «Atrasado» the da
   await expect(headline.locator(".contract-progress-head")).toContainText("Atrasado");
   await expect(headline).toContainText("Pasaron los 5 días de gracia y la cuota no entró.");
   await headline.screenshot({ path: testInfo.outputPath("dia-despues-de-la-gracia.png") });
+  await panel.locator(".modal-close").click();
+  await expect(dialogs).toHaveCount(0);
+
+  // Due today: not past its date yet.
+  const rows = page.locator(".contract-row:visible, .contract-card:visible");
+  await search.fill(dueToday);
+  await expect(rows).toHaveCount(1);
+  await expect(rows.locator(".stamp")).toHaveText("Por vencer");
+
+  // The list says the date passed. A phone card has no due date line.
+  await search.fill(lastDay);
+  await expect(rows).toHaveCount(1);
+  await expect(rows.locator(".stamp")).toHaveText("En gracia");
+  if (testInfo.project.name === "desktop") {
+    await expect(rows).toContainText(`venció ${listDate(shiftDays(today, -5))}`);
+  }
+  await rows.screenshot({ path: testInfo.outputPath("en-gracia-en-la-lista.png") });
+
+  // «En gracia» filters on its own: neither neighbour comes with it.
+  await search.fill(tag);
+  await expect(rows).toHaveCount(3);
+  await screen(page).getByRole("button", { name: /Filtros/ }).click();
+  await page.getByRole("checkbox", { name: "En gracia", exact: true }).check();
+  await expect(rows).toHaveCount(1);
+  await expect(rows).toContainText("En gracia");
+  await page.screenshot({ path: testInfo.outputPath("filtro-en-gracia.png") });
+  await page.getByRole("checkbox", { name: "En gracia", exact: true }).uncheck();
+  await expect(rows).toHaveCount(3);
+  await page.keyboard.press("Escape");
+
+  // The Panel counts it in a box of its own, between its two neighbours.
+  await goTo(page, "Panel general");
+  const buckets = page.locator(".dash-bucket");
+  await expect(buckets.locator(".stamp")).toHaveText([
+    "Al día",
+    "Por vencer",
+    "En gracia",
+    "Atrasado",
+    "En riesgo",
+  ]);
+  await expect(buckets.nth(2)).toHaveAttribute(
+    "title",
+    "Venció una cuota y está dentro de los 5 días de gracia.",
+  );
+  expect(Number(await buckets.nth(2).locator(".dash-bucket-count").innerText())).toBeGreaterThan(0);
+  await page.locator(".dash-buckets").screenshot({ path: testInfo.outputPath("panel-cobranza.png") });
 });

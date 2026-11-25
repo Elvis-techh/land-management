@@ -182,18 +182,18 @@ export function expectedByMonth(terms: ContractTerms): Map<string, number> {
  * Is this customer actually behind, as opposed to merely approaching a due
  * date?
  *
- * `due_soon` deliberately counts as NOT behind. It covers the week before an
- * installment falls due and the five-day grace after it, which is a reason to
- * make a phone call and not a reason to appear in a list of debtors. Putting it
- * on the wrong side of this line would report a healthy book as a failing one
- * every month, five days after the due day.
+ * `due_soon` and `in_grace` deliberately count as NOT behind. They cover the
+ * week before an installment falls due and the grace days after it, which is a
+ * reason to make a phone call and not a reason to appear in a list of debtors.
+ * Putting either on the wrong side of this line would report a healthy book as
+ * a failing one every month, just after the due day.
  */
 export function isBehind(status: PaymentHealth): boolean {
   return status === "overdue" || status === "at_risk";
 }
 
 /**
- * The four payment-health buckets, in the order they escalate.
+ * The five payment-health buckets, in the order they escalate.
  *
  * Exported as a list rather than written out at each call site so the summary
  * counters, the chart legend and the response all agree on both the set and the
@@ -202,6 +202,7 @@ export function isBehind(status: PaymentHealth): boolean {
 export const HEALTH_ORDER: readonly PaymentHealth[] = [
   "current",
   "due_soon",
+  "in_grace",
   "overdue",
   "at_risk",
 ];

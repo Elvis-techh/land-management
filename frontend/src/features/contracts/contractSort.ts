@@ -56,8 +56,9 @@ export const SORT_OPTIONS: Array<{
 const HEALTH_SEVERITY: Record<Contract["health"]["status"], number> = {
   current: 0,
   due_soon: 1,
-  overdue: 2,
-  at_risk: 3,
+  in_grace: 2,
+  overdue: 3,
+  at_risk: 4,
 };
 
 /** How many contracts (within the list being sorted) each customer holds. */

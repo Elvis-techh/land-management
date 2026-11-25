@@ -120,8 +120,8 @@ doing the reading. See `src/lib/storedFiles.ts`.
 Keep three distinct concepts:
 
 1. Contract lifecycle: draft, active, paid_off, cancelled, or defaulted.
-2. Payment health: current, due_soon, overdue, or at_risk, calculated from the
-   payment schedule and grace-period policy.
+2. Payment health: current, due_soon, in_grace, overdue, or at_risk,
+   calculated from the payment schedule and grace-period policy.
 3. Lot availability: derived from active reservations/contracts and completed
    sales, not directly edited during normal operations.
 
