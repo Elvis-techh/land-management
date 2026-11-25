@@ -63,10 +63,16 @@ export function defaultMessage(contract: Contract, money: MoneyView): string {
         ? ` Ya tiene abonado ${formatMoney(contract.health.nextDueCredit, money)} de esa cuota.`
         : "";
 
-    return `${greeting} ${reference} Su próxima cuota es de ${formatMoney(
-      contract.health.nextInstallment,
-      money,
-    )} y vence el ${formatDueDate(contract.health.nextDueOn)}.${advance}`;
+    const cuota = formatMoney(contract.health.nextInstallment, money);
+    const dueDate = formatDueDate(contract.health.nextDueOn);
+
+    // In the grace days the date has passed: «vence el» would tell the customer
+    // it is still ahead.
+    if (contract.health.status === "in_grace") {
+      return `${greeting} ${reference} Su cuota de ${cuota} venció el ${dueDate}.${advance}`;
+    }
+
+    return `${greeting} ${reference} Su próxima cuota es de ${cuota} y vence el ${dueDate}.${advance}`;
   }
 
   return `${greeting} ${reference}`;

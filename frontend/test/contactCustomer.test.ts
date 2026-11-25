@@ -158,6 +158,31 @@ describe("the message written to a customer", () => {
     assert.ok(!message.includes("7,249.51"), message);
     assert.ok(message.includes("abonado") && message.includes("0.49"), message);
   });
+
+  it("says the cuota «venció» in its grace days, not that it «vence»", () => {
+    const message = defaultMessage(
+      buildContract({
+        health: {
+          status: "in_grace",
+          arrears: cents(0),
+          monthsBehind: 0,
+          monthsAhead: 0,
+          nextDueOn: "2026-09-10",
+          nextDueAmount: cents(5_000),
+          nextInstallment: cents(5_000),
+          nextDueCredit: cents(0),
+          settled: false,
+        },
+      } as unknown as Partial<Contract>),
+      money,
+    );
+
+    assert.ok(message.includes("venció el 10 de septiembre"), message);
+    assert.ok(!message.includes("vence el"), message);
+    assert.ok(!message.includes("próxima"), message);
+    // Not late yet, so no demand and no mention of an overdue balance.
+    assert.ok(!message.includes("vencido"), message);
+  });
 });
 
 describe("the link that carries it", () => {

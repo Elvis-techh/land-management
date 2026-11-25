@@ -228,7 +228,7 @@ describe("the Configuración screen", async () => {
       return list.contracts.find((row: { id: string }) => row.id === ids.contractId).health.status;
     };
 
-    assert.equal(await statusNow(), "due_soon");
+    assert.equal(await statusNow(), "in_grace");
 
     const settings = await read(ownerCookie);
     assert.equal(

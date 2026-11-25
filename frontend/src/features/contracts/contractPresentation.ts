@@ -12,17 +12,20 @@ import type { Contract, ContractStatus, PaymentHealth, SaleType } from "../../ty
  */
 
 /**
- * Payment health, escalating through four steps.
+ * Payment health, escalating through five steps.
  *
- * Note that `due_soon` covers the grace days, their last day included, as well
- * as the week before an installment falls due. That is deliberate: green would
- * tell staff there is nothing to do on day three of the grace, when a phone
- * call is exactly what is wanted. Amber says "worth a call", red says "this is
- * now a debt". The sentence that explains each one is `healthHint`.
+ * `due_soon` is the week before an installment falls due, the due date
+ * included. `in_grace` starts the day after and runs to the last day of grace:
+ * the date has passed, but the contract is not late yet. Green would tell staff
+ * there is nothing to do on day three of the grace, when a phone call is
+ * exactly what is wanted. Amber says "coming up", orange "the date passed",
+ * clay and red "this is now a debt". The sentence that explains each one is
+ * `healthHint`.
  */
 export const HEALTH_PRESENTATION: Record<PaymentHealth, { label: string; stampClass: string }> = {
   current: { label: "Al día", stampClass: "stamp success" },
   due_soon: { label: "Por vencer", stampClass: "stamp warning" },
+  in_grace: { label: "En gracia", stampClass: "stamp grace" },
   overdue: { label: "Atrasado", stampClass: "stamp clay" },
   at_risk: { label: "En riesgo", stampClass: "stamp danger" },
 };
@@ -37,11 +40,15 @@ export function healthHint(health: PaymentHealth, graceDays: number): string {
     case "current":
       return "No debe nada vencido.";
     case "due_soon":
+      return "Tiene una cuota próxima o que vence hoy.";
+    case "in_grace":
+      // With no grace days nothing is ever «En gracia»; the Panel still shows
+      // its box, and this is what it says.
       return graceDays === 0
-        ? "Tiene una cuota próxima o que vence hoy."
+        ? "No hay días de gracia: una cuota vencida pasa a «Atrasado»."
         : graceDays === 1
-          ? "Tiene una cuota próxima o dentro de su día de gracia."
-          : `Tiene una cuota próxima o dentro de los ${graceDays} días de gracia.`;
+          ? "Venció una cuota y está en su día de gracia."
+          : `Venció una cuota y está dentro de los ${graceDays} días de gracia.`;
     case "overdue":
       return graceDays === 0
         ? "Venció una cuota y no entró."

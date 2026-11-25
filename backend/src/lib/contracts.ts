@@ -44,7 +44,11 @@ const DAY_MS = 86_400_000;
 /** "financed" — installments; "cash" — settled at signing; "donation" — no money. */
 export type SaleType = "financed" | "cash" | "donation";
 
-export type PaymentHealth = "current" | "due_soon" | "overdue" | "at_risk";
+/**
+ * "due_soon" is an installment falling due today or within DUE_SOON_DAYS;
+ * "in_grace" is one whose due date has passed with its grace days still running.
+ */
+export type PaymentHealth = "current" | "due_soon" | "in_grace" | "overdue" | "at_risk";
 
 /**
  * The terms this file needs. A subset of the contracts row on purpose: it keeps
@@ -501,12 +505,16 @@ export function assessContract(
     status = "at_risk";
   } else if (missedPayments >= 1) {
     status = "overdue";
-  } else if (
-    !settled &&
-    upcoming !== undefined &&
-    daysBetween(asOf, upcoming.dueOn) <= DUE_SOON_DAYS
-  ) {
-    status = "due_soon";
+  } else if (!settled && upcoming !== undefined) {
+    const daysUntilDue = daysBetween(asOf, upcoming.dueOn);
+
+    // Past its due date and not counted as missed above: the grace is still
+    // running. On the due date itself it has not passed yet.
+    if (daysUntilDue < 0) {
+      status = "in_grace";
+    } else if (daysUntilDue <= DUE_SOON_DAYS) {
+      status = "due_soon";
+    }
   }
 
   return {

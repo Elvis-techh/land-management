@@ -646,7 +646,9 @@ describe("«Atrasado» and the mora", () => {
       const label = `${graceDays} días de gracia`;
 
       assert.equal(chargedOn, shiftDays("2026-10-05", graceDays + 1), label);
-      assert.equal(assessContract(TERMS, paid, dayBefore, health).status, "due_soon", `${label}, ${dayBefore}`);
+      // With no grace the day before the charge is the due date itself.
+      const stillOnTime = graceDays === 0 ? "due_soon" : "in_grace";
+      assert.equal(assessContract(TERMS, paid, dayBefore, health).status, stillOnTime, `${label}, ${dayBefore}`);
       assert.equal(assessContract(TERMS, paid, chargedOn, health).status, "overdue", `${label}, ${chargedOn}`);
       assert.equal(oldestLate(TERMS, paid, dayBefore, graceDays), null, `${label}, ${dayBefore}`);
       assert.notEqual(oldestLate(TERMS, paid, chargedOn, graceDays), null, `${label}, ${chargedOn}`);

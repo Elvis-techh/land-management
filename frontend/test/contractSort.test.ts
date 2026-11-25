@@ -14,6 +14,21 @@ const contract = (code: string, projectName: string): Contract =>
     balance: 0,
   }) as unknown as Contract;
 
+describe("sortContracts — payment health", () => {
+  it("puts «En gracia» between «Por vencer» and «Atrasado», worst first", () => {
+    const rows = ["due_soon", "at_risk", "current", "in_grace", "overdue"].map(
+      (status) => ({ ...contract(status, "Alameda"), health: { status } }) as unknown as Contract,
+    );
+
+    const ordered = sortContracts(rows, [{ field: "health", direction: "desc" }]);
+
+    assert.deepEqual(
+      ordered.map((row) => row.health.status),
+      ["at_risk", "overdue", "in_grace", "due_soon", "current"],
+    );
+  });
+});
+
 describe("sortContracts — project", () => {
   it("orders by the lot's project name", () => {
     const rows = [

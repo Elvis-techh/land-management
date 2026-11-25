@@ -19,7 +19,7 @@ import {
 import { SORT_OPTIONS } from "./contractSort";
 import type { ContractSort } from "./contractSort";
 
-const HEALTH_ORDER: PaymentHealth[] = ["at_risk", "overdue", "due_soon", "current"];
+const HEALTH_ORDER: PaymentHealth[] = ["at_risk", "overdue", "in_grace", "due_soon", "current"];
 const STATUS_ORDER: ContractStatus[] = [
   "active",
   "paid_off",

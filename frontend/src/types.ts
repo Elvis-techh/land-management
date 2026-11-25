@@ -270,7 +270,7 @@ export interface ContractAmendmentLink {
  * Never stored, and deliberately not merged with `ContractStatus`: a contract
  * can be perfectly active and two months behind, and one word cannot say both.
  */
-export type PaymentHealth = "current" | "due_soon" | "overdue" | "at_risk";
+export type PaymentHealth = "current" | "due_soon" | "in_grace" | "overdue" | "at_risk";
 
 /** What was agreed. Only `financed` is computed — the rest is on the contract. */
 export interface ContractTerms {

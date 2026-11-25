@@ -500,7 +500,8 @@ export function ContractsPage({
                               {detail !== "" && <span className="cell-sub">{detail}</span>}
                               {contract.health.nextDueOn && detail === "" && (
                                 <span className="cell-sub">
-                                  vence {formatDate(contract.health.nextDueOn)}
+                                  {contract.health.status === "in_grace" ? "venció" : "vence"}{" "}
+                                  {formatDate(contract.health.nextDueOn)}
                                 </span>
                               )}
                             </td>

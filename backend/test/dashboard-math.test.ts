@@ -188,6 +188,7 @@ describe("who counts as behind", () => {
     // every month, five days after the due day.
     assert.equal(isBehind("current"), false);
     assert.equal(isBehind("due_soon"), false);
+    assert.equal(isBehind("in_grace"), false);
     assert.equal(isBehind("overdue"), true);
     assert.equal(isBehind("at_risk"), true);
   });
