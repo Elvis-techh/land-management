@@ -1,0 +1,12 @@
+--
+-- `sessions.id` now holds a SHA-256 of the session token, not the token itself
+-- (see src/auth/session.ts), so a copy of the database — the nightly backup in
+-- the bucket, or one pulled down to a laptop — holds nothing a browser could
+-- use to sign in.
+--
+-- The rows already here hold raw tokens. They would never match a hashed
+-- lookup again, and hashing them in place would keep alive every token that
+-- has already left the server inside a backup. So they go: everyone signs in
+-- once after this deploy, and no backup taken before it can sign anyone in.
+--
+DELETE FROM `sessions`;
