@@ -12,6 +12,7 @@ export type AuditAction =
   | "reassign_lot"
   | "replace"
   | "transfer"
+  | "paid_money"
   | "reverse"
   | "mora_charge"
   | "mora_remove"

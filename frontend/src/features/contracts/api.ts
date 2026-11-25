@@ -181,6 +181,40 @@ export function transferContracts(draft: TransferDraft) {
   );
 }
 
+/** «Trasladar lo pagado»: what becomes of money paid on a replaced contract. */
+export interface PaidMoneyDraft {
+  /** What moves to the contract that replaced it. Zero for none. */
+  carryoverCents: number;
+  carryoverType: "down_payment" | "installment";
+  /** YYYY-MM-DD, the day it counts from there. */
+  carryoverOn: string | null;
+  /** What is owed back to whoever paid it. Zero for none. */
+  refundCents: number;
+  reason: string;
+}
+
+export function decidePaidMoney(contractId: string, draft: PaidMoneyDraft) {
+  return api.post<{ undecidedCents: number }>(`/api/contracts/${contractId}/paid-money`, draft);
+}
+
+/** Take a traslado back: the money is undecided on the old contract again. */
+export function removeCarryover(paymentId: string, reason: string) {
+  return api.post<{ ok: true }>(`/api/carryovers/${paymentId}/remove`, { reason });
+}
+
+/** The day a devolución was handed over, and how. */
+export function returnRefund(
+  refundId: string,
+  body: { returnedOn: string; method: "cash" | "transfer"; reference: string | null },
+) {
+  return api.post<{ ok: true }>(`/api/refunds/${refundId}/return`, body);
+}
+
+/** A devolución entered by mistake. */
+export function removeRefund(refundId: string, reason: string) {
+  return api.post<{ ok: true }>(`/api/refunds/${refundId}/remove`, { reason });
+}
+
 /** What happens to money the customer already paid — see ContractCancelDialog. */
 export type CancelSettlement = "none" | "held" | "refunded";
 

@@ -300,7 +300,8 @@ export function ContractAmendDialog({
             Una adenda no edita los contratos: los cierra como «Reemplazado», con sus pagos y
             recibos tal como están, y abre contratos nuevos en los mismos lotes con lo que se
             acuerde abajo. Lo ya pagado ({formatMoney(cents(paidBefore), money)}) queda como
-            ingreso: no se devuelve ni se abona al nuevo precio.
+            ingreso hasta que decidas otra cosa: después de guardar, abre el contrato anterior y usa
+            «Decidir lo pagado» para pasar una parte o todo al contrato nuevo, o para devolverlo.
           </p>
 
           <div className="form-field">

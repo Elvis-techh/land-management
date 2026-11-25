@@ -77,7 +77,12 @@ function matchesStatus(transaction: Transaction, status: StatusFilter): boolean 
     case "receipted":
       return transaction.receiptId !== null && transaction.reversedAt === null;
     case "unreceipted":
-      return transaction.receiptId === null && transaction.reversedAt === null;
+      // A traslado never has a receipt and is not a payment that was missed.
+      return (
+        transaction.receiptId === null &&
+        transaction.reversedAt === null &&
+        transaction.carriedFromCode === undefined
+      );
     case "reversed":
       return transaction.reversedAt !== null;
   }

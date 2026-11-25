@@ -473,10 +473,22 @@ function TransactionRow({
           )}
           {/* The one thing the old receipt tag also said, and only when it is
               the exception: this money was never put on paper. */}
-          {transaction.receiptCode === null && (
-            <span className="txn-receipt is-missing" title="Este pago nunca se imprimió">
-              sin recibo
+          {/* A traslado has no receipt by nature: it is money from another
+              contract, not a payment received. Saying «sin recibo» would read
+              as something forgotten. */}
+          {transaction.carriedFromCode !== undefined ? (
+            <span
+              className="txn-note"
+              title={`Dinero pagado en ${transaction.carriedFromCode} que pasó a este contrato. No es un pago nuevo.`}
+            >
+              Traslado de {transaction.carriedFromCode}
             </span>
+          ) : (
+            transaction.receiptCode === null && (
+              <span className="txn-receipt is-missing" title="Este pago nunca se imprimió">
+                sin recibo
+              </span>
+            )
           )}
           {isReversed && <span className="txn-void">anulada</span>}
           {/* A receipt from before the contract was handed over: it stays in
@@ -494,7 +506,8 @@ function TransactionRow({
         <span className="txn-amount">{formatMoney(transaction.amount, money)}</span>
       </button>
 
-      {canEdit && !isReversed && (
+      {/* A traslado is changed on the contract it came from, not here. */}
+      {canEdit && !isReversed && transaction.carriedFromCode === undefined && (
         <button
           type="button"
           className="icon-btn txn-edit"

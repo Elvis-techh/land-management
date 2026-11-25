@@ -29,6 +29,7 @@ const actionPresentation: Record<AuditAction, { label: string; stampClass: strin
   reassign_lot: { label: "Lote corregido", stampClass: "stamp clay" },
   replace: { label: "Reemplazado por adenda", stampClass: "stamp clay" },
   transfer: { label: "Traspaso", stampClass: "stamp clay" },
+  paid_money: { label: "Lo pagado", stampClass: "stamp clay" },
   reverse: { label: "Reversado", stampClass: "stamp danger" },
   mora_charge: { label: "Mora cargada", stampClass: "stamp clay" },
   mora_remove: { label: "Mora quitada", stampClass: "stamp danger" },
@@ -83,6 +84,12 @@ const fieldLabels: Record<string, string> = {
   replaces: "Reemplaza a",
   // A contract handed to another customer — see POST /contracts/transfers.
   transferredOn: "Fecha del traspaso",
+  // What became of money paid on a replaced contract — see routes/paidMoney.ts.
+  keptCents: "Queda como ingreso",
+  carriedCents: "Pasa al contrato nuevo",
+  carriedTo: "Contrato nuevo",
+  refundCents: "Por devolver",
+  refundReturnedOn: "Devuelto el",
   // A payment corrected, and a receipt voided — which restates the whole
   // receipt, since issuing one leaves no row of its own.
   amountCents: "Monto",
@@ -151,6 +158,9 @@ const moneyFields = new Set([
   "capCents",
   "minUnpaidCents",
   "moraPendingCents",
+  "keptCents",
+  "carriedCents",
+  "refundCents",
 ]);
 
 function formatValue(field: string, value: unknown, money: MoneyView): string {

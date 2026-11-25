@@ -254,7 +254,27 @@ export interface Dashboard {
       customerName: string;
     }>;
     unprovenTransfers: { count: number; amountCents: Cents };
+    /**
+     * Devoluciones («Trasladar lo pagado»): money owed back to somebody, and
+     * money given back in the month. Kept apart from «Cobrado», which only
+     * counts what came in.
+     */
+    refunds: {
+      pending: RefundRow[];
+      returned: RefundRow[];
+    };
   } | null;
+}
+
+/** One devolución on the Panel. */
+export interface RefundRow {
+  id: string;
+  amountCents: Cents;
+  /** YYYY-MM-DD, or null while it is still owed. */
+  returnedOn: string | null;
+  method: string | null;
+  contractCode: string;
+  customerName: string;
 }
 
 /**
@@ -387,6 +407,10 @@ export async function fetchDashboard(month?: string): Promise<Dashboard> {
           unprovenTransfers: {
             ...raw.control.unprovenTransfers,
             amountCents: c(raw.control.unprovenTransfers.amountCents),
+          },
+          refunds: {
+            pending: raw.control.refunds.pending.map((row) => ({ ...row, amountCents: c(row.amountCents) })),
+            returned: raw.control.refunds.returned.map((row) => ({ ...row, amountCents: c(row.amountCents) })),
           },
         }
       : null,

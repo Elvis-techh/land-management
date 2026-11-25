@@ -67,6 +67,12 @@ export interface AuditEntry {
     | "replace"
     /** A contract handed to another customer, «Traspasar» — a cesión, not a new sale. */
     | "transfer"
+    /**
+     * What became of money paid on a replaced contract («Trasladar lo
+     * pagado»): moved to the new contract, to be given back, given back, or
+     * one of those taken back. `before`/`after` carry the figures.
+     */
+    | "paid_money"
     /** Mora put on one contract by hand, «Cargar mora». */
     | "mora_charge"
     /** Mora put on by hand, taken back with «Quitar». */

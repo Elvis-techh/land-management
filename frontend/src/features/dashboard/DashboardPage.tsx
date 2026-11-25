@@ -5,7 +5,7 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { IconChevronDown, IconDrag, IconEye, IconEyeOff } from "../../components/Icons";
 import { getInitials } from "../../lib/initials";
 import type { Cents, MoneyView } from "../../lib/money";
-import { formatMoney, formatMoneyParts } from "../../lib/money";
+import { cents, formatMoney, formatMoneyParts } from "../../lib/money";
 import { buildProjectAccents } from "../../lib/projectAccent";
 import { HEALTH_PRESENTATION, healthHint } from "../contracts/contractPresentation";
 import { BEHIND_HEALTH } from "../contracts/contractFilters";
@@ -1051,6 +1051,63 @@ export function DashboardPage({
                   <p className="dash-flag-note">
                     Sin número de confirmación ni foto del depósito: no hay con qué compararlas
                     contra el estado de cuenta.
+                  </p>
+                </div>
+
+                {/* Money that goes OUT, which «Cobrado» never counts: what is
+                    owed back to somebody, and what was given back this month.
+                    See «Lo pagado con este contrato» on a replaced contract. */}
+                <div className="dash-flag">
+                  <p className="dash-flag-label">Devoluciones</p>
+                  <p className="dash-flag-value">
+                    {data.control.refunds.pending.length === 0 &&
+                    data.control.refunds.returned.length === 0
+                      ? "Ninguna"
+                      : [
+                          data.control.refunds.pending.length > 0 &&
+                            `${formatMoney(
+                              cents(
+                                data.control.refunds.pending.reduce(
+                                  (total, row) => total + row.amountCents,
+                                  0,
+                                ),
+                              ),
+                              money,
+                            )} por devolver`,
+                          data.control.refunds.returned.length > 0 &&
+                            `${formatMoney(
+                              cents(
+                                data.control.refunds.returned.reduce(
+                                  (total, row) => total + row.amountCents,
+                                  0,
+                                ),
+                              ),
+                              money,
+                            )} devueltos en ${formatMonthName(data.month)}`,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                  </p>
+                  {(data.control.refunds.pending.length > 0 ||
+                    data.control.refunds.returned.length > 0) && (
+                    <ul className="dash-flag-list">
+                      {[...data.control.refunds.pending, ...data.control.refunds.returned].map((row) => (
+                        <li key={row.id}>
+                          <span className="code-badge">{row.contractCode}</span>
+                          <span className="dash-flag-list-name">{row.customerName}</span>
+                          <span className="cell-sub">
+                            {formatMoney(row.amountCents, money)} ·{" "}
+                            {row.returnedOn === null
+                              ? "por devolver"
+                              : `devuelto el ${formatDate(row.returnedOn)}`}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <p className="dash-flag-note">
+                    Lo que sale no se resta de «Cobrado»: se registra el día en que se entrega,
+                    en el contrato.
                   </p>
                 </div>
 

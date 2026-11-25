@@ -1232,6 +1232,26 @@ tbody tr:hover {
   }
 }
 
+/* «Lo pagado con este contrato»: an amount with its «Quitar» or «Registrar
+   devolución» beside it, wrapping under it on a phone. */
+.cp-row.is-wrapping {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
+.cp-row.is-wrapping > .cp-doc-meta {
+  flex: 1 1 11rem;
+}
+
+.cp-row-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 4px 12px;
+  margin-left: auto;
+}
+
 /* Beside a receipt issued before its lot was handed over («Traspasar»): why
    the paper names somebody else. For the office only; never printed. */
 .receipt-holder-note {
