@@ -11,12 +11,12 @@
  * `app.ts` calls `publishChange` once, from an `onResponse` hook, so a route
  * cannot forget to announce its own write.
  *
- * IN PROCESS, deliberately. One Node process owns one SQLite file — that is
- * already true of every other assumption in this codebase, from the gapless
- * receipt sequence allocated under the write lock to the in-memory exchange
- * rate timer. A second process would need Redis or LISTEN/NOTIFY to do this,
- * and it would need them for the receipt sequence first. A `Set` of callbacks
- * is the honest shape of the problem we actually have.
+ * IN PROCESS, deliberately. One Node process owns each company's SQLite file —
+ * that is already true of every other assumption in this codebase, from the
+ * gapless receipt sequence allocated under the write lock to the in-memory
+ * exchange rate timer. A second process would need Redis or LISTEN/NOTIFY to
+ * do this, and it would need them for the receipt sequence first. A `Set` of
+ * callbacks per company is the honest shape of the problem we actually have.
  */
 
 /** What a change announcement carries. */
@@ -54,25 +54,41 @@ export interface ChangeEvent {
 
 type ChangeListener = (event: ChangeEvent) => void;
 
-const listeners = new Set<ChangeListener>();
+/**
+ * The open streams, by company id.
+ *
+ * Each company hears only its own writes. A payment in one company's office
+ * must not make another company's screens re-read, and the event's resource
+ * name is itself a small fact about what that company is doing.
+ */
+const listeners = new Map<string, Set<ChangeListener>>();
 
 /**
- * Listen for writes. Returns the function that stops listening.
+ * Listen for one company's writes. Returns the function that stops listening.
  *
- * The caller MUST call it — one open SSE connection is one entry in this set,
- * and a connection that closes without unsubscribing is a listener writing to a
- * dead socket forever.
+ * The caller MUST call it — one open SSE connection is one entry here, and a
+ * connection that closes without unsubscribing is a listener writing to a dead
+ * socket forever.
  */
-export function subscribeToChanges(listener: ChangeListener): () => void {
-  listeners.add(listener);
+export function subscribeToChanges(companyId: string, listener: ChangeListener): () => void {
+  let forCompany = listeners.get(companyId);
+  if (!forCompany) {
+    forCompany = new Set();
+    listeners.set(companyId, forCompany);
+  }
+  forCompany.add(listener);
 
   return () => {
-    listeners.delete(listener);
+    forCompany.delete(listener);
+    // So a company with no open tab leaves nothing behind.
+    if (forCompany.size === 0 && listeners.get(companyId) === forCompany) {
+      listeners.delete(companyId);
+    }
   };
 }
 
 /**
- * Announce a write to every open stream.
+ * Announce a write to every open stream of that company.
  *
  * Synchronous and best-effort. A subscriber that throws — a socket that died
  * between the check and the write — is dropped on the floor rather than allowed
@@ -80,8 +96,8 @@ export function subscribeToChanges(listener: ChangeListener): () => void {
  * been sent, and a broken listener must never turn a successful write into a
  * failed request.
  */
-export function publishChange(event: ChangeEvent): void {
-  for (const listener of listeners) {
+export function publishChange(companyId: string, event: ChangeEvent): void {
+  for (const listener of listeners.get(companyId) ?? []) {
     try {
       listener(event);
     } catch {
@@ -90,9 +106,13 @@ export function publishChange(event: ChangeEvent): void {
   }
 }
 
-/** How many streams are open. Exported for the tests and the health log. */
+/** How many streams are open, for every company. Exported for the tests and the health log. */
 export function changeListenerCount(): number {
-  return listeners.size;
+  let count = 0;
+  for (const forCompany of listeners.values()) {
+    count += forCompany.size;
+  }
+  return count;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -120,7 +140,16 @@ export function changeListenerCount(): number {
 /** Differs on every start, so a version from before a restart never matches. */
 const BOOT_ID = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 
-let writeGeneration = 0;
+/**
+ * Each company's write counter, by company id.
+ *
+ * Per company, so one company's busy afternoon does not make every other
+ * company's browsers download their lists again. An entry is never deleted,
+ * not even when a company's file is closed: starting its count again from
+ * zero could confirm a version handed out before as current. One number per
+ * company that has written since the start is nothing to keep.
+ */
+const writeGenerations = new Map<string, number>();
 
 /**
  * Called when a write STARTS and again when it has finished (see app.ts).
@@ -129,20 +158,28 @@ let writeGeneration = 0;
  * current: it was given the number from the start of the write, and by the
  * time the write is done the number has moved on again.
  */
-export function noteWrite(): void {
-  writeGeneration += 1;
+export function noteWrite(companyId: string): void {
+  writeGenerations.set(companyId, (writeGenerations.get(companyId) ?? 0) + 1);
 }
 
 /**
- * The version of everything a list can show, for this user.
+ * The version of everything a list can show, for this user of this company.
  *
- * - The write counter covers every write made through this process.
+ * - The company keeps one company's copy from ever being confirmed to another.
+ * - The write counter covers every write to that company made through this
+ *   process.
  * - SQLite's `data_version` covers a write by any OTHER connection to the file,
  *   such as somebody fixing a row by hand with the sqlite3 tool.
  * - The date covers anything that changes with the calendar alone.
  * - The user covers a shared office computer: one person's copy must never be
  *   confirmed as current to the next person who signs in on it.
  */
-export function dataVersion(dataVersionOfDb: number, today: string, userId: string): string {
-  return `W/"${BOOT_ID}-${writeGeneration}-${dataVersionOfDb}-${today}-${userId}"`;
+export function dataVersion(
+  companyId: string,
+  dataVersionOfDb: number,
+  today: string,
+  userId: string,
+): string {
+  const writes = writeGenerations.get(companyId) ?? 0;
+  return `W/"${BOOT_ID}-${companyId}-${writes}-${dataVersionOfDb}-${today}-${userId}"`;
 }

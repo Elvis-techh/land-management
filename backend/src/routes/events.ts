@@ -116,7 +116,8 @@ export const eventRoutes: FastifyPluginAsync = async (app) => {
 
       stream.write(`retry: ${RETRY_MS}\n\n`);
 
-      const unsubscribe = subscribeToChanges((event) => {
+      // Only this company's writes: see `listeners` in lib/changes.ts.
+      const unsubscribe = subscribeToChanges(request.company.id, (event) => {
         // This tab's own write. It re-read the moment the response landed; a
         // second refresh now would be the same request twice.
         if (clientId !== null && event.origin === clientId) {

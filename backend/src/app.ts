@@ -6,7 +6,7 @@ import type { FastifyError, FastifyReply, FastifyRequest } from "fastify";
 
 import authPlugin from "./auth/plugin.js";
 import type { AppConfig } from "./config/env.js";
-import type { PickDatabase } from "./db/pickDatabase.js";
+import type { Companies, Company } from "./db/companies.js";
 import { noteWrite, publishChange } from "./lib/changes.js";
 import { auditRoutes } from "./routes/audit.js";
 import { authRoutes } from "./routes/auth.js";
@@ -28,10 +28,10 @@ import { transactionRoutes } from "./routes/transactions.js";
 import { userRoutes } from "./routes/users.js";
 
 /**
- * `pickDatabase` says which database each request works on: today always the
- * one company's (`singleCompany` in db/pickDatabase.ts).
+ * `companies` says which company each request works on: today always the one
+ * (`singleCompany` in db/companies.ts).
  */
-export async function buildApp(config: AppConfig, pickDatabase: PickDatabase) {
+export async function buildApp(config: AppConfig, companies: Companies) {
   const app = Fastify({
     logger: config.nodeEnv !== "test",
     // Off (false) by default so a direct connection — local dev, or this
@@ -55,7 +55,7 @@ export async function buildApp(config: AppConfig, pickDatabase: PickDatabase) {
     timeWindow: "1 minute",
   });
 
-  await app.register(authPlugin, { pickDatabase });
+  await app.register(authPlugin, { companies });
 
   /*
    * Announce every successful write, from one place.
@@ -80,15 +80,24 @@ export async function buildApp(config: AppConfig, pickDatabase: PickDatabase) {
 
   // The version lists are cached against moves at the start and at the end of
   // every write, whatever its outcome. See `noteWrite` in lib/changes.ts.
+  // Both the version and the news are the request's company's alone: a write
+  // in one company never refreshes, or outdates, another company's screens.
   app.addHook("onRequest", async (request) => {
     if (WRITE_METHODS.has(request.method)) {
-      noteWrite();
+      noteWrite(request.company.id);
     }
   });
 
   app.addHook("onResponse", async (request, reply) => {
+    // Turned away before its company was picked (the app-wide rate limit):
+    // nothing was written, and there is no company to tell.
+    const company: Company | null = request.company;
+    if (company === null) {
+      return;
+    }
+
     if (WRITE_METHODS.has(request.method)) {
-      noteWrite();
+      noteWrite(company.id);
     }
 
     if (!WRITE_METHODS.has(request.method) || reply.statusCode >= 400) {
@@ -105,7 +114,7 @@ export async function buildApp(config: AppConfig, pickDatabase: PickDatabase) {
 
     const clientId = request.headers["x-client-id"];
 
-    publishChange({
+    publishChange(company.id, {
       resource: route.split("/")[2] ?? "unknown",
       origin: typeof clientId === "string" && clientId !== "" ? clientId : null,
       at: new Date().toISOString(),
@@ -163,14 +172,8 @@ export async function buildApp(config: AppConfig, pickDatabase: PickDatabase) {
       await api.register(lotRoutes, { timeZone: config.timeZone });
       await api.register(projectRoutes, { timeZone: config.timeZone });
       await api.register(customerRoutes, { timeZone: config.timeZone });
-      await api.register(contractRoutes, {
-        timeZone: config.timeZone,
-        uploadsPath: config.uploadsPath,
-      });
-      await api.register(receiptRoutes, {
-        timeZone: config.timeZone,
-        uploadsPath: config.uploadsPath,
-      });
+      await api.register(contractRoutes, { timeZone: config.timeZone });
+      await api.register(receiptRoutes, { timeZone: config.timeZone });
       await api.register(transactionRoutes, { timeZone: config.timeZone });
       await api.register(constanciaRoutes, { timeZone: config.timeZone });
       await api.register(permissionRoutes);

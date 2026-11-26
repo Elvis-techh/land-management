@@ -57,3 +57,20 @@ describe("TRUST_PROXY", () => {
     assert.equal(loadConfig({ ...production, TRUST_PROXY: "false" }).trustProxy, false);
   });
 });
+
+describe("COMPANIES_PATH", () => {
+  it("defaults to a companies folder beside the database, wherever that is", () => {
+    assert.equal(
+      loadConfig({ ...production, DATABASE_PATH: "/opt/lindero/backend/data/lindero.db" }).companiesPath,
+      "/opt/lindero/backend/data/companies",
+    );
+    assert.equal(loadConfig({ ...production }).companiesPath, "data/companies");
+  });
+
+  it("takes the folder it is given", () => {
+    assert.equal(
+      loadConfig({ ...production, COMPANIES_PATH: "/srv/companies" }).companiesPath,
+      "/srv/companies",
+    );
+  });
+});

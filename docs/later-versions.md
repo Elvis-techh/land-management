@@ -28,14 +28,19 @@ page change the server. This replaces "one copy per customer", decided on
 
 What it takes, in this order:
 
-1. Keep businesses apart. Done for the routes: each one works on `request.db`,
-   which `db/pickDatabase.ts` chooses for every request (today always the one
-   business's file). The choice still has to come from the signed-in
-   account. The uploads folder, the live
-   update stream and its version number (`lib/changes.ts`), the migrations at
-   startup, the exchange rate timer and the nightly backup need the same. Close
-   the files nobody is using, and give SQLite a smaller cache per file. A test
-   proves that one business cannot read another's records.
+1. Keep businesses apart. Done: every request works on `request.company`
+   (`db/companies.ts`): its database (`request.db`), its uploads folder, and
+   its id, which keeps its live updates and list versions (`lib/changes.ts`)
+   apart from every other business's. A business's schema is brought up to
+   date when its file is opened, the exchange rate timer updates every open
+   business with one question to the provider, and the nightly backup
+   (`scripts/backup.mjs`) snapshots every business's file. Business 1 keeps
+   today's files; every other one gets `<id>/lindero.db` and `<id>/uploads/`
+   under `COMPANIES_PATH`. Today the choice is still always business 1. Still
+   to do: choose from the signed-in account, open a business's file when it is
+   first needed, close the files nobody is using, give SQLite a smaller cache
+   per file, have the test site's reset clear every business, and a test that
+   proves one signed-in business cannot read another's records.
 2. Accounts: signup, email confirmation and «forgot password». Today only a
    supervisor can replace a password, so a supervisor who forgets theirs has
    nobody to ask. Sending mail needs an email service, because DigitalOcean
@@ -71,9 +76,12 @@ privacy policy.
   bad terms or the secret leaks. Changing it signs everyone out.
 
 **Backups for every business, with a restore tried.** The real site's nightly
-snapshot goes to Spaces (`deploy/lindero-backup.service`). It has to cover
-every business's file and the accounts database. Before anyone depends on it,
-restore one business once and check that the others were not touched.
+snapshot goes to Spaces (`deploy/lindero-backup.service`). It covers every
+business's database file, and the existing copy to Spaces picks up the ones in
+`backups/companies/` too. Still to add: the accounts database, and a mirror of
+each business's uploads folder (`data/companies/<id>/uploads`; the example
+line is in the unit). Before anyone depends on it, restore one business once
+and check that the others were not touched.
 
 ## 2. When customers ask for it
 
