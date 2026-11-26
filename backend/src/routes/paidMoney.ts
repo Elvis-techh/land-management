@@ -85,7 +85,7 @@ export const paidMoneyRoutes: FastifyPluginAsync<PaidMoneyRoutesOptions> = async
       const body = parsed.data;
       const actor = request.user!;
 
-      const source = app.db.select().from(contracts).where(eq(contracts.id, request.params.id)).get();
+      const source = request.db.select().from(contracts).where(eq(contracts.id, request.params.id)).get();
 
       if (!source) {
         return reply.code(404).send({ error: "not_found", message: "Contrato no encontrado." });
@@ -110,7 +110,7 @@ export const paidMoneyRoutes: FastifyPluginAsync<PaidMoneyRoutesOptions> = async
         });
       }
 
-      const undecided = undecidedCents(app.db, source.id);
+      const undecided = undecidedCents(request.db, source.id);
 
       if (body.carryoverCents + body.refundCents > undecided) {
         return reply.code(400).send({
@@ -125,7 +125,7 @@ export const paidMoneyRoutes: FastifyPluginAsync<PaidMoneyRoutesOptions> = async
       const successor =
         body.carryoverCents === 0
           ? null
-          : (app.db
+          : (request.db
               .select()
               .from(contracts)
               .where(eq(contracts.replacesContractId, source.id))
@@ -162,7 +162,7 @@ export const paidMoneyRoutes: FastifyPluginAsync<PaidMoneyRoutesOptions> = async
           });
         }
 
-        const paidThere = app.db
+        const paidThere = request.db
           .select({ amountCents: payments.amountCents })
           .from(payments)
           .where(and(eq(payments.contractId, successor.id), isNull(payments.reversedAt)))
@@ -185,7 +185,7 @@ export const paidMoneyRoutes: FastifyPluginAsync<PaidMoneyRoutesOptions> = async
       const now = new Date().toISOString();
       const rest = undecided - body.carryoverCents - body.refundCents;
 
-      app.db.transaction((tx) => {
+      request.db.transaction((tx) => {
         if (successor && body.carryoverCents > 0) {
           tx.insert(payments)
             .values({
@@ -259,7 +259,7 @@ export const paidMoneyRoutes: FastifyPluginAsync<PaidMoneyRoutesOptions> = async
         });
       }
 
-      const row = app.db.select().from(payments).where(eq(payments.id, request.params.paymentId)).get();
+      const row = request.db.select().from(payments).where(eq(payments.id, request.params.paymentId)).get();
 
       if (!row || row.transferredFromContractId === null) {
         return reply.code(404).send({ error: "not_found", message: "Ese traslado no existe." });
@@ -271,14 +271,14 @@ export const paidMoneyRoutes: FastifyPluginAsync<PaidMoneyRoutesOptions> = async
 
       const actor = request.user!;
       const now = new Date().toISOString();
-      const to = app.db
+      const to = request.db
         .select({ code: contracts.code })
         .from(contracts)
         .where(eq(contracts.id, row.contractId))
         .get();
-      const undecided = undecidedCents(app.db, row.transferredFromContractId);
+      const undecided = undecidedCents(request.db, row.transferredFromContractId);
 
-      app.db.transaction((tx) => {
+      request.db.transaction((tx) => {
         tx.update(payments)
           .set({ reversedAt: now, reversedBy: actor.id, reversalReason: parsed.data.reason })
           .where(eq(payments.id, row.id))
@@ -317,7 +317,7 @@ export const paidMoneyRoutes: FastifyPluginAsync<PaidMoneyRoutesOptions> = async
         });
       }
 
-      const refund = app.db
+      const refund = request.db
         .select()
         .from(contractRefunds)
         .where(eq(contractRefunds.id, request.params.id))
@@ -345,7 +345,7 @@ export const paidMoneyRoutes: FastifyPluginAsync<PaidMoneyRoutesOptions> = async
       const now = new Date().toISOString();
       const reference = parsed.data.reference?.trim() ? parsed.data.reference.trim() : null;
 
-      app.db.transaction((tx) => {
+      request.db.transaction((tx) => {
         tx.update(contractRefunds)
           .set({
             returnedOn: parsed.data.returnedOn,
@@ -390,7 +390,7 @@ export const paidMoneyRoutes: FastifyPluginAsync<PaidMoneyRoutesOptions> = async
         });
       }
 
-      const refund = app.db
+      const refund = request.db
         .select()
         .from(contractRefunds)
         .where(eq(contractRefunds.id, request.params.id))
@@ -402,9 +402,9 @@ export const paidMoneyRoutes: FastifyPluginAsync<PaidMoneyRoutesOptions> = async
 
       const actor = request.user!;
       const now = new Date().toISOString();
-      const undecided = undecidedCents(app.db, refund.contractId);
+      const undecided = undecidedCents(request.db, refund.contractId);
 
-      app.db.transaction((tx) => {
+      request.db.transaction((tx) => {
         tx.update(contractRefunds)
           .set({ removedAt: now, removedBy: actor.id, removalReason: parsed.data.reason })
           .where(eq(contractRefunds.id, refund.id))

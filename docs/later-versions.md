@@ -28,8 +28,10 @@ page change the server. This replaces "one copy per customer", decided on
 
 What it takes, in this order:
 
-1. Keep businesses apart. Routes reach the database as `app.db`; that has to
-   become the database of the request's business. The uploads folder, the live
+1. Keep businesses apart. Done for the routes: each one works on `request.db`,
+   which `db/pickDatabase.ts` chooses for every request (today always the one
+   business's file). The choice still has to come from the signed-in
+   account. The uploads folder, the live
    update stream and its version number (`lib/changes.ts`), the migrations at
    startup, the exchange rate timer and the nightly backup need the same. Close
    the files nobody is using, and give SQLite a smaller cache per file. A test

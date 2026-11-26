@@ -54,7 +54,7 @@ export const authRoutes: FastifyPluginAsync<AuthRoutesOptions> = async (app, opt
       }
 
       const email = parsed.data.email.toLowerCase();
-      const user = app.db.select().from(users).where(eq(users.email, email)).get();
+      const user = request.db.select().from(users).where(eq(users.email, email)).get();
 
       // Always run a hash comparison, even when the email is unknown. Returning
       // early would make "no such user" measurably faster than "wrong password",
@@ -88,11 +88,11 @@ export const authRoutes: FastifyPluginAsync<AuthRoutesOptions> = async (app, opt
         });
       }
 
-      const token = createSession(app.db, user.id, options.sessionDays);
+      const token = createSession(request.db, user.id, options.sessionDays);
 
       // Overwritten, not appended: the Usuarios screen wants the latest sign-in
       // and nothing else, so a login leaves no row in the Historial.
-      app.db
+      request.db
         .update(users)
         .set({ lastSignInAt: new Date().toISOString() })
         .where(eq(users.id, user.id))
@@ -118,7 +118,7 @@ export const authRoutes: FastifyPluginAsync<AuthRoutesOptions> = async (app, opt
           role: user.role,
           // Sent so the interface can hide what this user cannot do. It is a
           // convenience only — every write re-checks server-side.
-          capabilities: [...resolveUserCapabilities(app.db, { id: user.id, role: user.role as Role })],
+          capabilities: [...resolveUserCapabilities(request.db, { id: user.id, role: user.role as Role })],
         },
         businessTimeZone: options.timeZone,
       });
@@ -129,7 +129,7 @@ export const authRoutes: FastifyPluginAsync<AuthRoutesOptions> = async (app, opt
     const token = request.cookies[SESSION_COOKIE];
 
     if (token) {
-      destroySession(app.db, token);
+      destroySession(request.db, token);
     }
 
     reply.clearCookie(SESSION_COOKIE, { path: "/" });
@@ -145,7 +145,7 @@ export const authRoutes: FastifyPluginAsync<AuthRoutesOptions> = async (app, opt
     return reply.send({
       user: {
         ...request.user,
-        capabilities: [...resolveUserCapabilities(app.db, request.user)],
+        capabilities: [...resolveUserCapabilities(request.db, request.user)],
       },
       businessTimeZone: options.timeZone,
     });

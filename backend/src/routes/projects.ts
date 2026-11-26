@@ -115,7 +115,7 @@ export const projectRoutes: FastifyPluginAsync<ProjectRoutesOptions> = async (ap
   const today = () => businessToday(options.timeZone);
 
   app.get("/projects", { onRequest: app.requireUser }, async (request, reply) => {
-    const rows = projectsListQuery(app.db, today()).all();
+    const rows = projectsListQuery(request.db, today()).all();
 
     return reply.send({
       projects: rows.map((row) => ({
@@ -159,7 +159,7 @@ export const projectRoutes: FastifyPluginAsync<ProjectRoutesOptions> = async (ap
 
       // Project names are unique across the whole database, archived ones
       // included — reusing a name would make the audit history ambiguous.
-      const clash = app.db
+      const clash = request.db
         .select({ id: projects.id, archivedAt: projects.archivedAt })
         .from(projects)
         .where(eq(projects.name, parsed.data.name))
@@ -178,7 +178,7 @@ export const projectRoutes: FastifyPluginAsync<ProjectRoutesOptions> = async (ap
       const now = new Date().toISOString();
 
       // Not in the Historial: a new project is its own record. See `AuditEntry`.
-      const created = app.db
+      const created = request.db
         .insert(projects)
         .values({
           id: randomUUID(),
@@ -210,7 +210,7 @@ export const projectRoutes: FastifyPluginAsync<ProjectRoutesOptions> = async (ap
         });
       }
 
-      const existing = app.db
+      const existing = request.db
         .select()
         .from(projects)
         .where(eq(projects.id, request.params.id))
@@ -220,7 +220,7 @@ export const projectRoutes: FastifyPluginAsync<ProjectRoutesOptions> = async (ap
         return reply.code(404).send({ error: "not_found", message: "Proyecto no encontrado." });
       }
 
-      const clash = app.db
+      const clash = request.db
         .select({ id: projects.id })
         .from(projects)
         .where(eq(projects.name, parsed.data.name))
@@ -239,7 +239,7 @@ export const projectRoutes: FastifyPluginAsync<ProjectRoutesOptions> = async (ap
       // in square metres, so switching a project from metres to manzanas
       // changes how the same land is written down, never how much of it
       // there is.
-      const updated = app.db.transaction((tx) => {
+      const updated = request.db.transaction((tx) => {
         const next = tx
           .update(projects)
           .set({
@@ -282,7 +282,7 @@ export const projectRoutes: FastifyPluginAsync<ProjectRoutesOptions> = async (ap
         });
       }
 
-      const existing = app.db
+      const existing = request.db
         .select()
         .from(projects)
         .where(eq(projects.id, request.params.id))
@@ -295,7 +295,7 @@ export const projectRoutes: FastifyPluginAsync<ProjectRoutesOptions> = async (ap
       // Archiving a project with live inventory would hide lots that are still
       // for sale, and contracts still being paid, from every screen at once.
       // The lots have to be dealt with first, deliberately, one by one.
-      const activeLots = app.db
+      const activeLots = request.db
         .select({ count: sql<number>`COUNT(*)` })
         .from(lots)
         .where(and(eq(lots.projectId, existing.id), isNull(lots.archivedAt)))
@@ -314,7 +314,7 @@ export const projectRoutes: FastifyPluginAsync<ProjectRoutesOptions> = async (ap
       const actor = request.user!;
       const archivedAt = new Date().toISOString();
 
-      app.db.transaction((tx) => {
+      request.db.transaction((tx) => {
         tx.update(projects)
           .set({ archivedAt, archiveReason: parsed.data.reason, updatedAt: archivedAt })
           .where(eq(projects.id, existing.id))
@@ -340,7 +340,7 @@ export const projectRoutes: FastifyPluginAsync<ProjectRoutesOptions> = async (ap
     "/projects/:id/restore",
     { onRequest: app.requireCapability("project:archive") },
     async (request, reply) => {
-      const existing = app.db
+      const existing = request.db
         .select()
         .from(projects)
         .where(eq(projects.id, request.params.id))
@@ -354,7 +354,7 @@ export const projectRoutes: FastifyPluginAsync<ProjectRoutesOptions> = async (ap
 
       const actor = request.user!;
 
-      app.db.transaction((tx) => {
+      request.db.transaction((tx) => {
         tx.update(projects)
           .set({
             archivedAt: null,

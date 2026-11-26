@@ -208,13 +208,13 @@ export const moraRoutes: FastifyPluginAsync<MoraRouteOptions> = async (app, opti
     "/contracts/:id/mora",
     { onRequest: app.requireUser },
     async (request, reply) => {
-      const row = readContract(app.db, request.params.id);
+      const row = readContract(request.db, request.params.id);
 
       if (!row) {
         return reply.code(404).send({ error: "not_found", message: "Ese contrato no existe." });
       }
 
-      const account = loadMoraAccount(app.db, row.id, at());
+      const account = loadMoraAccount(request.db, row.id, at());
       const automaticByInstallment: Record<number, number> = {};
 
       for (const charge of account?.charges ?? []) {
@@ -224,7 +224,7 @@ export const moraRoutes: FastifyPluginAsync<MoraRouteOptions> = async (app, opti
         }
       }
 
-      const manual = app.db
+      const manual = request.db
         .select({
           id: moraManualCharges.id,
           installment: moraManualCharges.installment,
@@ -246,7 +246,7 @@ export const moraRoutes: FastifyPluginAsync<MoraRouteOptions> = async (app, opti
         }));
 
       const clearedById = new Map((account?.forgiven ?? []).map((entry) => [entry.forgivenessId, entry.amountCents]));
-      const forgiven = app.db
+      const forgiven = request.db
         .select({
           id: moraForgiveness.id,
           installment: moraForgiveness.installment,
@@ -280,8 +280,8 @@ export const moraRoutes: FastifyPluginAsync<MoraRouteOptions> = async (app, opti
         due: itemsOf(row).filter((item) => item.dueOn < asOf),
         // Its own rule, every version (the last one may start tomorrow), and
         // the general rule it is laid over, so the panel can say both.
-        rules: readRuleVersions(app.db, row.id),
-        general: readSettings(app.db).mora,
+        rules: readRuleVersions(request.db, row.id),
+        general: readSettings(request.db).mora,
       };
     },
   );
@@ -301,7 +301,7 @@ export const moraRoutes: FastifyPluginAsync<MoraRouteOptions> = async (app, opti
     "/customers/:id/payment-mora",
     { onRequest: app.requireUser },
     async (request) => {
-      const ids = app.db
+      const ids = request.db
         .select({ id: contracts.id })
         .from(contracts)
         .where(and(eq(contracts.customerId, request.params.id), eq(contracts.status, "active")))
@@ -311,7 +311,7 @@ export const moraRoutes: FastifyPluginAsync<MoraRouteOptions> = async (app, opti
       const paidOn = /^\d{4}-\d{2}-\d{2}$/.test(typed) ? typed : today();
 
       return {
-        contracts: [...loadPaymentMoraOn(app.db, ids, paidOn, at()).values()].map((lot) => ({
+        contracts: [...loadPaymentMoraOn(request.db, ids, paidOn, at()).values()].map((lot) => ({
           contractId: lot.contractId,
           carriesMora: lot.carriesMora,
           on: lot.on,
@@ -344,7 +344,7 @@ export const moraRoutes: FastifyPluginAsync<MoraRouteOptions> = async (app, opti
       }
 
       const body = parsed.data;
-      const row = readContract(app.db, request.params.id);
+      const row = readContract(request.db, request.params.id);
 
       if (!row) {
         return reply.code(404).send({ error: "not_found", message: "Ese contrato no existe." });
@@ -368,7 +368,7 @@ export const moraRoutes: FastifyPluginAsync<MoraRouteOptions> = async (app, opti
 
       const today = businessToday(options.timeZone);
       const tomorrow = shiftDays(today, 1);
-      const versions = readRuleVersions(app.db, row.id);
+      const versions = readRuleVersions(request.db, row.id);
       const before = ruleOn(versions, tomorrow);
 
       if (sameRule(before, rule)) {
@@ -377,7 +377,7 @@ export const moraRoutes: FastifyPluginAsync<MoraRouteOptions> = async (app, opti
 
       const actor = request.user!;
 
-      app.db.transaction((tx) => {
+      request.db.transaction((tx) => {
         if (sameRule(ruleOn(versions, today), rule)) {
           // Back to what is in force today: tomorrow's change is simply undone.
           tx.delete(moraContractRules)
@@ -435,7 +435,7 @@ export const moraRoutes: FastifyPluginAsync<MoraRouteOptions> = async (app, opti
       }
 
       const body = parsed.data;
-      const row = readContract(app.db, request.params.id);
+      const row = readContract(request.db, request.params.id);
 
       if (!row) {
         return reply.code(404).send({ error: "not_found", message: "Ese contrato no existe." });
@@ -474,7 +474,7 @@ export const moraRoutes: FastifyPluginAsync<MoraRouteOptions> = async (app, opti
       const actor = request.user!;
       const id = randomUUID();
 
-      app.db.transaction((tx) => {
+      request.db.transaction((tx) => {
         const owedBefore = moraOwed(tx, row.id, body.installment, at());
 
         tx.insert(moraManualCharges)
@@ -529,7 +529,7 @@ export const moraRoutes: FastifyPluginAsync<MoraRouteOptions> = async (app, opti
       }
 
       const body = parsed.data;
-      const row = readContract(app.db, request.params.id);
+      const row = readContract(request.db, request.params.id);
 
       if (!row) {
         return reply.code(404).send({ error: "not_found", message: "Ese contrato no existe." });
@@ -541,7 +541,7 @@ export const moraRoutes: FastifyPluginAsync<MoraRouteOptions> = async (app, opti
         return reply.code(409).send({ error: "not_chargeable", message: problem });
       }
 
-      const unpaid = loadMoraAccount(app.db, row.id, at())?.pendingByInstallment[body.installment] ?? 0;
+      const unpaid = loadMoraAccount(request.db, row.id, at())?.pendingByInstallment[body.installment] ?? 0;
 
       if (unpaid === 0) {
         return reply.code(400).send({
@@ -561,7 +561,7 @@ export const moraRoutes: FastifyPluginAsync<MoraRouteOptions> = async (app, opti
       const id = randomUUID();
       const forgivenOn = today();
 
-      app.db.transaction((tx) => {
+      request.db.transaction((tx) => {
         tx.insert(moraForgiveness)
           .values({
             id,
@@ -609,7 +609,7 @@ export const moraRoutes: FastifyPluginAsync<MoraRouteOptions> = async (app, opti
         });
       }
 
-      const existing = app.db
+      const existing = request.db
         .select()
         .from(moraForgiveness)
         .where(
@@ -626,7 +626,7 @@ export const moraRoutes: FastifyPluginAsync<MoraRouteOptions> = async (app, opti
 
       const actor = request.user!;
 
-      app.db.transaction((tx) => {
+      request.db.transaction((tx) => {
         const owedBefore = moraOwed(tx, existing.contractId, existing.installment, at());
 
         tx.update(moraForgiveness)
@@ -670,7 +670,7 @@ export const moraRoutes: FastifyPluginAsync<MoraRouteOptions> = async (app, opti
         });
       }
 
-      const existing = app.db
+      const existing = request.db
         .select()
         .from(moraManualCharges)
         .where(
@@ -687,7 +687,7 @@ export const moraRoutes: FastifyPluginAsync<MoraRouteOptions> = async (app, opti
 
       const actor = request.user!;
 
-      app.db.transaction((tx) => {
+      request.db.transaction((tx) => {
         const owedBefore = moraOwed(tx, existing.contractId, existing.installment, at());
 
         tx.update(moraManualCharges)

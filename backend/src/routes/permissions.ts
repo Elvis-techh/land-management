@@ -2,6 +2,7 @@ import { and, asc, eq, isNull } from "drizzle-orm";
 import type { FastifyPluginAsync, FastifyReply } from "fastify";
 import { z } from "zod";
 
+import type { Db } from "../db/client.js";
 import { roleCapabilities, userCapabilities, users } from "../db/schema.js";
 import { recordAudit } from "../lib/audit.js";
 import { ownCapabilities, resolveCapabilities } from "../lib/capabilities.js";
@@ -80,8 +81,8 @@ export const permissionRoutes: FastifyPluginAsync = async (app) => {
    * can do everything whatever a list says, and a deactivated account cannot
    * sign in at all, so a list for either would be a setting that does nothing.
    */
-  const findAssociate = (id: string, reply: FastifyReply) => {
-    const target = app.db
+  const findAssociate = (db: Db, id: string, reply: FastifyReply) => {
+    const target = db
       .select({ id: users.id, name: users.name, role: users.role, deactivatedAt: users.deactivatedAt })
       .from(users)
       .where(eq(users.id, id))
@@ -113,9 +114,9 @@ export const permissionRoutes: FastifyPluginAsync = async (app) => {
     "/permissions",
     { onRequest: app.requireCapability("permission:manage") },
     async (request, reply) => {
-      const granted = resolveCapabilities(app.db, EDITABLE_ROLE);
+      const granted = resolveCapabilities(request.db, EDITABLE_ROLE);
 
-      const associates = app.db
+      const associates = request.db
         .select({ id: users.id, name: users.name })
         .from(users)
         .where(and(eq(users.role, EDITABLE_ROLE), isNull(users.deactivatedAt)))
@@ -123,7 +124,7 @@ export const permissionRoutes: FastifyPluginAsync = async (app) => {
         .all();
 
       const withOwn = new Set(
-        app.db
+        request.db
           .selectDistinct({ userId: userCapabilities.userId })
           .from(userCapabilities)
           .all()
@@ -170,11 +171,11 @@ export const permissionRoutes: FastifyPluginAsync = async (app) => {
       }
 
       const actor = request.user!;
-      const before = [...resolveCapabilities(app.db, EDITABLE_ROLE)].sort();
+      const before = [...resolveCapabilities(request.db, EDITABLE_ROLE)].sort();
       const granted = new Set(requested as Capability[]);
       const after = [...granted].sort();
 
-      app.db.transaction((tx) => {
+      request.db.transaction((tx) => {
         // The request is the complete set, so the stored rows are replaced
         // wholesale. Toggling one switch off is then a normal write rather than
         // a delete that has to be worked out from a diff.
@@ -217,14 +218,14 @@ export const permissionRoutes: FastifyPluginAsync = async (app) => {
     "/permissions/users/:id",
     { onRequest: app.requireCapability("permission:manage") },
     async (request, reply) => {
-      const target = findAssociate(request.params.id, reply);
+      const target = findAssociate(request.db, request.params.id, reply);
 
       if (!target) {
         return reply;
       }
 
-      const general = resolveCapabilities(app.db, EDITABLE_ROLE);
-      const own = ownCapabilities(app.db, target.id);
+      const general = resolveCapabilities(request.db, EDITABLE_ROLE);
+      const own = ownCapabilities(request.db, target.id);
       const effective = own ?? general;
 
       return reply.send({
@@ -259,7 +260,7 @@ export const permissionRoutes: FastifyPluginAsync = async (app) => {
         });
       }
 
-      const target = findAssociate(request.params.id, reply);
+      const target = findAssociate(request.db, request.params.id, reply);
 
       if (!target) {
         return reply;
@@ -272,8 +273,8 @@ export const permissionRoutes: FastifyPluginAsync = async (app) => {
       }
 
       const actor = request.user!;
-      const general = resolveCapabilities(app.db, EDITABLE_ROLE);
-      const ownBefore = ownCapabilities(app.db, target.id);
+      const general = resolveCapabilities(request.db, EDITABLE_ROLE);
+      const ownBefore = ownCapabilities(request.db, target.id);
       const granted =
         body.mode === "own" ? new Set(body.capabilities as Capability[]) : new Set(general);
 
@@ -297,7 +298,7 @@ export const permissionRoutes: FastifyPluginAsync = async (app) => {
         return reply.send(result);
       }
 
-      app.db.transaction((tx) => {
+      request.db.transaction((tx) => {
         tx.delete(userCapabilities).where(eq(userCapabilities.userId, target.id)).run();
 
         if (body.mode === "own") {

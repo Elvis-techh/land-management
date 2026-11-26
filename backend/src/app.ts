@@ -6,7 +6,7 @@ import type { FastifyError, FastifyReply, FastifyRequest } from "fastify";
 
 import authPlugin from "./auth/plugin.js";
 import type { AppConfig } from "./config/env.js";
-import type { Db } from "./db/client.js";
+import type { PickDatabase } from "./db/pickDatabase.js";
 import { noteWrite, publishChange } from "./lib/changes.js";
 import { auditRoutes } from "./routes/audit.js";
 import { authRoutes } from "./routes/auth.js";
@@ -27,7 +27,11 @@ import { settingsRoutes } from "./routes/settings.js";
 import { transactionRoutes } from "./routes/transactions.js";
 import { userRoutes } from "./routes/users.js";
 
-export async function buildApp(config: AppConfig, db: Db) {
+/**
+ * `pickDatabase` says which database each request works on: today always the
+ * one company's (`singleCompany` in db/pickDatabase.ts).
+ */
+export async function buildApp(config: AppConfig, pickDatabase: PickDatabase) {
   const app = Fastify({
     logger: config.nodeEnv !== "test",
     // Off (false) by default so a direct connection — local dev, or this
@@ -51,7 +55,7 @@ export async function buildApp(config: AppConfig, db: Db) {
     timeWindow: "1 minute",
   });
 
-  await app.register(authPlugin, { db });
+  await app.register(authPlugin, { pickDatabase });
 
   /*
    * Announce every successful write, from one place.

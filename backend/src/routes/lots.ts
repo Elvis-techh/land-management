@@ -150,10 +150,10 @@ export const lotRoutes: FastifyPluginAsync<LotRoutesOptions> = async (app, optio
       const includeArchived = request.query.includeArchived === "true";
 
       const asOf = today();
-      const rows = lotsListQuery(app.db, asOf)
+      const rows = lotsListQuery(request.db, asOf)
         .where(includeArchived ? undefined : isNull(lots.archivedAt))
         .all();
-      const mora = loadMoraAccounts(app.db, {
+      const mora = loadMoraAccounts(request.db, {
         asOf,
         timeZone: options.timeZone,
         contractIds: rows.flatMap((row) => (row.contractId ? [row.contractId] : [])),
@@ -186,7 +186,7 @@ export const lotRoutes: FastifyPluginAsync<LotRoutesOptions> = async (app, optio
         })),
         // Sent alongside so the table can render customer names without a
         // second request per row.
-        customers: app.db
+        customers: request.db
           .select({
             id: customers.id,
             fullName: customers.fullName,
@@ -202,7 +202,7 @@ export const lotRoutes: FastifyPluginAsync<LotRoutesOptions> = async (app, optio
         // The projects a lot may be filed under: every ACTIVE one, including
         // those with no lots yet, since a new project starts empty. Archived
         // projects are left out — nothing new should be added to them.
-        projects: app.db
+        projects: request.db
           .select({ id: projects.id, name: projects.name, areaUnit: projects.areaUnit })
           .from(projects)
           .where(isNull(projects.archivedAt))
@@ -223,7 +223,7 @@ export const lotRoutes: FastifyPluginAsync<LotRoutesOptions> = async (app, optio
       });
     }
 
-    const project = app.db
+    const project = request.db
       .select()
       .from(projects)
       .where(eq(projects.name, parsed.data.projectName))
@@ -236,7 +236,7 @@ export const lotRoutes: FastifyPluginAsync<LotRoutesOptions> = async (app, optio
       });
     }
 
-    const clash = lotCodeClash(app.db, project, parsed.data.code);
+    const clash = lotCodeClash(request.db, project, parsed.data.code);
 
     if (clash) {
       return reply.code(409).send({ error: "duplicate_code", message: clash });
@@ -246,7 +246,7 @@ export const lotRoutes: FastifyPluginAsync<LotRoutesOptions> = async (app, optio
 
     // Not in the Historial: a new lot is its own record, and an edit's `before`
     // says what it used to be. See `AuditEntry`.
-    const created = app.db
+    const created = request.db
       .insert(lots)
       .values({
         id: randomUUID(),
@@ -278,13 +278,13 @@ export const lotRoutes: FastifyPluginAsync<LotRoutesOptions> = async (app, optio
       }
 
       const actor = request.user!;
-      const existing = app.db.select().from(lots).where(eq(lots.id, request.params.id)).get();
+      const existing = request.db.select().from(lots).where(eq(lots.id, request.params.id)).get();
 
       if (!existing || existing.archivedAt !== null) {
         return reply.code(404).send({ error: "not_found", message: "Lote no encontrado." });
       }
 
-      const project = app.db
+      const project = request.db
         .select()
         .from(projects)
         .where(eq(projects.name, parsed.data.projectName))
@@ -301,7 +301,7 @@ export const lotRoutes: FastifyPluginAsync<LotRoutesOptions> = async (app, optio
       // creating one there, and it has to be refused the same way. Without
       // this the write reached SQLite and the unique index answered in its own
       // words, which arrived in the dialog as raw constraint text.
-      const clash = lotCodeClash(app.db, project, parsed.data.code, existing.id);
+      const clash = lotCodeClash(request.db, project, parsed.data.code, existing.id);
 
       if (clash) {
         return reply.code(409).send({ error: "duplicate_code", message: clash });
@@ -311,7 +311,7 @@ export const lotRoutes: FastifyPluginAsync<LotRoutesOptions> = async (app, optio
       // renegotiated, especially early on. But this is the one lot edit that
       // touches money, so it demands the `price:change` capability and a
       // written reason, and it is recorded as its own audit action.
-      const activeContract = app.db
+      const activeContract = request.db
         .select({ id: contracts.id, code: contracts.code })
         .from(contracts)
         .where(and(eq(contracts.lotId, existing.id), eq(contracts.status, "active")))
@@ -320,7 +320,7 @@ export const lotRoutes: FastifyPluginAsync<LotRoutesOptions> = async (app, optio
       const isRepricing = parsed.data.basePriceCents !== existing.basePriceCents;
       const needsJustification = isRepricing && activeContract !== undefined;
 
-      if (needsJustification && !userCan(app.db, actor, "price:change")) {
+      if (needsJustification && !userCan(request.db, actor, "price:change")) {
         return reply.code(403).send({
           error: "forbidden",
           message: "Tu usuario no puede cambiar el precio de un lote con contrato.",
@@ -339,7 +339,7 @@ export const lotRoutes: FastifyPluginAsync<LotRoutesOptions> = async (app, optio
       const basePriceCents = parsed.data.basePriceCents;
 
       // The write and its audit row commit together or not at all.
-      const updated = app.db.transaction((tx) => {
+      const updated = request.db.transaction((tx) => {
         const next = tx
           .update(lots)
           .set({
@@ -396,7 +396,7 @@ export const lotRoutes: FastifyPluginAsync<LotRoutesOptions> = async (app, optio
       }
 
       const actor = request.user!;
-      const existing = app.db.select().from(lots).where(eq(lots.id, request.params.id)).get();
+      const existing = request.db.select().from(lots).where(eq(lots.id, request.params.id)).get();
 
       if (!existing || existing.archivedAt !== null) {
         return reply.code(404).send({ error: "not_found", message: "Lote no encontrado." });
@@ -405,7 +405,7 @@ export const lotRoutes: FastifyPluginAsync<LotRoutesOptions> = async (app, optio
       // Archiving a lot that is still spoken for would orphan its contract —
       // whether it is being paid or already paid off. A cancelled, defaulted or
       // lapsed reservation does not count: the lot is free.
-      const activeContract = app.db
+      const activeContract = request.db
         .select({ code: contracts.code })
         .from(contracts)
         .where(and(eq(contracts.lotId, existing.id), holdsLot(today())))
@@ -420,7 +420,7 @@ export const lotRoutes: FastifyPluginAsync<LotRoutesOptions> = async (app, optio
 
       const archivedAt = new Date().toISOString();
 
-      app.db.transaction((tx) => {
+      request.db.transaction((tx) => {
         tx.update(lots)
           .set({ archivedAt, archiveReason: parsed.data.reason, updatedAt: archivedAt })
           .where(eq(lots.id, existing.id))
@@ -455,7 +455,7 @@ export const lotRoutes: FastifyPluginAsync<LotRoutesOptions> = async (app, optio
     { onRequest: app.requireCapability("lot:archive") },
     async (request, reply) => {
       const actor = request.user!;
-      const existing = app.db.select().from(lots).where(eq(lots.id, request.params.id)).get();
+      const existing = request.db.select().from(lots).where(eq(lots.id, request.params.id)).get();
 
       if (!existing || existing.archivedAt === null) {
         return reply
@@ -466,7 +466,7 @@ export const lotRoutes: FastifyPluginAsync<LotRoutesOptions> = async (app, optio
       // A lot's number is unique within its project, archived lots included, so
       // an active lot cannot have taken the number in the meantime — but the
       // check costs nothing and the message it produces is the useful one.
-      const clash = app.db
+      const clash = request.db
         .select({ id: lots.id })
         .from(lots)
         .where(
@@ -489,7 +489,7 @@ export const lotRoutes: FastifyPluginAsync<LotRoutesOptions> = async (app, optio
 
       const now = new Date().toISOString();
 
-      app.db.transaction((tx) => {
+      request.db.transaction((tx) => {
         tx.update(lots)
           .set({ archivedAt: null, archiveReason: null, updatedAt: now })
           .where(eq(lots.id, existing.id))
