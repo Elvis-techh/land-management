@@ -142,6 +142,57 @@ describe("the test site's demo data", () => {
     db.close();
   });
 
+  it("gets a second company, with its own emails and the same passwords", async () => {
+    const { env, databasePath } = site(testSite);
+    assert.equal(run("migrate", env).status, 0);
+    const result = run("seed", env);
+    assert.equal(result.status, 0, result.stderr);
+
+    const folder = join(databasePath, "..");
+    const accounts = new Database(join(folder, "accounts.db"), { readonly: true });
+    assert.deepEqual(accounts.prepare("select id from companies order by id").all(), [{ id: 1 }, { id: 2 }]);
+    assert.deepEqual(
+      accounts.prepare("select email, company_id as company from account_emails order by email").all(),
+      [
+        { email: "asociado@empresados.hn", company: 2 },
+        { email: "gerencia@empresados.hn", company: 2 },
+      ],
+    );
+    accounts.close();
+
+    const second = new Database(join(folder, "companies", "2", "lindero.db"), { readonly: true });
+    const { hash } = second
+      .prepare("select password_hash as hash from users where email = ?")
+      .get("gerencia@empresados.hn") as { hash: string };
+    const business = second.prepare("select value from app_settings where key = 'business'").get() as {
+      value: string;
+    };
+    const projectNames = second.prepare("select name from projects").all();
+    second.close();
+
+    assert.equal(await verifyPassword(SUPERVISOR_PASSWORD, hash), true);
+    assert.equal(JSON.parse(business.value).name, "Empresa de Prueba Dos");
+    assert.deepEqual(projectNames, [{ name: "Lomas de la Empresa Dos" }]);
+
+    // Nothing of it in the first company's file.
+    const first = new Database(databasePath, { readonly: true });
+    assert.deepEqual(first.prepare("select count(*) as n from users where email like '%empresados%'").get(), { n: 0 });
+    first.close();
+  });
+
+  it("removes the second company and the accounts database on a reset", () => {
+    const { env, databasePath } = site(testSite);
+    assert.equal(run("migrate", env).status, 0);
+    assert.equal(run("seed", env).status, 0);
+    const folder = join(databasePath, "..");
+    assert.ok(existsSync(join(folder, "companies", "2", "lindero.db")));
+
+    const result = run("reset", env);
+    assert.equal(result.status, 0, result.stderr);
+    assert.ok(!existsSync(join(folder, "accounts.db")));
+    assert.ok(!existsSync(join(folder, "companies")));
+  });
+
   it("is removed whole by a reset: the database and every uploaded file", () => {
     const { env, databasePath, uploadsPath } = site(testSite);
     assert.equal(run("migrate", env).status, 0);

@@ -9,12 +9,16 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const backendRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
-const source = join(backendRoot, "drizzle");
-const destination = join(backendRoot, "dist", "drizzle");
 
-// Clear first so a migration file deleted or renamed in source does not linger
-// in the build output and get re-applied.
-rmSync(destination, { recursive: true, force: true });
-cpSync(source, destination, { recursive: true });
+// Each company's database, and the accounts database.
+for (const folder of ["drizzle", "drizzle-accounts"]) {
+  const source = join(backendRoot, folder);
+  const destination = join(backendRoot, "dist", folder);
 
-console.log(`Copied migrations -> ${destination}`);
+  // Clear first so a migration file deleted or renamed in source does not linger
+  // in the build output and get re-applied.
+  rmSync(destination, { recursive: true, force: true });
+  cpSync(source, destination, { recursive: true });
+
+  console.log(`Copied migrations -> ${destination}`);
+}

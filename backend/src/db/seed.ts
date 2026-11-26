@@ -6,6 +6,7 @@ import { businessToday } from "../lib/time.js";
 import { createDb } from "./client.js";
 import { demoPasswords } from "./demoLogins.js";
 import { seedMoraCases } from "./moraCases.js";
+import { SECOND_COMPANY_EMAILS, seedSecondCompany } from "./secondCompany.js";
 import { contracts, customers, lots, payments, projects, users } from "./schema.js";
 
 /**
@@ -371,4 +372,13 @@ console.log(`Seeded ${config.databasePath}`);
 if (config.site !== "test") {
   console.log(`  Supervisor  gerencia@lindero.hn / ${passwords.owner}`);
   console.log(`  Asociado    asociado@lindero.hn / ${passwords.staff}`);
+}
+
+// A second company beside it, with the same passwords: signing in with its
+// emails shows its records and none of the first company's.
+const second = await seedSecondCompany(config, passwords);
+if (second !== null) {
+  console.log(`Seeded company ${second}, «Empresa de Prueba Dos», with the same passwords:`);
+  console.log(`  Supervisor  ${SECOND_COMPANY_EMAILS.owner}`);
+  console.log(`  Asociado    ${SECOND_COMPANY_EMAILS.staff}`);
 }

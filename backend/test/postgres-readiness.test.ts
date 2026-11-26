@@ -25,7 +25,13 @@ const SPOTS: Array<{ name: string; pattern: RegExp; known: Record<string, number
   {
     name: "Drizzle's SQLite builders (sqliteTable, alias…)",
     pattern: /["']drizzle-orm\/sqlite-core["']/g,
-    known: { "db/schema.ts": 2, "routes/audit.ts": 1, "routes/contracts.ts": 1, "routes/transactions.ts": 1 },
+    known: {
+      "db/accountsSchema.ts": 1,
+      "db/schema.ts": 2,
+      "routes/audit.ts": 1,
+      "routes/contracts.ts": 1,
+      "routes/transactions.ts": 1,
+    },
   },
   {
     name: "PRAGMA",

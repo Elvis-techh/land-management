@@ -3,7 +3,8 @@ import { rmSync } from "node:fs";
 import { loadConfig } from "../config/env.js";
 
 /**
- * Deletes the SQLite file so `db:migrate` + `db:seed` can rebuild it.
+ * Deletes the SQLite file so `db:migrate` + `db:seed` can rebuild it, with the
+ * accounts database and every other company's folder.
  *
  * Development only. It refuses to run with NODE_ENV=production, because on the
  * droplet this would destroy real customer records.
@@ -20,10 +21,18 @@ if (config.nodeEnv === "production" && config.site !== "test") {
 
 for (const suffix of ["", "-wal", "-shm"]) {
   rmSync(`${config.databasePath}${suffix}`, { force: true });
+  rmSync(`${config.accountsPath}${suffix}`, { force: true });
 }
+
+// Every company after the first, with its files: they are demo data too, and
+// the accounts database that listed them is gone.
+rmSync(config.companiesPath, { recursive: true, force: true });
 
 if (config.site === "test") {
   rmSync(config.uploadsPath, { recursive: true, force: true });
 }
 
-console.log(`Deleted ${config.databasePath} — run db:migrate and db:seed to rebuild.`);
+console.log(
+  `Deleted ${config.databasePath}, ${config.accountsPath} and ${config.companiesPath} — ` +
+    "run db:migrate and db:seed to rebuild.",
+);

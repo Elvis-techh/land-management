@@ -1,26 +1,48 @@
 import { buildApp } from "./app.js";
 import { loadConfig } from "./config/env.js";
-import { FIRST_COMPANY, companyFiles, openCompany, singleCompany } from "./db/companies.js";
+import { openAccounts } from "./db/accounts.js";
+import { FIRST_COMPANY, companyRegistry } from "./db/companies.js";
 import { refreshEveryCompany } from "./lib/exchangeRate.js";
 
 const config = loadConfig();
 
-// Opening a company brings its schema up to date before anything touches it,
-// and sweeps its expired sessions (see `openCompany`). Safe on every boot:
-// drizzle skips migrations already applied. A failure here stops startup,
-// which is what you want — serving traffic against a half-built schema is
-// worse than a restart loop a service manager will surface.
-const { company, expiredSessions } = openCompany(
-  FIRST_COMPANY,
-  companyFiles(config, FIRST_COMPANY),
-);
-const companies = singleCompany(company);
+// Which companies exist and which company each email signs in to. Created on
+// the first start, with company 1 in it.
+const accounts = openAccounts(config.accountsPath);
+
+const companies = companyRegistry(config, accounts.db, {
+  // Forwarded, because the app's logger exists only once the app is built.
+  log: {
+    info: (details, message) => app.log.info(details, message),
+    warn: (details, message) => app.log.warn(details, message),
+  },
+  // A company opened after a while gets today's exchange rate straight away
+  // rather than at the timer's next round.
+  onOpen: (company) => {
+    if (config.exchangeRateRefreshHours > 0) {
+      void refreshEveryCompany([company], app.log);
+    }
+  },
+});
 
 const app = await buildApp(config, companies);
 
-if (expiredSessions > 0) {
-  app.log.info({ companyId: company.id, removed: expiredSessions }, "Deleted expired sessions");
-}
+// Company 1 is opened now rather than on its first request: opening brings
+// its schema up to date (see `openCompany`), and a failure here stops
+// startup, which is what you want — serving traffic against a half-built
+// schema is worse than a restart loop a service manager will surface. Safe on
+// every boot: drizzle skips migrations already applied. Other companies are
+// opened, and upgraded, the first time someone uses them.
+companies.get(FIRST_COMPANY);
+
+// Close the companies nobody is using, so memory follows the ones in use.
+const idleTimer = setInterval(() => {
+  const closed = companies.closeIdle();
+  if (closed.length > 0) {
+    app.log.info({ companyIds: closed }, "Closed idle companies");
+  }
+}, 5 * 60 * 1000);
+idleTimer.unref();
 
 /**
  * Keep the displayed exchange rate current.
@@ -72,9 +94,8 @@ const shutdown = async (signal: string, exitCode = 0) => {
 
   await app.close();
   // Closing SQLite cleanly checkpoints the write-ahead log.
-  for (const open of companies.open()) {
-    open.sqlite.close();
-  }
+  companies.closeAll();
+  accounts.sqlite.close();
   process.exit(exitCode);
 };
 

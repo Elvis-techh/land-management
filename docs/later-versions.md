@@ -31,16 +31,21 @@ What it takes, in this order:
 1. Keep businesses apart. Done: every request works on `request.company`
    (`db/companies.ts`): its database (`request.db`), its uploads folder, and
    its id, which keeps its live updates and list versions (`lib/changes.ts`)
-   apart from every other business's. A business's schema is brought up to
-   date when its file is opened, the exchange rate timer updates every open
+   apart from every other business's. The accounts database
+   (`db/accountsSchema.ts`, `ACCOUNTS_PATH`) lists the businesses and which
+   business each email signs in to; one email, one business. Signing in looks
+   the email up there, and the session cookie names the business, so each
+   request opens only that business's file. A business's file is opened, and
+   its schema brought up to date, the first time it is needed, and closed
+   after 15 minutes unused. The exchange rate timer updates every open
    business with one question to the provider, and the nightly backup
-   (`scripts/backup.mjs`) snapshots every business's file. Business 1 keeps
-   today's files; every other one gets `<id>/lindero.db` and `<id>/uploads/`
-   under `COMPANIES_PATH`. Today the choice is still always business 1. Still
-   to do: choose from the signed-in account, open a business's file when it is
-   first needed, close the files nobody is using, give SQLite a smaller cache
-   per file, have the test site's reset clear every business, and a test that
-   proves one signed-in business cannot read another's records.
+   (`scripts/backup.mjs`) snapshots every business's file and the accounts
+   database. Business 1 keeps today's files; every other one gets
+   `<id>/lindero.db` and `<id>/uploads/` under `COMPANIES_PATH`. The test site
+   has a second demo business (`db/secondCompany.ts`).
+   Still to do with signup: a new business must start with its own name and
+   contacts, because the defaults in `lib/settings.ts` are business 1's; and
+   SQLite's cache per file could be made smaller once many are open.
 2. Accounts: signup, email confirmation and «forgot password». Today only a
    supervisor can replace a password, so a supervisor who forgets theirs has
    nobody to ask. Sending mail needs an email service, because DigitalOcean
@@ -77,9 +82,9 @@ privacy policy.
 
 **Backups for every business, with a restore tried.** The real site's nightly
 snapshot goes to Spaces (`deploy/lindero-backup.service`). It covers every
-business's database file, and the existing copy to Spaces picks up the ones in
-`backups/companies/` too. Still to add: the accounts database, and a mirror of
-each business's uploads folder (`data/companies/<id>/uploads`; the example
+business's database file and the accounts database, and the existing copy to
+Spaces picks up the ones in `backups/companies/` and `backups/accounts/` too.
+Still to add: a mirror of each business's uploads folder (`data/companies/<id>/uploads`; the example
 line is in the unit). Before anyone depends on it, restore one business once
 and check that the others were not touched.
 

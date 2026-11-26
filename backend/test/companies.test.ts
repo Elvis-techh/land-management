@@ -11,11 +11,12 @@ import { eq, sql } from "drizzle-orm";
 import type { FastifyBaseLogger } from "fastify";
 
 import { buildApp } from "../src/app.js";
+import { SESSION_COOKIE, createSession, sessionCookieValue } from "../src/auth/session.js";
 import { companyFiles, openCompany } from "../src/db/companies.js";
 import type { Companies, Company } from "../src/db/companies.js";
 import { projects, sessions, users } from "../src/db/schema.js";
 import { readCurrentRate, recordRate, refreshEveryCompany } from "../src/lib/exchangeRate.js";
-import { OWNER_PASSWORD, buildTestDb, testConfig } from "./helpers.js";
+import { buildTestDb, testConfig } from "./helpers.js";
 
 /**
  * Every request works on its own company, and on no other.
@@ -37,14 +38,19 @@ async function twoCompanies() {
   const companies: Companies = {
     forRequest: (request) => (request.headers["x-test-company"] === "b" ? companyB : companyA),
     open: () => [companyA, companyB],
+    // Signing in is tested with the real registry, further down.
+    forEmail: () => null,
+    emailUsedElsewhere: () => false,
+    usersChanged: () => undefined,
   };
 
   const app = await buildApp(testConfig, companies);
   await app.ready();
 
-  // Same email and password in both: only the header says which is meant.
-  const cookieA = await loginTo(app, "a");
-  const cookieB = await loginTo(app, "b");
+  // A session in each, for the same owner email: only the header says which
+  // company is meant.
+  const cookieA = sessionCookie(companyA, a.ids.ownerId);
+  const cookieB = sessionCookie(companyB, b.ids.ownerId);
 
   return { app, a, b, companyA, companyB, cookieA, cookieB };
 }
@@ -53,16 +59,9 @@ function uploadsFolder() {
   return mkdtempSync(join(tmpdir(), "lindero-test-company-uploads-"));
 }
 
-async function loginTo(app: Awaited<ReturnType<typeof buildApp>>, company: "a" | "b") {
-  const response = await app.inject({
-    method: "POST",
-    url: "/api/auth/login",
-    headers: { "x-test-company": company },
-    payload: { email: "owner@test.hn", password: OWNER_PASSWORD },
-  });
-  const cookie = response.cookies.find((entry) => entry.name === "lindero_session");
-  assert.ok(cookie, `login to ${company}: ${response.statusCode} ${response.body}`);
-  return `lindero_session=${cookie.value}`;
+function sessionCookie(company: Company, userId: string) {
+  const token = createSession(company.db, userId, 7);
+  return `${SESSION_COOKIE}=${sessionCookieValue(company.id, token)}`;
 }
 
 /** Every GET route the app has, with its parameters as written («/api/receipts/:id»). */

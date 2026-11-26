@@ -31,6 +31,12 @@ export type AppConfig = {
    * Defaults to a `companies` folder beside the database file.
    */
   companiesPath: string;
+  /**
+   * The accounts database: which companies exist and which company each email
+   * signs in to (db/accountsSchema.ts). Defaults to `accounts.db` beside the
+   * database file.
+   */
+  accountsPath: string;
   /** Signs the session cookie so it cannot be tampered with. */
   cookieSecret: string;
   /** How long a login lasts, in days. */
@@ -215,6 +221,7 @@ export function loadConfig(environment = process.env): AppConfig {
     databasePath,
     uploadsPath: environment.UPLOADS_PATH ?? "./data/uploads",
     companiesPath: environment.COMPANIES_PATH ?? join(dirname(databasePath), "companies"),
+    accountsPath: environment.ACCOUNTS_PATH ?? join(dirname(databasePath), "accounts.db"),
     cookieSecret,
     sessionDays,
     loginAttemptsPerMinute,

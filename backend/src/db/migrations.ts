@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import type Database from "better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 
-import type { Db } from "./client.js";
+import type { AccountsDb, Db } from "./client.js";
 
 /**
  * Finds the folder of SQL migration files, relative to THIS module rather than
@@ -25,9 +25,9 @@ import type { Db } from "./client.js";
  *   dist/db/migrations.js  ->  backend/drizzle   (../../drizzle, whole tree deployed)
  *   src/db/migrations.ts   ->  backend/drizzle   (../../drizzle, tsx: dev, tests, db:migrate)
  */
-function findMigrationsFolder(): string {
+export function findMigrationsFolder(name: "drizzle" | "drizzle-accounts" = "drizzle"): string {
   const here = dirname(fileURLToPath(import.meta.url));
-  const candidates = [join(here, "..", "drizzle"), join(here, "..", "..", "drizzle")];
+  const candidates = [join(here, "..", name), join(here, "..", "..", name)];
 
   for (const folder of candidates) {
     // meta/_journal.json is the index drizzle reads first; if it is here, the
@@ -79,14 +79,16 @@ function findMigrationsFolder(): string {
  * starts, with the offending rows named.
  */
 export function runMigrations(
-  db: Db,
+  db: Db | AccountsDb,
   sqlite: Database.Database,
   migrationsFolder = findMigrationsFolder(),
 ): void {
   sqlite.pragma("foreign_keys = OFF");
 
   try {
-    migrate(db, { migrationsFolder });
+    // The migrator only runs SQL files and records them; which schema the
+    // handle was typed with makes no difference to it.
+    migrate(db as Db, { migrationsFolder });
 
     const violations = sqlite.pragma("foreign_key_check") as Array<{
       table: string;

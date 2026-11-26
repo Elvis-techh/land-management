@@ -9,6 +9,45 @@ import { isRole } from "../lib/permissions.js";
 
 export const SESSION_COOKIE = "lindero_session";
 
+/**
+ * The session cookie's value: the company, a dot, and the session token.
+ *
+ * The company says which company's file to look the token up in. It needs no
+ * signature: a changed company only sends the token to another company's
+ * file, where no session has it, and only companies in the accounts database
+ * are ever opened (see `companyRegistry`).
+ */
+export function sessionCookieValue(companyId: string, token: string): string {
+  return `${companyId}.${token}`;
+}
+
+/**
+ * The company and token in a session cookie, or `null` for nothing usable.
+ *
+ * A cookie from before there were several companies is the bare token (tokens
+ * never contain a dot), and belongs to company 1, so nobody is signed out by
+ * the change.
+ */
+export function readSessionCookie(
+  value: string | undefined,
+): { companyId: string; token: string } | null {
+  if (!value) {
+    return null;
+  }
+
+  const dot = value.indexOf(".");
+  if (dot === -1) {
+    return { companyId: "1", token: value };
+  }
+
+  const companyId = value.slice(0, dot);
+  const token = value.slice(dot + 1);
+  if (!/^[1-9][0-9]{0,9}$/.test(companyId) || token === "") {
+    return null;
+  }
+  return { companyId, token };
+}
+
 export interface SessionUser {
   id: string;
   name: string;

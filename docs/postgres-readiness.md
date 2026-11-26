@@ -142,7 +142,7 @@ the live updates.
 | Spot | Where | Change |
 |---|---|---|
 | The driver (`better-sqlite3`, `drizzle-orm/better-sqlite3`) | `db/client.ts`, `db/migrations.ts` | `pg` (node-postgres) with `drizzle-orm/node-postgres`; a pool instead of one connection; `DATABASE_URL` instead of `DATABASE_PATH`. |
-| `drizzle-orm/sqlite-core` (`sqliteTable`, `alias`) | `db/schema.ts`, `routes/audit.ts`, `routes/contracts.ts`, `routes/transactions.ts` | `drizzle-orm/pg-core` (`pgTable`, `alias`). |
+| `drizzle-orm/sqlite-core` (`sqliteTable`, `alias`) | `db/schema.ts`, `db/accountsSchema.ts`, `routes/audit.ts`, `routes/contracts.ts`, `routes/transactions.ts` | `drizzle-orm/pg-core` (`pgTable`, `alias`). |
 | `PRAGMA` (WAL, foreign keys, busy timeout, synchronous) | `db/client.ts` | Not needed; PostgreSQL does this itself. |
 | `PRAGMA foreign_keys` / `foreign_key_check` around migrations | `db/migrations.ts` | Not needed: PostgreSQL alters tables in place instead of rebuilding them. |
 | `PRAGMA data_version` for the Transacciones ETag | `routes/transactions.ts` | It notices writes made by other programs on the file. Replace it with a counter that `publishChange` increments, or drop it. |
