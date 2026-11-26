@@ -6,7 +6,7 @@ import type { Companies, Company } from "../db/companies.js";
 import { userCan } from "../lib/capabilities.js";
 import type { Capability } from "../lib/permissions.js";
 import type { SessionUser } from "./session.js";
-import { SESSION_COOKIE, getSessionUser } from "./session.js";
+import { SESSION_COOKIE, getSessionUser, readSessionCookie } from "./session.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -54,8 +54,12 @@ const authPlugin: FastifyPluginAsync<AuthPluginOptions> = async (app, options) =
     request.company = options.companies.forRequest(request);
     request.db = request.company.db;
 
-    const token = request.cookies[SESSION_COOKIE];
-    request.user = token ? getSessionUser(request.db, token) : null;
+    // A session is looked up only in the company its cookie names.
+    const cookie = readSessionCookie(request.cookies[SESSION_COOKIE]);
+    request.user =
+      cookie && cookie.companyId === request.company.id
+        ? getSessionUser(request.db, cookie.token)
+        : null;
   });
 
   app.decorate("requireUser", async (request: FastifyRequest, reply: FastifyReply) => {

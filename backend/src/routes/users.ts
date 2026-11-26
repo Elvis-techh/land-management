@@ -4,6 +4,7 @@ import { and, asc, eq, isNull, ne, sql } from "drizzle-orm";
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 
+import type { Companies } from "../db/companies.js";
 import { userCapabilities, users } from "../db/schema.js";
 import { deleteSessionsForUser } from "../auth/session.js";
 import { recordAudit } from "../lib/audit.js";
@@ -113,7 +114,20 @@ interface UserView {
   createdAt: string;
 }
 
-export const userRoutes: FastifyPluginAsync = async (app) => {
+interface UserRoutesOptions {
+  /**
+   * Which company each email signs in to. An email signs in to one company
+   * only, so a supervisor cannot give someone an email another company
+   * already uses, and every change is copied to the accounts database.
+   */
+  companies: Companies;
+}
+
+/** The refusal for an email another company already signs in with. */
+const usedElsewhere = (email: string) =>
+  `El correo ${email} ya lo usa otra empresa en Lindero. Usa otro correo para esta cuenta.`;
+
+export const userRoutes: FastifyPluginAsync<UserRoutesOptions> = async (app, options) => {
   app.get("/users", { onRequest: app.requireCapability("user:manage") }, async (request, reply) => {
     const rows = request.db
       .select({
@@ -170,6 +184,10 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
       return reply.code(409).send({ error: "duplicate_email", message: clash });
     }
 
+    if (options.companies.emailUsedElsewhere(request.company, email)) {
+      return reply.code(409).send({ error: "email_used_elsewhere", message: usedElsewhere(email) });
+    }
+
     // Hashed BEFORE the transaction: scrypt is intentionally slow, and holding
     // a SQLite write transaction open across it would block every other write
     // for the duration.
@@ -203,6 +221,10 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
 
       return next;
     });
+
+    // So the new account can sign in: the accounts database says which
+    // company an email belongs to.
+    options.companies.usersChanged(request.company);
 
     const view: UserView = {
       id: created.id,
@@ -279,6 +301,12 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
         return reply.code(409).send({ error: "duplicate_email", message: clash });
       }
 
+      if (options.companies.emailUsedElsewhere(request.company, email)) {
+        return reply
+          .code(409)
+          .send({ error: "email_used_elsewhere", message: usedElsewhere(email) });
+      }
+
       const updated = request.db.transaction((tx) => {
         const next = tx
           .update(users)
@@ -323,6 +351,9 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
 
         return next;
       });
+
+      // A changed email signs in from now on, and the old one no longer does.
+      options.companies.usersChanged(request.company);
 
       const view: UserView = {
         id: updated.id,

@@ -163,6 +163,7 @@ export async function buildApp(config: AppConfig, companies: Companies) {
       // sharing login's budget with it would let a few reloads lock out a
       // login that hasn't even been attempted yet.
       await api.register(authRoutes, {
+        companies,
         sessionDays: config.sessionDays,
         isProduction: config.nodeEnv === "production",
         loginAttemptsPerMinute: config.loginAttemptsPerMinute,
@@ -177,7 +178,7 @@ export async function buildApp(config: AppConfig, companies: Companies) {
       await api.register(transactionRoutes, { timeZone: config.timeZone });
       await api.register(constanciaRoutes, { timeZone: config.timeZone });
       await api.register(permissionRoutes);
-      await api.register(userRoutes);
+      await api.register(userRoutes, { companies });
       await api.register(exchangeRateRoutes);
       await api.register(settingsRoutes, { timeZone: config.timeZone });
       await api.register(moraRoutes, { timeZone: config.timeZone });

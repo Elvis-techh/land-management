@@ -4,6 +4,7 @@ import { dirname } from "node:path";
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 
+import * as accountsSchema from "./accountsSchema.js";
 import * as schema from "./schema.js";
 
 export type Db = ReturnType<typeof createDb>["db"];
@@ -14,6 +15,26 @@ export type Db = ReturnType<typeof createDb>["db"];
  * SQLite behaves in ways that will eventually corrupt or block a web app.
  */
 export function createDb(databasePath: string) {
+  const sqlite = openSqlite(databasePath);
+  const db = drizzle(sqlite, { schema });
+
+  return { db, sqlite };
+}
+
+/**
+ * Opens the accounts database (see accountsSchema.ts) with the same settings.
+ * Its own schema, so a company's tables are never in reach through it.
+ */
+export function createAccountsDb(databasePath: string) {
+  const sqlite = openSqlite(databasePath);
+  const db = drizzle(sqlite, { schema: accountsSchema });
+
+  return { db, sqlite };
+}
+
+export type AccountsDb = ReturnType<typeof createAccountsDb>["db"];
+
+function openSqlite(databasePath: string) {
   if (databasePath !== ":memory:") {
     // better-sqlite3 will not create missing directories itself.
     mkdirSync(dirname(databasePath), { recursive: true });
@@ -37,7 +58,5 @@ export function createDb(databasePath: string) {
   // under WAL, and considerably faster.
   sqlite.pragma("synchronous = NORMAL");
 
-  const db = drizzle(sqlite, { schema });
-
-  return { db, sqlite };
+  return sqlite;
 }

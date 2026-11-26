@@ -192,3 +192,41 @@ describe("scripts/backup.mjs with several companies", () => {
     }
   });
 });
+
+describe("scripts/backup.mjs and the accounts database", () => {
+  it("snapshots it into a folder of its own, under a name no company's restore can pick up", () => {
+    const root = mkdtempSync(join(tmpdir(), "lindero-backup-accounts-"));
+    try {
+      for (const name of ["lindero.db", "accounts.db"]) {
+        const db = new Database(join(root, name));
+        db.exec(`CREATE TABLE t (name TEXT); INSERT INTO t VALUES ('${name}');`);
+        db.close();
+      }
+      const env: NodeJS.ProcessEnv = {
+        ...process.env,
+        DATABASE_PATH: join(root, "lindero.db"),
+        UPLOADS_PATH: join(root, "uploads"),
+        BACKUP_PATH: join(root, "backups"),
+      };
+      delete env.ACCOUNTS_PATH;
+      delete env.COMPANIES_PATH;
+      delete env.BACKUP_UPLOADS_TARBALL;
+
+      const result = spawnSync(process.execPath, [script], { env, encoding: "utf8" });
+      assert.equal(result.status, 0, result.stderr);
+
+      const top = readdirSync(join(root, "backups")).filter((name) => name.endsWith(".db"));
+      assert.equal(top.length, 1, "only company 1's snapshot at the top");
+      const accounts = readdirSync(join(root, "backups", "accounts"));
+      assert.equal(accounts.length, 1);
+      assert.match(accounts[0]!, /^lindero-accounts-.*\.db$/);
+
+      const snapshot = new Database(join(root, "backups", "accounts", accounts[0]!), { readonly: true });
+      assert.deepEqual(snapshot.prepare("SELECT name FROM t").all(), [{ name: "accounts.db" }]);
+      snapshot.close();
+      assert.match(result.stdout, /Accounts: Database {2}-> .*quick_check ok/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

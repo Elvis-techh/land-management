@@ -6,7 +6,14 @@ import { users } from "../db/schema.js";
 import { resolveUserCapabilities } from "../lib/capabilities.js";
 import { verifyPassword } from "../lib/password.js";
 import type { Role } from "../lib/permissions.js";
-import { SESSION_COOKIE, createSession, destroySession } from "../auth/session.js";
+import {
+  SESSION_COOKIE,
+  createSession,
+  destroySession,
+  readSessionCookie,
+  sessionCookieValue,
+} from "../auth/session.js";
+import type { Companies } from "../db/companies.js";
 
 const loginBody = z.object({
   email: z.string().trim().min(1).max(320),
@@ -14,6 +21,8 @@ const loginBody = z.object({
 });
 
 interface AuthRoutesOptions {
+  /** Where each email signs in (see `companyRegistry` in db/companies.ts). */
+  companies: Companies;
   sessionDays: number;
   isProduction: boolean;
   /** Attempts allowed per minute, per IP — this route only. See app.ts. */
@@ -54,7 +63,12 @@ export const authRoutes: FastifyPluginAsync<AuthRoutesOptions> = async (app, opt
       }
 
       const email = parsed.data.email.toLowerCase();
-      const user = request.db.select().from(users).where(eq(users.email, email)).get();
+
+      // The company this email signs in to, from the accounts database; the
+      // user, from that company's own file. An email no company has finds no
+      // user, and is refused exactly like a wrong password, below.
+      const company = options.companies.forEmail(email);
+      const user = company?.db.select().from(users).where(eq(users.email, email)).get();
 
       // Always run a hash comparison, even when the email is unknown. Returning
       // early would make "no such user" measurably faster than "wrong password",
@@ -62,7 +76,7 @@ export const authRoutes: FastifyPluginAsync<AuthRoutesOptions> = async (app, opt
       const storedHash = user?.passwordHash ?? "scrypt$00$00";
       const passwordMatches = await verifyPassword(parsed.data.password, storedHash);
 
-      if (!user || !passwordMatches) {
+      if (!company || !user || !passwordMatches) {
         request.log.warn({ email }, "Failed login");
         return reply
           .code(401)
@@ -88,17 +102,18 @@ export const authRoutes: FastifyPluginAsync<AuthRoutesOptions> = async (app, opt
         });
       }
 
-      const token = createSession(request.db, user.id, options.sessionDays);
+      const token = createSession(company.db, user.id, options.sessionDays);
 
       // Overwritten, not appended: the Usuarios screen wants the latest sign-in
       // and nothing else, so a login leaves no row in the Historial.
-      request.db
+      company.db
         .update(users)
         .set({ lastSignInAt: new Date().toISOString() })
         .where(eq(users.id, user.id))
         .run();
 
-      reply.setCookie(SESSION_COOKIE, token, {
+      // The cookie names the company, so the next request opens its file.
+      reply.setCookie(SESSION_COOKIE, sessionCookieValue(company.id, token), {
         path: "/",
         // The browser will not expose this cookie to JavaScript, so a script
         // injected into the page cannot steal the session.
@@ -118,7 +133,7 @@ export const authRoutes: FastifyPluginAsync<AuthRoutesOptions> = async (app, opt
           role: user.role,
           // Sent so the interface can hide what this user cannot do. It is a
           // convenience only — every write re-checks server-side.
-          capabilities: [...resolveUserCapabilities(request.db, { id: user.id, role: user.role as Role })],
+          capabilities: [...resolveUserCapabilities(company.db, { id: user.id, role: user.role as Role })],
         },
         businessTimeZone: options.timeZone,
       });
@@ -126,10 +141,10 @@ export const authRoutes: FastifyPluginAsync<AuthRoutesOptions> = async (app, opt
   );
 
   app.post("/auth/logout", async (request, reply) => {
-    const token = request.cookies[SESSION_COOKIE];
+    const cookie = readSessionCookie(request.cookies[SESSION_COOKIE]);
 
-    if (token) {
-      destroySession(request.db, token);
+    if (cookie && cookie.companyId === request.company.id) {
+      destroySession(request.db, cookie.token);
     }
 
     reply.clearCookie(SESSION_COOKIE, { path: "/" });
