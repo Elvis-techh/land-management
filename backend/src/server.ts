@@ -1,28 +1,25 @@
 import { buildApp } from "./app.js";
 import { loadConfig } from "./config/env.js";
-import { createDb } from "./db/client.js";
-import { runMigrations } from "./db/migrations.js";
-import { singleCompany } from "./db/pickDatabase.js";
-import { deleteExpiredSessions } from "./auth/session.js";
-import { refreshRateInBackground } from "./lib/exchangeRate.js";
+import { FIRST_COMPANY, companyFiles, openCompany, singleCompany } from "./db/companies.js";
+import { refreshEveryCompany } from "./lib/exchangeRate.js";
 
 const config = loadConfig();
-const { db, sqlite } = createDb(config.databasePath);
 
-// Bring the schema up to date before anything touches it — the expired-session
-// sweep just below is the first query that would otherwise hit a missing table
-// on a fresh install. Safe on every boot: drizzle skips migrations already
-// applied. A failure here stops startup, which is what you want — serving
-// traffic against a half-built schema is worse than a restart loop a service
-// manager will surface.
-runMigrations(db, sqlite);
+// Opening a company brings its schema up to date before anything touches it,
+// and sweeps its expired sessions (see `openCompany`). Safe on every boot:
+// drizzle skips migrations already applied. A failure here stops startup,
+// which is what you want — serving traffic against a half-built schema is
+// worse than a restart loop a service manager will surface.
+const { company, expiredSessions } = openCompany(
+  FIRST_COMPANY,
+  companyFiles(config, FIRST_COMPANY),
+);
+const companies = singleCompany(company);
 
-const app = await buildApp(config, singleCompany(db));
+const app = await buildApp(config, companies);
 
-// Housekeeping on boot: expired sessions serve no purpose.
-const removed = deleteExpiredSessions(db);
-if (removed > 0) {
-  app.log.info({ removed }, "Deleted expired sessions");
+if (expiredSessions > 0) {
+  app.log.info({ companyId: company.id, removed: expiredSessions }, "Deleted expired sessions");
 }
 
 /**
@@ -36,7 +33,7 @@ if (removed > 0) {
  * updates again; `refreshAutomaticRate` is where that rule lives.
  */
 const refreshRate = () => {
-  void refreshRateInBackground(db, app.log);
+  void refreshEveryCompany(companies.open(), app.log);
 };
 
 if (config.exchangeRateRefreshHours > 0) {
@@ -75,7 +72,9 @@ const shutdown = async (signal: string, exitCode = 0) => {
 
   await app.close();
   // Closing SQLite cleanly checkpoints the write-ahead log.
-  sqlite.close();
+  for (const open of companies.open()) {
+    open.sqlite.close();
+  }
   process.exit(exitCode);
 };
 

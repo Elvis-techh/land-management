@@ -182,7 +182,7 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
     const { data_version: dbVersion } = request.db.get<{ data_version: number }>(
       sql`PRAGMA data_version`,
     );
-    const version = dataVersion(dbVersion, today(), request.user!.id);
+    const version = dataVersion(request.company.id, dbVersion, today(), request.user!.id);
 
     // `no-cache` is "keep a copy, but ask before every use", not "do not
     // cache". `private` keeps it out of any shared cache between here and the

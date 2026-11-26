@@ -233,6 +233,7 @@ export function recordRate(db: Pick<Db, "insert">, input: RecordRateInput): Rate
  */
 export async function refreshAutomaticRate(
   db: Db,
+  fetchRate: () => Promise<number> = fetchMarketRate,
 ): Promise<{ status: "updated" | "skipped_manual" | "failed"; rate?: number; error?: string }> {
   const current = readCurrentRate(db);
 
@@ -241,7 +242,7 @@ export async function refreshAutomaticRate(
   }
 
   try {
-    const providerRate = await fetchMarketRate();
+    const providerRate = await fetchRate();
     // The adjustment travels with the readings rather than being re-decided
     // here, so a scheduled refresh cannot quietly drop the calibration a
     // supervisor set — it applies whatever was last in force.
@@ -274,9 +275,13 @@ export async function refreshAutomaticRate(
  * bare stack trace and no context. Caught here instead, and logged as what it
  * is; the next tick tries again.
  */
-export async function refreshRateInBackground(db: Db, log: FastifyBaseLogger): Promise<void> {
+export async function refreshRateInBackground(
+  db: Db,
+  log: FastifyBaseLogger,
+  fetchRate: () => Promise<number> = fetchMarketRate,
+): Promise<void> {
   try {
-    const result = await refreshAutomaticRate(db);
+    const result = await refreshAutomaticRate(db, fetchRate);
 
     if (result.status === "failed") {
       log.warn({ error: result.error }, "Exchange rate refresh failed; keeping last reading");
@@ -285,5 +290,27 @@ export async function refreshRateInBackground(db: Db, log: FastifyBaseLogger): P
     }
   } catch (error) {
     log.error({ err: error }, "Exchange rate refresh crashed; keeping last reading");
+  }
+}
+
+/**
+ * The scheduled refresh for every open company, as the server's timer runs it.
+ *
+ * Each company keeps its own rate, because a supervisor can set it by hand or
+ * calibrate it, but the market rate is the same for all of them: the provider
+ * is asked once per round, however many companies there are, and only if one
+ * of them still takes the automatic rate. One company whose file fails is
+ * logged and skipped; the others are still updated.
+ */
+export async function refreshEveryCompany(
+  companies: ReadonlyArray<{ id: string; db: Db }>,
+  log: FastifyBaseLogger,
+  fetchRate: () => Promise<number> = fetchMarketRate,
+): Promise<void> {
+  let asked: Promise<number> | null = null;
+  const askOnce = () => (asked ??= fetchRate());
+
+  for (const company of companies) {
+    await refreshRateInBackground(company.db, log.child({ companyId: company.id }), askOnce);
   }
 }

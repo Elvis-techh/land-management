@@ -45,6 +45,12 @@ ExecStart=/usr/bin/node scripts/backup.mjs
 # uploads folder cannot wipe the off-site copy.
 # ExecStartPost=/usr/bin/rclone copy /opt/lindero/backend/backups remote:lindero-backups/db --include "lindero-*.db" --size-only -v
 # ExecStartPost=/usr/bin/rclone copy /opt/lindero/backend/data/uploads remote:lindero-backups/uploads --size-only -v
+#
+# The first line also copies every other company's database snapshots, from
+# backups/companies/<id>/: its pattern matches in subfolders. Their uploads
+# need one more mirror, once accounts can create companies (only the uploads
+# folders: the live database files beside them must never be copied):
+# ExecStartPost=/usr/bin/rclone copy /opt/lindero/backend/data/companies remote:lindero-backups/companies --include "/*/uploads/**" --size-only -v
 
 # Must exist before the unit starts, for the same reason as in
 # lindero-api.service: the namespace is built before the script runs, so

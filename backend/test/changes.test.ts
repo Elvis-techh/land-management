@@ -29,7 +29,7 @@ describe("announcing a write to the other screens", async () => {
   /** Everything published while `run` was executing. */
   async function announcementsDuring(run: () => Promise<unknown>): Promise<ChangeEvent[]> {
     const heard: ChangeEvent[] = [];
-    const unsubscribe = subscribeToChanges((event) => heard.push(event));
+    const unsubscribe = subscribeToChanges("1", (event) => heard.push(event));
 
     try {
       await run();
@@ -183,10 +183,10 @@ describe("announcing a write to the other screens", async () => {
     // must not swallow the news for everybody else, and must never turn a
     // completed payment into a failed request.
     const heard: string[] = [];
-    const stopBroken = subscribeToChanges(() => {
+    const stopBroken = subscribeToChanges("1", () => {
       throw new Error("this socket is gone");
     });
-    const stopGood = subscribeToChanges((event) => heard.push(event.resource));
+    const stopGood = subscribeToChanges("1", (event) => heard.push(event.resource));
 
     try {
       const response = await app.inject({
@@ -209,7 +209,7 @@ describe("announcing a write to the other screens", async () => {
     // The rule an SSE connection depends on: a closed tab is one entry removed
     // from the set, not a listener writing to a dead socket forever.
     const heard: ChangeEvent[] = [];
-    subscribeToChanges((event) => heard.push(event))();
+    subscribeToChanges("1", (event) => heard.push(event))();
 
     await app.inject({
       method: "POST",

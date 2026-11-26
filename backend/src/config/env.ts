@@ -1,3 +1,5 @@
+import { dirname, join } from "node:path";
+
 export type AppConfig = {
   nodeEnv: "development" | "test" | "production";
   /**
@@ -22,6 +24,13 @@ export type AppConfig = {
    * See the note on `attachments` in src/db/schema.ts.
    */
   uploadsPath: string;
+  /**
+   * The folder that holds every company after the first, one folder each
+   * (`<id>/lindero.db` and `<id>/uploads/`). Company 1 stays at
+   * `databasePath` and `uploadsPath`. See `companyFiles` in db/companies.ts.
+   * Defaults to a `companies` folder beside the database file.
+   */
+  companiesPath: string;
   /** Signs the session cookie so it cannot be tampered with. */
   cookieSecret: string;
   /** How long a login lasts, in days. */
@@ -192,6 +201,8 @@ export function loadConfig(environment = process.env): AppConfig {
     throw new Error(`TIME_ZONE is not a known IANA timezone: ${timeZone}`);
   }
 
+  const databasePath = environment.DATABASE_PATH ?? "./data/lindero.db";
+
   return {
     nodeEnv,
     site,
@@ -201,8 +212,9 @@ export function loadConfig(environment = process.env): AppConfig {
       .split(",")
       .map((origin) => origin.trim())
       .filter(Boolean),
-    databasePath: environment.DATABASE_PATH ?? "./data/lindero.db",
+    databasePath,
     uploadsPath: environment.UPLOADS_PATH ?? "./data/uploads",
+    companiesPath: environment.COMPANIES_PATH ?? join(dirname(databasePath), "companies"),
     cookieSecret,
     sessionDays,
     loginAttemptsPerMinute,

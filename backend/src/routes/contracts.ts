@@ -63,8 +63,6 @@ import { transfersByContract } from "../lib/transfers.js";
 interface ContractRoutesOptions {
   /** IANA name — see `timeZone` in src/config/env.ts. */
   timeZone: string;
-  /** Where uploaded contract documents are written. See config/env.ts. */
-  uploadsPath: string;
 }
 
 /**
@@ -2185,7 +2183,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
       }
 
       // Straight to disk, with the size and emptiness checks on the way.
-      const received = await receiveToDisk(part, options.uploadsPath, MAX_DOCUMENT_BYTES);
+      const received = await receiveToDisk(part, request.company.uploadsPath, MAX_DOCUMENT_BYTES);
 
       if (!received.ok) {
         return reply
@@ -2220,7 +2218,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
         // The row is what makes the file findable. If it could not be written,
         // the bytes on disk are unreachable rubbish, so they go too rather than
         // accumulating as orphans nobody will ever notice.
-        await removeStoredFile(options.uploadsPath, storageKey);
+        await removeStoredFile(request.company.uploadsPath, storageKey);
         throw error;
       }
 
@@ -2263,7 +2261,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
         return reply.code(404).send({ error: "not_found", message: "Ese archivo no existe." });
       }
 
-      return sendStoredFile(reply, row, options.uploadsPath);
+      return sendStoredFile(reply, row, request.company.uploadsPath);
     },
   );
 
@@ -2309,7 +2307,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
         });
       });
 
-      await removeStoredFile(options.uploadsPath, row.storageKey);
+      await removeStoredFile(request.company.uploadsPath, row.storageKey);
 
       return { ok: true };
     },

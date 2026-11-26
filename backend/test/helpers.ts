@@ -7,7 +7,8 @@ import { buildApp } from "../src/app.js";
 import type { AppConfig } from "../src/config/env.js";
 import { createDb } from "../src/db/client.js";
 import { runMigrations } from "../src/db/migrations.js";
-import { singleCompany } from "../src/db/pickDatabase.js";
+import { FIRST_COMPANY, singleCompany } from "../src/db/companies.js";
+import type { Company } from "../src/db/companies.js";
 import { contracts, customers, lots, payments, projects, users } from "../src/db/schema.js";
 import { hashPassword } from "../src/lib/password.js";
 
@@ -23,6 +24,9 @@ export const testConfig: AppConfig = {
   // Each test app gets its own directory, so uploads from one test can
   // never be read by another and nothing lands in the real data folder.
   uploadsPath: mkdtempSync(join(tmpdir(), "lindero-test-uploads-")),
+  // Nothing in the suite opens a company here unless a test points it at a
+  // folder of its own.
+  companiesPath: join(tmpdir(), "lindero-test-companies-unused"),
   cookieSecret: "test-cookie-secret-that-is-long-enough-x",
   sessionDays: 7,
   // Effectively off for most tests; the rate-limit test lowers it on purpose.
@@ -44,12 +48,14 @@ export const testConfig: AppConfig = {
  * nothing a test does can leak into the next one or touch the real database.
  */
 export async function buildTestApp(configOverrides: Partial<AppConfig> = {}) {
+  const config = { ...testConfig, ...configOverrides };
   const { db, sqlite, ids } = await buildTestDb();
+  const company: Company = { id: FIRST_COMPANY, db, sqlite, uploadsPath: config.uploadsPath };
 
-  const app = await buildApp({ ...testConfig, ...configOverrides }, singleCompany(db));
+  const app = await buildApp(config, singleCompany(company));
   await app.ready();
 
-  return { app, db, sqlite, ids };
+  return { app, db, sqlite, ids, company };
 }
 
 /** The database `buildTestApp` serves, on its own, for a test that picks between several. */
