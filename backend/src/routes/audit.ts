@@ -154,8 +154,8 @@ export const auditRoutes: FastifyPluginAsync<{ timeZone: string }> = async (app,
    * Everybody who has made a change, for the «Quién» filter. Read from the
    * history itself, so a deactivated account that made changes is still there.
    */
-  app.get("/audit/actors", { onRequest: app.requireCapability("audit:view") }, async (_request, reply) => {
-    const actors = app.db
+  app.get("/audit/actors", { onRequest: app.requireCapability("audit:view") }, async (request, reply) => {
+    const actors = request.db
       .selectDistinct({ id: users.id, name: users.name })
       .from(auditEvents)
       .innerJoin(users, eq(users.id, auditEvents.actorId))
@@ -183,7 +183,7 @@ export const auditRoutes: FastifyPluginAsync<{ timeZone: string }> = async (app,
     // the person who made the change rather than the account that changed.
     const subject = alias(users, "subject_user");
     const where = auditWhere(parsed.data, options.timeZone, sql`${subject.name}`);
-    const rows = app.db
+    const rows = request.db
       .select({
         id: auditEvents.id,
         action: auditEvents.action,
@@ -227,7 +227,7 @@ export const auditRoutes: FastifyPluginAsync<{ timeZone: string }> = async (app,
 
     // The same joins as above: the search reads through them, and a count
     // that skipped them would disagree with the page it is counting.
-    const total = app.db
+    const total = request.db
       .select({ count: sql<number>`COUNT(*)` })
       .from(auditEvents)
       .innerJoin(actor, eq(actor.id, auditEvents.actorId))

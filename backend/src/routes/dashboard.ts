@@ -410,12 +410,12 @@ export const dashboardRoutes: FastifyPluginAsync<DashboardRoutesOptions> = async
     const projectionMonths = monthsAfter(month, PROJECTION_MONTHS);
     const windowStart = `${history[0]}-01`;
 
-    const rows = contractRows(app.db, asOf, previousAsOf);
-    const rules = healthRulesOf(readSettings(app.db));
-    const moraHistory = readMoraHistory(app.db);
+    const rows = contractRows(request.db, asOf, previousAsOf);
+    const rules = healthRulesOf(readSettings(request.db));
+    const moraHistory = readMoraHistory(request.db);
     // Up to today whatever month is shown: a past month reads its own position
     // out of the same accounts, see `moraPaidThrough`.
-    const moraAccounts = loadMoraAccounts(app.db, {
+    const moraAccounts = loadMoraAccounts(request.db, {
       asOf: asOfToday,
       timeZone: options.timeZone,
       history: moraHistory,
@@ -433,7 +433,7 @@ export const dashboardRoutes: FastifyPluginAsync<DashboardRoutesOptions> = async
      * contract's paid-to-date — is a SUM in the query above, which SQLite
      * answers from the (contract_id, paid_on) index without handing us rows.
      */
-    const paymentRows = app.db
+    const paymentRows = request.db
       .select({
         id: payments.id,
         customerId: contracts.customerId,
@@ -471,7 +471,7 @@ export const dashboardRoutes: FastifyPluginAsync<DashboardRoutesOptions> = async
       )
       .all();
 
-    const activeLots = app.db
+    const activeLots = request.db
       .select({ id: lots.id, projectId: lots.projectId })
       .from(lots)
       .where(isNull(lots.archivedAt))
@@ -861,7 +861,7 @@ export const dashboardRoutes: FastifyPluginAsync<DashboardRoutesOptions> = async
      * Inventing a second switch for the same question would mean two ways to
      * grant one thing, and a supervisor who revoked one and not the other.
      */
-    const control = userCan(app.db, request.user!, "audit:view")
+    const control = userCan(request.db, request.user!, "audit:view")
       ? {
           byUser: [...byUser]
             .map(([userId, totals]) => ({
@@ -873,7 +873,7 @@ export const dashboardRoutes: FastifyPluginAsync<DashboardRoutesOptions> = async
             }))
             .sort((a, b) => b.collectedCents - a.collectedCents),
 
-          voidedReceipts: app.db
+          voidedReceipts: request.db
             .select({
               id: receipts.id,
               code: receipts.code,
@@ -906,7 +906,7 @@ export const dashboardRoutes: FastifyPluginAsync<DashboardRoutesOptions> = async
            * kept apart from «Cobrado», which only ever counts what came in.
            */
           refunds: (() => {
-            const rows = app.db
+            const rows = request.db
               .select({
                 id: contractRefunds.id,
                 amountCents: contractRefunds.amountCents,
@@ -929,7 +929,7 @@ export const dashboardRoutes: FastifyPluginAsync<DashboardRoutesOptions> = async
             };
           })(),
 
-          unprovenTransfers: app.db
+          unprovenTransfers: request.db
             .select({
               count: sql<number>`COUNT(*)`,
               amountCents: sql<number>`COALESCE(SUM(${payments.amountCents}), 0)`,
@@ -963,7 +963,7 @@ export const dashboardRoutes: FastifyPluginAsync<DashboardRoutesOptions> = async
        * `null` for somebody who has never customised it, which is different
        * from an empty layout and has to stay different — see `clearPreference`.
        */
-      layout: readPreference<DashboardLayout>(app.db, request.user!.id, DASHBOARD_LAYOUT),
+      layout: readPreference<DashboardLayout>(request.db, request.user!.id, DASHBOARD_LAYOUT),
       today: asOfToday,
       asOf,
       isCurrentMonth,
@@ -1103,14 +1103,14 @@ export const dashboardRoutes: FastifyPluginAsync<DashboardRoutesOptions> = async
       });
     }
 
-    writePreference(app.db, request.user!.id, DASHBOARD_LAYOUT, parsed.data);
+    writePreference(request.db, request.user!.id, DASHBOARD_LAYOUT, parsed.data);
 
     return reply.send({ layout: parsed.data });
   });
 
   /** Go back to following the default order, rather than freezing today's. */
   app.delete("/dashboard/layout", { onRequest: app.requireUser }, async (request, reply) => {
-    clearPreference(app.db, request.user!.id, DASHBOARD_LAYOUT);
+    clearPreference(request.db, request.user!.id, DASHBOARD_LAYOUT);
 
     return reply.send({ layout: null });
   });

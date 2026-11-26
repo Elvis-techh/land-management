@@ -208,7 +208,7 @@ export const constanciaRoutes: FastifyPluginAsync<ConstanciaRoutesOptions> = asy
     "/contracts/:id/constancias",
     { onRequest: app.requireUser },
     async (request, reply) => {
-      const contract = app.db
+      const contract = request.db
         .select({ customerId: contracts.customerId })
         .from(contracts)
         .where(eq(contracts.id, request.params.id))
@@ -218,7 +218,7 @@ export const constanciaRoutes: FastifyPluginAsync<ConstanciaRoutesOptions> = asy
         return reply.code(404).send({ error: "not_found", message: "Ese contrato no existe." });
       }
 
-      const eligible = app.db
+      const eligible = request.db
         .select({
           contractId: contracts.id,
           contractCode: contracts.code,
@@ -244,8 +244,8 @@ export const constanciaRoutes: FastifyPluginAsync<ConstanciaRoutesOptions> = asy
 
       return {
         eligible,
-        standing: standingConstanciaIds(app.db, request.params.id).map((id) =>
-          presentConstancia(app.db, id),
+        standing: standingConstanciaIds(request.db, request.params.id).map((id) =>
+          presentConstancia(request.db, id),
         ),
       };
     },
@@ -276,7 +276,7 @@ export const constanciaRoutes: FastifyPluginAsync<ConstanciaRoutesOptions> = asy
 
       const contractIds = [...new Set(parsed.data.contractIds)];
 
-      const rows = app.db
+      const rows = request.db
         .select({
           id: contracts.id,
           customerId: contracts.customerId,
@@ -317,7 +317,7 @@ export const constanciaRoutes: FastifyPluginAsync<ConstanciaRoutesOptions> = asy
 
       const wanted = [...contractIds].sort().join(",");
 
-      const id = app.db.transaction((tx) => {
+      const id = request.db.transaction((tx) => {
         const standing = standingConstanciaIds(tx, contractIds[0]!).find(
           (candidate) => contractIdsOf(tx, candidate).sort().join(",") === wanted,
         );
@@ -363,7 +363,7 @@ export const constanciaRoutes: FastifyPluginAsync<ConstanciaRoutesOptions> = asy
         return newId;
       });
 
-      return { constancia: presentConstancia(app.db, id) };
+      return { constancia: presentConstancia(request.db, id) };
     },
   );
 
@@ -371,7 +371,7 @@ export const constanciaRoutes: FastifyPluginAsync<ConstanciaRoutesOptions> = asy
     "/constancias/:id",
     { onRequest: app.requireUser },
     async (request, reply) => {
-      const constancia = presentConstancia(app.db, request.params.id);
+      const constancia = presentConstancia(request.db, request.params.id);
 
       if (!constancia) {
         return reply.code(404).send({ error: "not_found", message: "Esa constancia no existe." });
@@ -395,7 +395,7 @@ export const constanciaRoutes: FastifyPluginAsync<ConstanciaRoutesOptions> = asy
         });
       }
 
-      const row = app.db
+      const row = request.db
         .select({ id: constancias.id })
         .from(constancias)
         .where(eq(constancias.lookupCode, stored))
@@ -407,7 +407,7 @@ export const constanciaRoutes: FastifyPluginAsync<ConstanciaRoutesOptions> = asy
           .send({ error: "not_found", message: "No existe una constancia con ese código." });
       }
 
-      return { constancia: presentConstancia(app.db, row.id) };
+      return { constancia: presentConstancia(request.db, row.id) };
     },
   );
 };

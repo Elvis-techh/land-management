@@ -2,6 +2,7 @@ import { buildApp } from "./app.js";
 import { loadConfig } from "./config/env.js";
 import { createDb } from "./db/client.js";
 import { runMigrations } from "./db/migrations.js";
+import { singleCompany } from "./db/pickDatabase.js";
 import { deleteExpiredSessions } from "./auth/session.js";
 import { refreshRateInBackground } from "./lib/exchangeRate.js";
 
@@ -16,7 +17,7 @@ const { db, sqlite } = createDb(config.databasePath);
 // manager will surface.
 runMigrations(db, sqlite);
 
-const app = await buildApp(config, db);
+const app = await buildApp(config, singleCompany(db));
 
 // Housekeeping on boot: expired sessions serve no purpose.
 const removed = deleteExpiredSessions(db);

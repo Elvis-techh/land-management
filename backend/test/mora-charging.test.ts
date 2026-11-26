@@ -103,7 +103,7 @@ async function lateContract(
 }
 
 describe("charging mora", async () => {
-  const { app, sqlite, ids, cookie, turnOn, contract, pay } = await lateContract();
+  const { app, db, sqlite, ids, cookie, turnOn, contract, pay } = await lateContract();
   after(async () => {
     await app.close();
     sqlite.close();
@@ -212,7 +212,7 @@ describe("charging mora", async () => {
     });
     assert.equal(saved.statusCode, 200, saved.body);
 
-    const history = readMoraHistory(app.db);
+    const history = readMoraHistory(db);
     assert.deepEqual(
       history.map((version) => [version.effectiveFrom, version.rules.percent]),
       [

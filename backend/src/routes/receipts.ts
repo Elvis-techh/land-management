@@ -670,10 +670,10 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
   /* Reading                                                                 */
   /* ---------------------------------------------------------------------- */
 
-  app.get("/receipts", { onRequest: app.requireUser }, async () => {
-    const rows = receiptsListQuery(app.db).orderBy(desc(receipts.number)).all();
+  app.get("/receipts", { onRequest: app.requireUser }, async (request) => {
+    const rows = receiptsListQuery(request.db).orderBy(desc(receipts.number)).all();
 
-    return { receipts: presentReceipts(app.db, rows, false, moraAt()) };
+    return { receipts: presentReceipts(request.db, rows, false, moraAt()) };
   });
 
   /**
@@ -696,7 +696,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
         });
       }
 
-      const row = receiptsListQuery(app.db).where(eq(receipts.lookupCode, stored)).get();
+      const row = receiptsListQuery(request.db).where(eq(receipts.lookupCode, stored)).get();
 
       if (!row) {
         return reply
@@ -704,7 +704,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
           .send({ error: "not_found", message: "No existe un recibo con ese código." });
       }
 
-      return { receipt: presentReceipts(app.db, [row], true, moraAt())[0] };
+      return { receipt: presentReceipts(request.db, [row], true, moraAt())[0] };
     },
   );
 
@@ -770,7 +770,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
 
     /** Every payment that could belong to a match, with its context. */
     const candidates = (where: ReturnType<typeof eq> | ReturnType<typeof and>) =>
-      app.db
+      request.db
         .select({
           paymentId: payments.id,
           receiptId: payments.receiptId,
@@ -904,7 +904,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
         return reply.code(400).send({ error: "invalid_query", message: "Falta el cliente." });
       }
 
-      const latest = app.db
+      const latest = request.db
         .select({ paidBy: receipts.paidBy })
         .from(receipts)
         .where(and(eq(receipts.customerId, customerId), isNull(receipts.voidedAt)))
@@ -920,13 +920,13 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
     "/receipts/:id",
     { onRequest: app.requireUser },
     async (request, reply) => {
-      const row = receiptsListQuery(app.db).where(eq(receipts.id, request.params.id)).get();
+      const row = receiptsListQuery(request.db).where(eq(receipts.id, request.params.id)).get();
 
       if (!row) {
         return reply.code(404).send({ error: "not_found", message: "Ese recibo no existe." });
       }
 
-      return { receipt: presentReceipts(app.db, [row], true, moraAt())[0] };
+      return { receipt: presentReceipts(request.db, [row], true, moraAt())[0] };
     },
   );
 
@@ -954,18 +954,18 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
       // validation runs: the second tap must be a no-op even if the contract
       // has since been paid off by the first one.
       if (body.idempotencyKey) {
-        const existing = receiptsListQuery(app.db)
+        const existing = receiptsListQuery(request.db)
           .where(eq(receipts.idempotencyKey, body.idempotencyKey))
           .get();
 
         if (existing) {
           return reply
             .code(200)
-            .send({ receipt: presentReceipts(app.db, [existing], true, moraAt())[0], duplicate: true });
+            .send({ receipt: presentReceipts(request.db, [existing], true, moraAt())[0], duplicate: true });
         }
       }
 
-      const customer = app.db
+      const customer = request.db
         .select({ id: customers.id, fullName: customers.fullName })
         .from(customers)
         .where(eq(customers.id, body.customerId))
@@ -1007,7 +1007,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
         seen.add(line.contractId);
       }
 
-      const contractRows = app.db
+      const contractRows = request.db
         .select({
           id: contracts.id,
           code: contracts.code,
@@ -1047,7 +1047,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
       const moraLines = body.lines.filter((line) => line.mora && byId.has(line.contractId));
 
       if (moraLines.length > 0) {
-        if (!userCan(app.db, actor, "mora:charge")) {
+        if (!userCan(request.db, actor, "mora:charge")) {
           return reply.code(403).send({
             error: "forbidden",
             message: "Tu usuario no tiene permiso para cambiar la mora.",
@@ -1055,7 +1055,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
         }
 
         const lots = loadPaymentMoraOn(
-          app.db,
+          request.db,
           moraLines.map((line) => line.contractId),
           body.paidOn,
           moraAt(),
@@ -1128,7 +1128,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
           const plan = moraPlans.get(contract.id);
           // With the mora as changed in the form, which the payment will meet.
           const balance =
-            contractBalanceCents(app.db, contract.id, contract.salePriceCents, moraAt()) +
+            contractBalanceCents(request.db, contract.id, contract.salePriceCents, moraAt()) +
             (plan ? plan.targetCents - plan.pendingCents : 0);
 
           if (line.amountCents > balance) {
@@ -1158,7 +1158,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
       const now = new Date().toISOString();
 
       try {
-        app.db.transaction((tx) => {
+        request.db.transaction((tx) => {
           // Allocated inside the transaction, which holds the write lock, so
           // two receipts issued at the same moment cannot take one number. The
           // unique index is the backstop if this is ever got wrong.
@@ -1309,23 +1309,23 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
         // lookup above, and the loser lands here rather than taking the money
         // twice.
         if (body.idempotencyKey && String(error).includes("UNIQUE")) {
-          const existing = receiptsListQuery(app.db)
+          const existing = receiptsListQuery(request.db)
             .where(eq(receipts.idempotencyKey, body.idempotencyKey))
             .get();
 
           if (existing) {
             return reply
               .code(200)
-              .send({ receipt: presentReceipts(app.db, [existing], true, moraAt())[0], duplicate: true });
+              .send({ receipt: presentReceipts(request.db, [existing], true, moraAt())[0], duplicate: true });
           }
         }
 
         throw error;
       }
 
-      const row = receiptsListQuery(app.db).where(eq(receipts.id, receiptId)).get()!;
+      const row = receiptsListQuery(request.db).where(eq(receipts.id, receiptId)).get()!;
 
-      return reply.code(201).send({ receipt: presentReceipts(app.db, [row], true, moraAt())[0] });
+      return reply.code(201).send({ receipt: presentReceipts(request.db, [row], true, moraAt())[0] });
     },
   );
 
@@ -1361,7 +1361,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
         });
       }
 
-      const existing = app.db
+      const existing = request.db
         .select()
         .from(receipts)
         .where(eq(receipts.id, request.params.id))
@@ -1373,11 +1373,11 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
 
       const next = parsed.data.note === null || parsed.data.note === "" ? null : parsed.data.note;
 
-      app.db.update(receipts).set({ note: next }).where(eq(receipts.id, existing.id)).run();
+      request.db.update(receipts).set({ note: next }).where(eq(receipts.id, existing.id)).run();
 
-      const row = receiptsListQuery(app.db).where(eq(receipts.id, existing.id)).get()!;
+      const row = receiptsListQuery(request.db).where(eq(receipts.id, existing.id)).get()!;
 
-      return { receipt: presentReceipts(app.db, [row], true, moraAt())[0] };
+      return { receipt: presentReceipts(request.db, [row], true, moraAt())[0] };
     },
   );
 
@@ -1411,7 +1411,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
         });
       }
 
-      const existing = app.db
+      const existing = request.db
         .select()
         .from(receipts)
         .where(eq(receipts.id, request.params.id))
@@ -1439,7 +1439,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
 
       const actor = request.user!;
 
-      app.db.transaction((tx) => {
+      request.db.transaction((tx) => {
         tx.update(receipts).set({ paidBy: next }).where(eq(receipts.id, existing.id)).run();
 
         // `receiptCode` on both sides so the Historial can name the receipt
@@ -1455,9 +1455,9 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
         });
       });
 
-      const row = receiptsListQuery(app.db).where(eq(receipts.id, existing.id)).get()!;
+      const row = receiptsListQuery(request.db).where(eq(receipts.id, existing.id)).get()!;
 
-      return { receipt: presentReceipts(app.db, [row], true, moraAt())[0] };
+      return { receipt: presentReceipts(request.db, [row], true, moraAt())[0] };
     },
   );
 
@@ -1486,7 +1486,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
         });
       }
 
-      const existing = app.db
+      const existing = request.db
         .select()
         .from(receipts)
         .where(eq(receipts.id, request.params.id))
@@ -1505,7 +1505,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
       const actor = request.user!;
       const now = new Date().toISOString();
 
-      const affected = app.db
+      const affected = request.db
         .select({
           id: payments.id,
           amountCents: payments.amountCents,
@@ -1527,13 +1527,13 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
        * next to the reason it was taken back. Read now, before the lines stop
        * counting.
        */
-      const customer = app.db
+      const customer = request.db
         .select({ fullName: customers.fullName })
         .from(customers)
         .where(eq(customers.id, existing.customerId))
         .get();
 
-      const issuer = app.db
+      const issuer = request.db
         .select({ name: users.name })
         .from(users)
         .where(eq(users.id, existing.issuedBy))
@@ -1543,7 +1543,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
       const lotsByContract = new Map(
         (contractIds.length === 0
           ? []
-          : app.db
+          : request.db
               .select({ id: contracts.id, code: contracts.code, lotCode: lots.code })
               .from(contracts)
               .innerJoin(lots, eq(lots.id, contracts.lotId))
@@ -1561,19 +1561,19 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
        * for that payment, so it goes with it. Removed like a «Quitar» on the
        * contract (the rows stay, marked), each with its own Historial line.
        */
-      const linkedForgiveness = app.db
+      const linkedForgiveness = request.db
         .select()
         .from(moraForgiveness)
         .where(and(eq(moraForgiveness.receiptId, existing.id), isNull(moraForgiveness.removedAt)))
         .all();
-      const linkedCharges = app.db
+      const linkedCharges = request.db
         .select()
         .from(moraManualCharges)
         .where(and(eq(moraManualCharges.receiptId, existing.id), isNull(moraManualCharges.removedAt)))
         .all();
       const moraRemoval = `Anulado con el recibo ${existing.code}: ${parsed.data.reason}`;
 
-      app.db.transaction((tx) => {
+      request.db.transaction((tx) => {
         tx.update(receipts)
           .set({
             voidedAt: now,
@@ -1668,9 +1668,9 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
         }
       });
 
-      const row = receiptsListQuery(app.db).where(eq(receipts.id, existing.id)).get()!;
+      const row = receiptsListQuery(request.db).where(eq(receipts.id, existing.id)).get()!;
 
-      return { receipt: presentReceipts(app.db, [row], true, moraAt())[0] };
+      return { receipt: presentReceipts(request.db, [row], true, moraAt())[0] };
     },
   );
 
@@ -1723,7 +1723,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
       const body = parsed.data;
       const actor = request.user!;
 
-      const receipt = app.db
+      const receipt = request.db
         .select()
         .from(receipts)
         .where(eq(receipts.id, request.params.id))
@@ -1743,7 +1743,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
         });
       }
 
-      const liveRows = app.db
+      const liveRows = request.db
         .select({
           id: payments.id,
           contractId: payments.contractId,
@@ -1818,7 +1818,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
         seen.add(line.contractId);
       }
 
-      const contractRows = app.db
+      const contractRows = request.db
         .select({
           id: contracts.id,
           code: contracts.code,
@@ -1912,7 +1912,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
            * receipt must not be counted as owing less because of money that is
            * about to be re-apportioned.
            */
-          const others = app.db
+          const others = request.db
             .select({
               id: payments.id,
               amountCents: payments.amountCents,
@@ -1931,7 +1931,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
             salePriceCents: contract.salePriceCents,
             credits: others,
             charges: ledgerChargesOf(
-              loadMoraAccount(app.db, contract.id, { ...moraAt(), leaveOut: liveIds }),
+              loadMoraAccount(request.db, contract.id, { ...moraAt(), leaveOut: liveIds }),
             ),
           }).balanceCents;
 
@@ -1966,7 +1966,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
       const dropped = liveRows.filter((row) => !seen.has(row.contractId));
 
       if (dropped.length > 0) {
-        const held = app.db
+        const held = request.db
           .select({ paymentId: attachments.paymentId, fileName: attachments.fileName })
           .from(attachments)
           .where(
@@ -2018,7 +2018,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
         ...body.lines.map((line) => line.contractId),
       ]);
 
-      app.db.transaction((tx) => {
+      request.db.transaction((tx) => {
         body.lines.forEach((line, index) => {
           const current = liveByContract.get(line.contractId);
 
@@ -2151,9 +2151,9 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
         }
       });
 
-      const row = receiptsListQuery(app.db).where(eq(receipts.id, receipt.id)).get()!;
+      const row = receiptsListQuery(request.db).where(eq(receipts.id, receipt.id)).get()!;
 
-      return { receipt: presentReceipts(app.db, [row], true, moraAt())[0] };
+      return { receipt: presentReceipts(request.db, [row], true, moraAt())[0] };
     },
   );
 
@@ -2176,7 +2176,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
     "/receipts/:id/attachments",
     { onRequest: app.requireCapability("payment:record") },
     async (request, reply) => {
-      const receipt = app.db
+      const receipt = request.db
         .select({ id: receipts.id })
         .from(receipts)
         .where(eq(receipts.id, request.params.id))
@@ -2186,7 +2186,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
         return reply.code(404).send({ error: "not_found", message: "Ese recibo no existe." });
       }
 
-      const existing = app.db
+      const existing = request.db
         .select({ value: sql<number>`COUNT(*)` })
         .from(attachments)
         .where(eq(attachments.receiptId, receipt.id))
@@ -2247,7 +2247,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
         // It has to be a line on THIS receipt. A payment id from another
         // receipt would file one customer's bank slip under another's lot,
         // which is the privacy failure this whole feature exists to avoid.
-        const line = app.db
+        const line = request.db
           .select({ id: payments.id })
           .from(payments)
           .where(and(eq(payments.id, paymentId), eq(payments.receiptId, receipt.id)))
@@ -2283,7 +2283,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
       // away. Removing one is; see DELETE /attachments/:id.
       try {
         createdAt =
-          app.db
+          request.db
             .insert(attachments)
             .values({
               id: attachmentId,
@@ -2341,7 +2341,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
     "/attachments/:id/file",
     { onRequest: app.requireUser },
     async (request, reply) => {
-      const row = app.db
+      const row = request.db
         .select()
         .from(attachments)
         .where(eq(attachments.id, request.params.id))
@@ -2366,7 +2366,7 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
     "/attachments/:id",
     { onRequest: app.requireCapability("payment:record") },
     async (request, reply) => {
-      const row = app.db
+      const row = request.db
         .select()
         .from(attachments)
         .where(eq(attachments.id, request.params.id))
@@ -2376,13 +2376,13 @@ export const receiptRoutes: FastifyPluginAsync<ReceiptRoutesOptions> = async (ap
         return reply.code(404).send({ error: "not_found", message: "Ese archivo no existe." });
       }
 
-      const receipt = app.db
+      const receipt = request.db
         .select({ code: receipts.code })
         .from(receipts)
         .where(eq(receipts.id, row.receiptId))
         .get();
 
-      app.db.transaction((tx) => {
+      request.db.transaction((tx) => {
         tx.delete(attachments).where(eq(attachments.id, row.id)).run();
 
         // `receiptCode` is on both sides so the Historial can name the receipt

@@ -31,8 +31,8 @@ export const settingsRoutes: FastifyPluginAsync<SettingsRouteOptions> = async (a
   // Everyone signed in reads them: the business details are on every receipt,
   // the reservation length pre-fills «Nuevo contrato», and an associate should
   // be able to see the mora rules they cannot change.
-  app.get("/settings", { onRequest: app.requireUser }, async (_request, reply) =>
-    reply.send(readSettings(app.db)),
+  app.get("/settings", { onRequest: app.requireUser }, async (request, reply) =>
+    reply.send(readSettings(request.db)),
   );
 
   /**
@@ -54,7 +54,7 @@ export const settingsRoutes: FastifyPluginAsync<SettingsRouteOptions> = async (a
     }
 
     const actor = request.user!;
-    const current = readSettings(app.db);
+    const current = readSettings(request.db);
     const changed = SETTINGS_SECTIONS.filter((section) => {
       const next = parsed.data[section];
       return next !== undefined && sectionChanged(current[section], next);
@@ -63,7 +63,7 @@ export const settingsRoutes: FastifyPluginAsync<SettingsRouteOptions> = async (a
     // Asked per section, of the database, like every other guard: `mora:edit`
     // can never be granted to the associate role, `settings:edit` can.
     const refused = changed.filter(
-      (section) => !userCan(app.db, actor, SECTION_CAPABILITY[section]),
+      (section) => !userCan(request.db, actor, SECTION_CAPABILITY[section]),
     );
 
     if (refused.length > 0) {
@@ -84,14 +84,14 @@ export const settingsRoutes: FastifyPluginAsync<SettingsRouteOptions> = async (a
     const today = businessToday(options.timeZone);
 
     if (changed.includes("mora")) {
-      const problem = moraProblem(current.mora, next.mora, today, readMoraHistory(app.db));
+      const problem = moraProblem(current.mora, next.mora, today, readMoraHistory(request.db));
 
       if (problem) {
         return reply.code(400).send({ error: "invalid_mora", message: problem });
       }
     }
 
-    app.db.transaction((tx) => {
+    request.db.transaction((tx) => {
       for (const section of changed) {
         writeSection(tx, section, next[section], actor.id);
 

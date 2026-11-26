@@ -7,13 +7,14 @@ import { buildApp } from "../src/app.js";
 import type { AppConfig } from "../src/config/env.js";
 import { createDb } from "../src/db/client.js";
 import { runMigrations } from "../src/db/migrations.js";
+import { singleCompany } from "../src/db/pickDatabase.js";
 import { contracts, customers, lots, payments, projects, users } from "../src/db/schema.js";
 import { hashPassword } from "../src/lib/password.js";
 
 export const OWNER_PASSWORD = "owner-password";
 export const STAFF_PASSWORD = "staff-password";
 
-const testConfig: AppConfig = {
+export const testConfig: AppConfig = {
   nodeEnv: "test",
   host: "127.0.0.1",
   port: 3000,
@@ -43,6 +44,16 @@ const testConfig: AppConfig = {
  * nothing a test does can leak into the next one or touch the real database.
  */
 export async function buildTestApp(configOverrides: Partial<AppConfig> = {}) {
+  const { db, sqlite, ids } = await buildTestDb();
+
+  const app = await buildApp({ ...testConfig, ...configOverrides }, singleCompany(db));
+  await app.ready();
+
+  return { app, db, sqlite, ids };
+}
+
+/** The database `buildTestApp` serves, on its own, for a test that picks between several. */
+export async function buildTestDb() {
   const { db, sqlite } = createDb(":memory:");
 
   // Through the same runner the server uses, so a migration that only works on
@@ -139,11 +150,7 @@ export async function buildTestApp(configOverrides: Partial<AppConfig> = {}) {
     ])
     .run();
 
-  const app = await buildApp({ ...testConfig, ...configOverrides }, db);
-  await app.ready();
-
   return {
-    app,
     db,
     sqlite,
     ids: { ownerId, staffId, projectId, customerId, heldLotId, freeLotId, contractId },

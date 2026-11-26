@@ -48,7 +48,7 @@ export const exchangeRateRoutes: FastifyPluginAsync = async (app) => {
   // Everyone signed in can READ the rate — it is on every screen that shows
   // money. Only `rate:edit` may change it.
   app.get("/exchange-rate", { onRequest: app.requireUser }, async (request, reply) =>
-    reply.send(currentRatePayload(app.db)),
+    reply.send(currentRatePayload(request.db)),
   );
 
   app.post(
@@ -72,9 +72,9 @@ export const exchangeRateRoutes: FastifyPluginAsync = async (app) => {
       }
 
       const actor = request.user!;
-      const previous = readCurrentRate(app.db);
+      const previous = readCurrentRate(request.db);
 
-      app.db.transaction((tx) => {
+      request.db.transaction((tx) => {
         recordRate(tx, {
           rate: parsed.data.rate,
           // No provider figure behind a typed rate, and the adjustment is
@@ -97,7 +97,7 @@ export const exchangeRateRoutes: FastifyPluginAsync = async (app) => {
         });
       });
 
-      return reply.send(currentRatePayload(app.db));
+      return reply.send(currentRatePayload(request.db));
     },
   );
 
@@ -113,7 +113,7 @@ export const exchangeRateRoutes: FastifyPluginAsync = async (app) => {
     { onRequest: app.requireCapability("rate:edit") },
     async (request, reply) => {
       const actor = request.user!;
-      const previous = readCurrentRate(app.db);
+      const previous = readCurrentRate(request.db);
 
       let providerRate: number;
 
@@ -133,7 +133,7 @@ export const exchangeRateRoutes: FastifyPluginAsync = async (app) => {
 
       const rate = applyAdjustment(providerRate, previous.adjustmentPercent);
 
-      app.db.transaction((tx) => {
+      request.db.transaction((tx) => {
         recordRate(tx, {
           rate,
           providerRate,
@@ -152,7 +152,7 @@ export const exchangeRateRoutes: FastifyPluginAsync = async (app) => {
         });
       });
 
-      return reply.send(currentRatePayload(app.db));
+      return reply.send(currentRatePayload(request.db));
     },
   );
 
@@ -199,7 +199,7 @@ export const exchangeRateRoutes: FastifyPluginAsync = async (app) => {
       }
 
       const actor = request.user!;
-      const previous = readCurrentRate(app.db);
+      const previous = readCurrentRate(request.db);
 
       /*
        * A manual rate is left standing.
@@ -211,7 +211,7 @@ export const exchangeRateRoutes: FastifyPluginAsync = async (app) => {
        * they hand control back to the market.
        */
       if (previous.source === "manual") {
-        app.db.transaction((tx) => {
+        request.db.transaction((tx) => {
           recordRate(tx, {
             rate: previous.rate,
             providerRate: null,
@@ -230,7 +230,7 @@ export const exchangeRateRoutes: FastifyPluginAsync = async (app) => {
           });
         });
 
-        return reply.send(currentRatePayload(app.db));
+        return reply.send(currentRatePayload(request.db));
       }
 
       /*
@@ -258,7 +258,7 @@ export const exchangeRateRoutes: FastifyPluginAsync = async (app) => {
 
       const rate = applyAdjustment(providerRate, percent);
 
-      app.db.transaction((tx) => {
+      request.db.transaction((tx) => {
         recordRate(tx, {
           rate,
           providerRate,
@@ -277,7 +277,7 @@ export const exchangeRateRoutes: FastifyPluginAsync = async (app) => {
         });
       });
 
-      return reply.send(currentRatePayload(app.db));
+      return reply.send(currentRatePayload(request.db));
     },
   );
 };

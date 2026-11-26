@@ -174,14 +174,14 @@ export const customerRoutes: FastifyPluginAsync<CustomerRoutesOptions> = async (
   const today = () => businessToday(options.timeZone);
 
   app.get("/customers", { onRequest: app.requireUser }, async (request, reply) => {
-    const rows = app.db.select().from(customers).orderBy(asc(customers.fullName)).all();
+    const rows = request.db.select().from(customers).orderBy(asc(customers.fullName)).all();
 
     // One query for the contracts, grouped in memory, rather than one query per
     // customer. The list is small, but the shape of the mistake is not.
     const byCustomer = new Map<string, Array<Record<string, unknown>>>();
     const asOf = today();
-    const held = activeContractsQuery(app.db, asOf).all();
-    const mora = loadMoraAccounts(app.db, {
+    const held = activeContractsQuery(request.db, asOf).all();
+    const mora = loadMoraAccounts(request.db, {
       asOf,
       timeZone: options.timeZone,
       contractIds: held.map((row) => row.contractId),
@@ -249,7 +249,7 @@ export const customerRoutes: FastifyPluginAsync<CustomerRoutesOptions> = async (
       }
 
       const identification = identificationOrNull(parsed.data.identification);
-      const clash = identificationClash(app.db, identification);
+      const clash = identificationClash(request.db, identification);
 
       if (clash) {
         return reply.code(409).send({ error: "duplicate_identification", message: clash });
@@ -259,7 +259,7 @@ export const customerRoutes: FastifyPluginAsync<CustomerRoutesOptions> = async (
 
       // Not in the Historial: a new customer is its own record, and an edit's
       // `before` says what it used to be. See `AuditEntry`.
-      const created = app.db
+      const created = request.db
         .insert(customers)
         .values({
           id: randomUUID(),
@@ -296,7 +296,7 @@ export const customerRoutes: FastifyPluginAsync<CustomerRoutesOptions> = async (
         });
       }
 
-      const existing = app.db
+      const existing = request.db
         .select()
         .from(customers)
         .where(eq(customers.id, request.params.id))
@@ -320,7 +320,7 @@ export const customerRoutes: FastifyPluginAsync<CustomerRoutesOptions> = async (
       }
 
       const identification = identificationOrNull(parsed.data.identification);
-      const clash = identificationClash(app.db, identification, existing.id);
+      const clash = identificationClash(request.db, identification, existing.id);
 
       if (clash) {
         return reply.code(409).send({ error: "duplicate_identification", message: clash });
@@ -328,7 +328,7 @@ export const customerRoutes: FastifyPluginAsync<CustomerRoutesOptions> = async (
 
       const actor = request.user!;
 
-      const updated = app.db.transaction((tx) => {
+      const updated = request.db.transaction((tx) => {
         const next = tx
           .update(customers)
           .set({
@@ -412,7 +412,7 @@ export const customerRoutes: FastifyPluginAsync<CustomerRoutesOptions> = async (
         });
       }
 
-      const existing = app.db
+      const existing = request.db
         .select()
         .from(customers)
         .where(eq(customers.id, request.params.id))
@@ -424,7 +424,7 @@ export const customerRoutes: FastifyPluginAsync<CustomerRoutesOptions> = async (
 
       // Every contract this person has ever been on, not just the live ones.
       // The active count decides the wording; the total decides the answer.
-      const held = app.db
+      const held = request.db
         .select({ code: contracts.code, status: contracts.status })
         .from(contracts)
         .where(eq(contracts.customerId, existing.id))
@@ -465,14 +465,14 @@ export const customerRoutes: FastifyPluginAsync<CustomerRoutesOptions> = async (
        * leave both pointing at nobody.
        */
       const hasReceipts =
-        app.db
+        request.db
           .select({ id: receipts.id })
           .from(receipts)
           .where(eq(receipts.customerId, existing.id))
           .limit(1)
           .get() !== undefined;
       const inATransfer =
-        app.db
+        request.db
           .select({ id: contractTransfers.id })
           .from(contractTransfers)
           .where(
@@ -498,7 +498,7 @@ export const customerRoutes: FastifyPluginAsync<CustomerRoutesOptions> = async (
 
       const actor = request.user!;
 
-      app.db.transaction((tx) => {
+      request.db.transaction((tx) => {
         tx.delete(customers).where(eq(customers.id, existing.id)).run();
 
         // Written with the full record in `before`, because after this

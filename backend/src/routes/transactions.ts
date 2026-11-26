@@ -179,7 +179,7 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
     // The biggest list in the app, re-read by every tab that comes back to
     // the front. When nothing has been written since this browser's copy, say
     // so before running a single query. See `dataVersion` in lib/changes.ts.
-    const { data_version: dbVersion } = app.db.get<{ data_version: number }>(
+    const { data_version: dbVersion } = request.db.get<{ data_version: number }>(
       sql`PRAGMA data_version`,
     );
     const version = dataVersion(dbVersion, today(), request.user!.id);
@@ -193,7 +193,7 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
       return reply.code(304).send();
     }
 
-    const rows = transactionsQuery(app.db)
+    const rows = transactionsQuery(request.db)
       .orderBy(desc(payments.paidOn), desc(payments.createdAt))
       .all();
 
@@ -210,7 +210,7 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
      * hundred photographs on the wire before anything is drawn.
      */
     const byReceipt = attachmentsForReceipts(
-      app.db,
+      request.db,
       [...new Set(rows.map((row) => row.receiptId).filter((id) => id !== null))],
     );
 
@@ -231,7 +231,7 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
      * those rows, for the same reason as `receiptCustomerName` below.
      */
     const carriedFrom = new Map(
-      app.db
+      request.db
         .select({ paymentId: payments.id, code: contracts.code })
         .from(payments)
         .innerJoin(contracts, eq(contracts.id, payments.transferredFromContractId))
@@ -241,7 +241,7 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
     );
 
     const issuedToOther = new Map(
-      app.db
+      request.db
         .select({ paymentId: payments.id, name: customers.fullName })
         .from(payments)
         .innerJoin(receipts, eq(receipts.id, payments.receiptId))
@@ -310,7 +310,7 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
         moraTargets.set(id, target);
       }
 
-      const customer = app.db
+      const customer = request.db
         .select({ id: customers.id })
         .from(customers)
         .where(eq(customers.id, request.params.id))
@@ -324,7 +324,7 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
 
       const asOf = today();
 
-      const open = app.db
+      const open = request.db
         .select({
           id: contracts.id,
           code: contracts.code,
@@ -356,7 +356,7 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
         .where(and(eq(contracts.customerId, request.params.id), openContract(asOf)))
         .all();
 
-      const mora = loadMoraAccounts(app.db, {
+      const mora = loadMoraAccounts(request.db, {
         asOf,
         timeZone: options.timeZone,
         contractIds: open.map((contract) => contract.id),
@@ -477,7 +477,7 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
         });
       }
 
-      const contract = app.db
+      const contract = request.db
         .select({
           saleType: contracts.saleType,
           salePriceCents: contracts.salePriceCents,
@@ -500,7 +500,7 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
       // A query of its own rather than a subquery in the select above: with a
       // single table there, the column names are left unqualified, and
       // "contracts.id" inside the subquery would quietly read payments.id.
-      const paid = app.db
+      const paid = request.db
         .select({ total: sql<number>`COALESCE(SUM(${payments.amountCents}), 0)` })
         .from(payments)
         .where(and(eq(payments.contractId, request.params.id), isNull(payments.reversedAt)))
@@ -533,7 +533,7 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
 
         // As POST /receipts: against the mora owed on the payment's date, and
         // only when no receipt already issued would change.
-        const lot = loadPaymentMoraOn(app.db, [request.params.id], dated, {
+        const lot = loadPaymentMoraOn(request.db, [request.params.id], dated, {
           asOf,
           timeZone: options.timeZone,
         }).get(request.params.id);
@@ -566,7 +566,7 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
         };
       }
 
-      const account = loadMoraAccount(app.db, request.params.id, {
+      const account = loadMoraAccount(request.db, request.params.id, {
         asOf,
         timeZone: options.timeZone,
         adding: { id: "preview", contractId: request.params.id, amountCents, paidOn },
@@ -653,7 +653,7 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
       }
 
       const asOf = today();
-      const rows = app.db
+      const rows = request.db
         .select({ id: contracts.id, salePriceCents: contracts.salePriceCents })
         .from(contracts)
         .where(and(eq(contracts.customerId, request.params.id), eq(contracts.status, "active")))
@@ -663,8 +663,8 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
         on,
         contracts: rows.map((row) => {
           const probe = { id: "probe", contractId: row.id, amountCents: 0, paidOn: on };
-          const account = loadMoraAccount(app.db, row.id, { asOf, timeZone: options.timeZone, adding: probe });
-          const credits = app.db
+          const account = loadMoraAccount(request.db, row.id, { asOf, timeZone: options.timeZone, adding: probe });
+          const credits = request.db
             .select({
               id: payments.id,
               amountCents: payments.amountCents,
@@ -740,7 +740,7 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
 
       const body = parsed.data;
 
-      const existing = app.db
+      const existing = request.db
         .select()
         .from(payments)
         .where(eq(payments.id, request.params.id))
@@ -790,7 +790,7 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
           });
         }
 
-        siblings = app.db
+        siblings = request.db
           .select()
           .from(payments)
           .where(inArray(payments.id, siblingIds))
@@ -821,7 +821,7 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
         }
       }
 
-      const involved = app.db
+      const involved = request.db
         .select({
           id: contracts.id,
           code: contracts.code,
@@ -876,7 +876,7 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
       if (!body.allowOverpayment) {
         // The balance WITHOUT this payment, so the check asks "would the new
         // amount overpay", not "does it differ from the old one".
-        const others = app.db
+        const others = request.db
           .select({
             id: payments.id,
             amountCents: payments.amountCents,
@@ -894,7 +894,7 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
           salePriceCents: contract.salePriceCents,
           credits: others,
           charges: ledgerChargesOf(
-            loadMoraAccount(app.db, contract.id, {
+            loadMoraAccount(request.db, contract.id, {
               asOf: today(),
               timeZone: options.timeZone,
               leaveOut: new Set([existing.id]),
@@ -932,7 +932,7 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
           });
         }
 
-        const receipt = app.db
+        const receipt = request.db
           .select({ id: receipts.id, note: receipts.note })
           .from(receipts)
           .where(eq(receipts.id, existing.receiptId))
@@ -944,7 +944,7 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
         // correction that sends the note back unchanged — which a form that
         // always includes the field will — is not refused for it.
         if (receipt && nextNote !== (receipt.note ?? null)) {
-          if (!userCan(app.db, request.user!, "payment:record")) {
+          if (!userCan(request.db, request.user!, "payment:record")) {
             return reply.code(403).send({
               error: "forbidden",
               message: "Tu usuario puede corregir transacciones, pero no cambiar la nota del recibo.",
@@ -978,7 +978,7 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
           });
         }
 
-        const receipt = app.db
+        const receipt = request.db
           .select({ id: receipts.id, code: receipts.code, paidBy: receipts.paidBy })
           .from(receipts)
           .where(eq(receipts.id, existing.receiptId))
@@ -1017,7 +1017,7 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
         notes: body.notes === undefined ? existing.notes : (body.notes ?? null),
       };
 
-      app.db.transaction((tx) => {
+      request.db.transaction((tx) => {
         tx.update(payments)
           .set({
             ...after,
@@ -1129,7 +1129,7 @@ export const transactionRoutes: FastifyPluginAsync<TransactionRoutesOptions> = a
         }
       });
 
-      const updated = transactionsQuery(app.db).where(eq(payments.id, existing.id)).get();
+      const updated = transactionsQuery(request.db).where(eq(payments.id, existing.id)).get();
 
       return { transaction: updated };
     },

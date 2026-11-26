@@ -15,7 +15,7 @@ import { OWNER_PASSWORD, STAFF_PASSWORD, buildTestApp, login } from "./helpers.j
  * when it is not. Most of these tests are about that direction.
  */
 describe("re-reading the transactions list", async () => {
-  const { app, sqlite, ids } = await buildTestApp();
+  const { app, db, sqlite, ids } = await buildTestApp();
   after(async () => {
     await app.close();
     sqlite.close();
@@ -88,7 +88,7 @@ describe("re-reading the transactions list", async () => {
 
     const fileId = randomUUID();
     sqlite.pragma("foreign_keys = OFF");
-    app.db
+    db
       .insert(attachments)
       .values({
         id: fileId,
@@ -103,7 +103,7 @@ describe("re-reading the transactions list", async () => {
       .run();
     sqlite.pragma("foreign_keys = ON");
 
-    const byReceipt = attachmentsForReceipts(app.db, receiptIds);
+    const byReceipt = attachmentsForReceipts(db, receiptIds);
 
     assert.deepEqual(
       byReceipt.get(last)?.map((file) => file.id),

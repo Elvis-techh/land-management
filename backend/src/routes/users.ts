@@ -115,7 +115,7 @@ interface UserView {
 
 export const userRoutes: FastifyPluginAsync = async (app) => {
   app.get("/users", { onRequest: app.requireCapability("user:manage") }, async (request, reply) => {
-    const rows = app.db
+    const rows = request.db
       .select({
         id: users.id,
         name: users.name,
@@ -134,7 +134,7 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
     // Associates with a permissions list of their own, so the screen can say
     // which ones the general Permisos switches don't reach.
     const withOwn = new Set(
-      app.db
+      request.db
         .selectDistinct({ userId: userCapabilities.userId })
         .from(userCapabilities)
         .all()
@@ -164,7 +164,7 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
     }
 
     const email = normalizeEmail(parsed.data.email);
-    const clash = emailClash(app.db, email);
+    const clash = emailClash(request.db, email);
 
     if (clash) {
       return reply.code(409).send({ error: "duplicate_email", message: clash });
@@ -176,7 +176,7 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
     const passwordHash = await hashPassword(parsed.data.password);
     const actor = request.user!;
 
-    const created = app.db.transaction((tx) => {
+    const created = request.db.transaction((tx) => {
       const next = tx
         .insert(users)
         .values({
@@ -230,7 +230,7 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
         });
       }
 
-      const existing = app.db.select().from(users).where(eq(users.id, request.params.id)).get();
+      const existing = request.db.select().from(users).where(eq(users.id, request.params.id)).get();
 
       if (!existing) {
         return reply.code(404).send({ error: "not_found", message: "Cuenta no encontrada." });
@@ -262,7 +262,7 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
         roleIsChanging &&
         existing.role === "owner" &&
         existing.deactivatedAt === null &&
-        otherActiveOwners(app.db, existing.id) === 0
+        otherActiveOwners(request.db, existing.id) === 0
       ) {
         return reply.code(409).send({
           error: "last_owner",
@@ -273,13 +273,13 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
       }
 
       const email = normalizeEmail(parsed.data.email);
-      const clash = emailClash(app.db, email, existing.id);
+      const clash = emailClash(request.db, email, existing.id);
 
       if (clash) {
         return reply.code(409).send({ error: "duplicate_email", message: clash });
       }
 
-      const updated = app.db.transaction((tx) => {
+      const updated = request.db.transaction((tx) => {
         const next = tx
           .update(users)
           .set({ name: parsed.data.name, email, role: parsed.data.role })
@@ -361,7 +361,7 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
         });
       }
 
-      const existing = app.db.select().from(users).where(eq(users.id, request.params.id)).get();
+      const existing = request.db.select().from(users).where(eq(users.id, request.params.id)).get();
 
       if (!existing) {
         return reply.code(404).send({ error: "not_found", message: "Cuenta no encontrada." });
@@ -370,7 +370,7 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
       const passwordHash = await hashPassword(parsed.data.password);
       const actor = request.user!;
 
-      app.db.transaction((tx) => {
+      request.db.transaction((tx) => {
         tx.update(users).set({ passwordHash }).where(eq(users.id, existing.id)).run();
 
         // WHEN, not what. The history has to show that somebody's password was
@@ -388,7 +388,7 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
       // Outside the transaction on purpose: signing the account out is a
       // consequence of the reset, not part of it, and a failure here must not
       // roll back a password the supervisor has already handed over.
-      const endedSessions = deleteSessionsForUser(app.db, existing.id);
+      const endedSessions = deleteSessionsForUser(request.db, existing.id);
 
       return reply.send({ ok: true, endedSessions });
     },
@@ -408,7 +408,7 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
     "/users/:id/deactivate",
     { onRequest: app.requireCapability("user:manage") },
     async (request, reply) => {
-      const existing = app.db.select().from(users).where(eq(users.id, request.params.id)).get();
+      const existing = request.db.select().from(users).where(eq(users.id, request.params.id)).get();
 
       if (!existing) {
         return reply.code(404).send({ error: "not_found", message: "Cuenta no encontrada." });
@@ -432,7 +432,7 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
         });
       }
 
-      if (existing.role === "owner" && otherActiveOwners(app.db, existing.id) === 0) {
+      if (existing.role === "owner" && otherActiveOwners(request.db, existing.id) === 0) {
         return reply.code(409).send({
           error: "last_owner",
           message:
@@ -443,7 +443,7 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
 
       const deactivatedAt = new Date().toISOString();
 
-      app.db.transaction((tx) => {
+      request.db.transaction((tx) => {
         tx.update(users).set({ deactivatedAt }).where(eq(users.id, existing.id)).run();
 
         recordAudit(tx, {
@@ -458,7 +458,7 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
         });
       });
 
-      const endedSessions = deleteSessionsForUser(app.db, existing.id);
+      const endedSessions = deleteSessionsForUser(request.db, existing.id);
 
       return reply.send({ ok: true, deactivatedAt, endedSessions });
     },
@@ -469,7 +469,7 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
     "/users/:id/reactivate",
     { onRequest: app.requireCapability("user:manage") },
     async (request, reply) => {
-      const existing = app.db.select().from(users).where(eq(users.id, request.params.id)).get();
+      const existing = request.db.select().from(users).where(eq(users.id, request.params.id)).get();
 
       if (!existing) {
         return reply.code(404).send({ error: "not_found", message: "Cuenta no encontrada." });
@@ -484,7 +484,7 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
 
       const actor = request.user!;
 
-      app.db.transaction((tx) => {
+      request.db.transaction((tx) => {
         tx.update(users).set({ deactivatedAt: null }).where(eq(users.id, existing.id)).run();
 
         recordAudit(tx, {

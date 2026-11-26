@@ -768,18 +768,18 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
   /** Today in the office's calendar, not the server's and not UTC's. */
   const today = () => businessToday(options.timeZone);
 
-  app.get("/contracts", { onRequest: app.requireUser }, async (_request, reply) => {
+  app.get("/contracts", { onRequest: app.requireUser }, async (request, reply) => {
     const asOf = today();
 
-    const rows = contractsListQuery(app.db).orderBy(desc(contracts.code)).all();
+    const rows = contractsListQuery(request.db).orderBy(desc(contracts.code)).all();
 
     // One grouped count for the whole screen rather than one query per row.
-    const documentCounts = documentCountsFor(app.db);
-    const links = amendmentLinksFor(app.db);
-    const rules = healthRulesOf(readSettings(app.db));
-    const mora = loadMoraAccounts(app.db, { asOf, timeZone: options.timeZone });
-    const transfers = transfersByContract(app.db);
-    const moves = paidMoneyMoves(app.db);
+    const documentCounts = documentCountsFor(request.db);
+    const links = amendmentLinksFor(request.db);
+    const rules = healthRulesOf(readSettings(request.db));
+    const mora = loadMoraAccounts(request.db, { asOf, timeZone: options.timeZone });
+    const transfers = transfersByContract(request.db);
+    const moves = paidMoneyMoves(request.db);
 
     return reply.send({
       contracts: rows.map((row) =>
@@ -819,15 +819,15 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
 
       const asOf = today();
 
-      const rows = contractsListQuery(app.db)
+      const rows = contractsListQuery(request.db)
         .where(and(eq(contracts.saleGroupId, request.params.groupId), openContract(asOf)))
         .all();
-      const mora = loadMoraAccounts(app.db, {
+      const mora = loadMoraAccounts(request.db, {
         asOf,
         timeZone: options.timeZone,
         contractIds: rows.map((row) => row.id),
       });
-      const rules = healthRulesOf(readSettings(app.db));
+      const rules = healthRulesOf(readSettings(request.db));
       const members = rows.map((row) =>
         present(row, asOf, rules, 0, NO_LINKS, mora.get(row.id)),
       );
@@ -897,7 +897,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
         return reply.code(400).send({ error: "invalid_terms", message: problem });
       }
 
-      const lot = app.db.select().from(lots).where(eq(lots.id, parsed.data.lotId)).get();
+      const lot = request.db.select().from(lots).where(eq(lots.id, parsed.data.lotId)).get();
 
       if (!lot || lot.archivedAt !== null) {
         return reply.code(400).send({
@@ -906,7 +906,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
         });
       }
 
-      const customer = app.db
+      const customer = request.db
         .select()
         .from(customers)
         .where(eq(customers.id, parsed.data.customerId))
@@ -924,7 +924,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
       // reservation that has passed its expiry date is not a holder — the lot
       // is free again — so a lapsed hold no longer blocks the sale it was meant
       // to make room for. A paid-off contract still holds: the lot is sold.
-      const holder = app.db
+      const holder = request.db
         .select({ code: contracts.code })
         .from(contracts)
         .where(and(eq(contracts.lotId, lot.id), holdsLot(today())))
@@ -944,7 +944,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
       let groupSeed: { id: string; saleGroupId: string | null } | null = null;
 
       if (parsed.data.joinGroupOfContractId) {
-        const sibling = app.db
+        const sibling = request.db
           .select({
             id: contracts.id,
             saleGroupId: contracts.saleGroupId,
@@ -980,7 +980,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
       // write lock, and the whole thing retries once if it still races another
       // create onto the same number — see `withUniqueRetry`.
       const created = withUniqueRetry(() =>
-        app.db.transaction((tx) => {
+        request.db.transaction((tx) => {
           // The first lot of a purchase was written before anybody knew a
           // second one was coming, so it has no group id. Stamping it here is
           // what turns two separate contracts into one purchase.
@@ -1050,7 +1050,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
       }
 
       const actor = request.user!;
-      const existing = app.db
+      const existing = request.db
         .select()
         .from(contracts)
         .where(eq(contracts.id, request.params.id))
@@ -1074,7 +1074,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
       }
 
       const paidToDateCents =
-        app.db
+        request.db
           .select({ total: sql<number>`COALESCE(SUM(${payments.amountCents}), 0)` })
           .from(payments)
           .where(and(eq(payments.contractId, existing.id), sql`${payments.reversedAt} IS NULL`))
@@ -1104,7 +1104,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
       // to hand over the first without the second.
       const isRepricing = parsed.data.salePriceCents !== existing.salePriceCents;
 
-      if (isRepricing && !userCan(app.db, actor, "contract:reprice")) {
+      if (isRepricing && !userCan(request.db, actor, "contract:reprice")) {
         return reply.code(403).send({
           error: "forbidden",
           message: "Tu usuario puede editar contratos, pero no cambiar el precio de venta.",
@@ -1144,7 +1144,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
       if (
         !isReservationExpired(parsed.data.kind, existing.status, parsed.data.expiresOn, asOf)
       ) {
-        const other = app.db
+        const other = request.db
           .select({ code: contracts.code })
           .from(contracts)
           .where(
@@ -1164,7 +1164,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
 
       const now = new Date().toISOString();
 
-      const updated = app.db.transaction((tx) => {
+      const updated = request.db.transaction((tx) => {
         const next = tx
           .update(contracts)
           .set({
@@ -1233,7 +1233,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
       }
 
       const actor = request.user!;
-      const existing = app.db
+      const existing = request.db
         .select()
         .from(contracts)
         .where(eq(contracts.id, request.params.id))
@@ -1258,7 +1258,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
         });
       }
 
-      const lot = app.db.select().from(lots).where(eq(lots.id, parsed.data.lotId)).get();
+      const lot = request.db.select().from(lots).where(eq(lots.id, parsed.data.lotId)).get();
 
       if (!lot || lot.archivedAt !== null) {
         return reply.code(400).send({
@@ -1271,7 +1271,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
       // once. Without re-checking it here, correcting one contract's mistake
       // could silently create a second one — two contracts pointing at the lot
       // this one is moving to.
-      const holder = app.db
+      const holder = request.db
         .select({ code: contracts.code })
         .from(contracts)
         .where(and(eq(contracts.lotId, lot.id), holdsLot(today())))
@@ -1284,14 +1284,14 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
         });
       }
 
-      const previousLot = app.db
+      const previousLot = request.db
         .select({ code: lots.code })
         .from(lots)
         .where(eq(lots.id, existing.lotId))
         .get();
       const now = new Date().toISOString();
 
-      const updated = app.db.transaction((tx) => {
+      const updated = request.db.transaction((tx) => {
         const next = tx
           .update(contracts)
           .set({ lotId: lot.id, updatedAt: now })
@@ -1372,7 +1372,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
         });
       }
 
-      const recipient = app.db
+      const recipient = request.db
         .select({ id: customers.id, fullName: customers.fullName })
         .from(customers)
         .where(eq(customers.id, body.toCustomerId))
@@ -1385,7 +1385,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
         });
       }
 
-      const rows = app.db
+      const rows = request.db
         .select()
         .from(contracts)
         .where(inArray(contracts.id, body.contractIds))
@@ -1440,7 +1440,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
         });
       }
 
-      const previous = app.db
+      const previous = request.db
         .select({ fullName: customers.fullName })
         .from(customers)
         .where(eq(customers.id, holderId))
@@ -1460,7 +1460,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
       const members =
         groupIds.length === 0
           ? []
-          : app.db
+          : request.db
               .select({ id: contracts.id, saleGroupId: contracts.saleGroupId })
               .from(contracts)
               .where(inArray(contracts.saleGroupId, groupIds))
@@ -1480,7 +1480,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
       const now = new Date().toISOString();
 
       try {
-        app.db.transaction((tx) => {
+        request.db.transaction((tx) => {
           for (const id of body.contractIds) {
             const contract = byId.get(id)!;
 
@@ -1604,7 +1604,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
         });
       }
 
-      const rows = app.db
+      const rows = request.db
         .select({ contract: contracts, lotCode: lots.code })
         .from(contracts)
         .innerJoin(lots, eq(lots.id, contracts.lotId))
@@ -1689,7 +1689,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
        * never reaching the new balance — so it has to be sorted out first, while
        * it can still be moved.
        */
-      const lateItem = app.db
+      const lateItem = request.db
         .select({
           contractId: payments.contractId,
           paidOn: payments.paidOn,
@@ -1731,7 +1731,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
 
       try {
         created = withUniqueRetry(() =>
-          app.db.transaction((tx) => {
+          request.db.transaction((tx) => {
             tx.insert(contractAmendments)
               .values({
                 id: amendmentId,
@@ -1879,7 +1879,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
     }
 
     const actor = request.user!;
-    const existing = app.db
+    const existing = request.db
       .select()
       .from(contracts)
       .where(eq(contracts.id, request.params.id))
@@ -1900,7 +1900,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
 
     // Every non-reversed payment on this contract, with the receipt it sits on.
     // What the customer has already paid, and what a "refund" would touch.
-    const contractPayments = app.db
+    const contractPayments = request.db
       .select({
         id: payments.id,
         amountCents: payments.amountCents,
@@ -1950,7 +1950,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
 
       // Reversing money is a bigger power than closing a contract, so the refund
       // option carries its own capability.
-      if (settlement === "refunded" && !userCan(app.db, actor, "payment:reverse")) {
+      if (settlement === "refunded" && !userCan(request.db, actor, "payment:reverse")) {
         return reply.code(403).send({
           error: "forbidden",
           message:
@@ -1964,7 +1964,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
     const reversedPaymentIds: string[] = [];
     const voidedReceiptIds: string[] = [];
 
-    app.db.transaction((tx) => {
+    request.db.transaction((tx) => {
       tx.update(contracts)
         .set({
           status: kind.newStatus,
@@ -2108,7 +2108,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
     "/contracts/:id/documents",
     { onRequest: app.requireUser },
     async (request, reply) => {
-      const contract = app.db
+      const contract = request.db
         .select({ id: contracts.id })
         .from(contracts)
         .where(eq(contracts.id, request.params.id))
@@ -2118,7 +2118,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
         return reply.code(404).send({ error: "not_found", message: "Ese contrato no existe." });
       }
 
-      return { documents: documentsFor(app.db, contract.id).map(presentDocument) };
+      return { documents: documentsFor(request.db, contract.id).map(presentDocument) };
     },
   );
 
@@ -2137,7 +2137,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
     "/contracts/:id/documents",
     { onRequest: app.requireCapability("contract:create") },
     async (request, reply) => {
-      const contract = app.db
+      const contract = request.db
         .select({ id: contracts.id })
         .from(contracts)
         .where(eq(contracts.id, request.params.id))
@@ -2147,7 +2147,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
         return reply.code(404).send({ error: "not_found", message: "Ese contrato no existe." });
       }
 
-      const existing = app.db
+      const existing = request.db
         .select({ value: sql<number>`COUNT(*)` })
         .from(contractDocuments)
         .where(eq(contractDocuments.contractId, contract.id))
@@ -2203,7 +2203,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
       // Removing one is; see DELETE /contract-documents/:id.
       try {
         createdAt =
-          app.db
+          request.db
             .insert(contractDocuments)
             .values({
               id: documentId,
@@ -2253,7 +2253,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
     "/contract-documents/:id/file",
     { onRequest: app.requireUser },
     async (request, reply) => {
-      const row = app.db
+      const row = request.db
         .select()
         .from(contractDocuments)
         .where(eq(contractDocuments.id, request.params.id))
@@ -2287,7 +2287,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
     "/contract-documents/:id",
     { onRequest: app.requireCapability("contract:edit") },
     async (request, reply) => {
-      const row = app.db
+      const row = request.db
         .select()
         .from(contractDocuments)
         .where(eq(contractDocuments.id, request.params.id))
@@ -2297,7 +2297,7 @@ export const contractRoutes: FastifyPluginAsync<ContractRoutesOptions> = async (
         return reply.code(404).send({ error: "not_found", message: "Ese archivo no existe." });
       }
 
-      app.db.transaction((tx) => {
+      request.db.transaction((tx) => {
         tx.delete(contractDocuments).where(eq(contractDocuments.id, row.id)).run();
 
         recordAudit(tx, {
