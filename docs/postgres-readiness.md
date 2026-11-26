@@ -28,15 +28,11 @@ Move when one of these is actually happening, not before:
   takes too long.
 
 The first step for paying customers is not PostgreSQL. Lindero is built for
-one business: no table says which business a row belongs to. The simplest safe
-setup is **one copy of Lindero per customer, each with its own SQLite file**
-(its own subdomain, settings and backups). SQLite suits that well, because each
-customer's data is physically separate. The test site already runs this way:
-`prueba-lindero` is a second copy of Lindero on the same droplet, with its own
-SQLite file, its own `.env` and its own service (`deploy/setup-test-site.sh`,
-`deploy/lindero-test-api.service`). A customer's copy would follow the same
-pattern. What else has to happen before the first paying customer is listed in
-`docs/later-versions.md`.
+one business: no table says which business a row belongs to. The plan, decided
+on 25 Nov 2026 and not built yet, is **one app with one SQLite file per
+business**. SQLite suits that well, because each business's records stay in a
+separate file. What it takes, and what else has to happen before the first
+paying customer, is listed in `docs/later-versions.md`.
 
 The weight station app also uses SQLite. Its own map belongs in its own
 repository. Sections 4 and 5 below are the parts most likely to apply there
