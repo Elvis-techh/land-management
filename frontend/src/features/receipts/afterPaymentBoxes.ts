@@ -1,6 +1,6 @@
 import type { MoneyView } from "../../lib/money";
 import { formatMoney } from "../../lib/money";
-import { appliedLabel, appliedSummary } from "./appliedLabel";
+import { appliedLabelWithRemaining, appliedSummary } from "./appliedLabel";
 import type { AfterPayment } from "./api";
 import { shortDate } from "./moraAtPayment";
 
@@ -23,8 +23,9 @@ export interface AfterBox {
  *   [Mora por pagar L. 600]             red
  *    cargada después del 5 oct, en las cuotas 2 y 3
  *
- * The first box is the receipt's own wording (`appliedLabel`), so what the
- * person reads while typing is what the receipt will print; red when the
+ * The first box is the receipt's own wording (`appliedLabel`) plus, for a part
+ * payment, what the cuota still needs: the receipt leaves that figure off, but
+ * the person typing wants it (`appliedLabelWithRemaining`). Red when the
  * payment finished no cuota. The second is what is owed next: the next cuota
  * and any advance on it, the rest of the prima, or that nothing is left. The
  * part of the money that pays mora is not here, it is the «Mora» line of the
@@ -38,7 +39,7 @@ export interface AfterBox {
  */
 export function afterPaymentBoxes(after: AfterPayment, money: MoneyView, paidOn?: string): AfterBox[] {
   const boxes: AfterBox[] = [];
-  const applied = appliedLabel(after, money);
+  const applied = appliedLabelWithRemaining(after, money);
   // A partial abono: the cuota still needs money, said in its own box
   // ("faltan L. 10,000.00"), so the next box gives the balance instead.
   const isAbono = applied !== null && appliedSummary(after)?.kind === "abono";

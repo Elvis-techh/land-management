@@ -2679,6 +2679,18 @@ body.is-dragging-file .proof-dropzone:not(.is-disabled) {
   overflow-wrap: anywhere;
 }
 
+/* What the payment left owing on each lot, worked out and not typed: one line
+   per lot, above whatever a person wrote. */
+.receipt-memo-auto {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-primary);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
 .receipt-memo-hint {
   margin: 6px 0 0;
   color: var(--text-secondary);

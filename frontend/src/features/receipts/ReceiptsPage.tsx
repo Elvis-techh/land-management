@@ -1616,6 +1616,7 @@ export function ReceiptsPage({
             <ReceiptNote
               key={detail.id}
               receipt={detail}
+              money={money}
               canWrite={canRecord}
               onSave={saveNote}
             />

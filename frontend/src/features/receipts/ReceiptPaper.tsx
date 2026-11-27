@@ -291,7 +291,7 @@ export function ReceiptPaper({ receipt, money }: ReceiptPaperProps) {
         </thead>
         <tbody>
           {receipt.lines.map((line) => {
-            const applied = appliedLabel(line, money);
+            const applied = appliedLabel(line);
             const mora = moraLabel(line, money);
             const amount = formatDocumentMoneyParts(line.amount, money);
 
@@ -305,8 +305,10 @@ export function ReceiptPaper({ receipt, money }: ReceiptPaperProps) {
 
                   {/* What the money did to the lot's schedule: a cuota
                       finished, part of one, several, or the whole lot paid
-                      off — see `appliedLabel`. A cash sale has no schedule,
-                      so the line is dropped entirely rather than left empty. */}
+                      off — see `appliedLabel`. What a part payment still
+                      leaves owing is not here, it is in the Nota del equipo.
+                      A cash sale has no schedule, so the line is dropped
+                      entirely rather than left empty. */}
                   {applied && <span className="receipt-item-detail">{applied}</span>}
 
                   {/* The part of the money that was a late fee, on a line of

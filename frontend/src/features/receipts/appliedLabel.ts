@@ -68,7 +68,7 @@ export function appliedSummary(line: Pick<ReceiptLine, "appliedTo">): AppliedSum
  * What this money did to the lot's schedule, in one line under the lot code:
  *
  *   Cuota 4 de 12 · completa
- *   Abono a cuota 4 de 12 · faltan L. 10,000.00
+ *   Abono a cuota 4 de 12
  *   Cuotas 4 y 5 de 12 · completas
  *   Pago total · cuotas 4 a 12 de 12
  *
@@ -76,10 +76,15 @@ export function appliedSummary(line: Pick<ReceiptLine, "appliedTo">): AppliedSum
  * "cuota 4 de 12 · completa" is an answer. It names the cuotas the payment
  * FINISHED. Money that went on into the next cuota is not announced here; it is
  * in the amount and the new balance, and the next cuota simply needs less.
- * Only when the payment finished nothing does the line say how far it got and
- * what is still missing.
+ * When the payment finished nothing, the line says which cuota it was part of.
+ *
+ * What that cuota still needs is NOT on the document (owner, 27 Nov 2026): a
+ * receipt confirms the money was received, and what is still owed is for the
+ * office. It lives in the Nota del equipo (`remainingNotes`), and in the
+ * «Después de este pago» boxes while the payment is being typed
+ * (`appliedLabelWithRemaining`).
  */
-export function appliedLabel(line: AppliedLabelLine, money: MoneyView): string | null {
+export function appliedLabel(line: AppliedLabelLine): string | null {
   const summary = appliedSummary(line);
 
   if (summary === null) {
@@ -91,9 +96,7 @@ export function appliedLabel(line: AppliedLabelLine, money: MoneyView): string |
   const total = line.installmentCount > 0 ? ` de ${line.installmentCount}` : "";
 
   if (summary.kind === "abono") {
-    const { number, remaining } = summary.installment;
-
-    return `Abono a cuota ${number}${total} · faltan ${formatDocumentMoney(remaining, money)}`;
+    return `Abono a cuota ${summary.installment.number}${total}`;
   }
 
   const { first, last, count } = summary;
@@ -110,6 +113,64 @@ export function appliedLabel(line: AppliedLabelLine, money: MoneyView): string |
   const range = count === 2 ? `${first} y ${last}` : `${first} a ${last}`;
 
   return `Cuotas ${range}${total} · completas`;
+}
+
+/**
+ * `appliedLabel` with what the cuota still needs, for a payment that was only
+ * part of one:
+ *
+ *   Abono a cuota 4 de 12 · faltan L. 10,000.00
+ *
+ * For the «Después de este pago» boxes in «Registrar un pago», where the person
+ * typing the payment wants the figure. The receipt does not print it.
+ */
+export function appliedLabelWithRemaining(line: AppliedLabelLine, money: MoneyView): string | null {
+  const label = appliedLabel(line);
+  const summary = appliedSummary(line);
+
+  if (label === null || summary?.kind !== "abono") {
+    return label;
+  }
+
+  return `${label} · faltan ${formatDocumentMoney(summary.installment.remaining, money)}`;
+}
+
+/** Everything `remainingNotes` reads from a receipt's line. */
+export type RemainingNoteLine = AppliedLabelLine & Pick<ReceiptLine, "lotCode">;
+
+/**
+ * What is still missing on each lot a payment only part-paid, one line per lot,
+ * in the order the receipt lists them:
+ *
+ *   B-04: faltan L. 47,223.00 de la cuota 1 de 3
+ *   B-06: faltan L. 47,222.01 de la cuota 1 de 3
+ *
+ * For the Nota del equipo box, beside the receipt and never on it. It names the
+ * cuota `appliedSummary` chose, the same one the receipt's «Abono a cuota»
+ * line names, so the two cannot disagree. A lot whose cuota the payment
+ * finished has nothing missing and gets no line, and neither does a prima or a
+ * cash sale, which have no cuota to be short of.
+ */
+export function remainingNotes(lines: readonly RemainingNoteLine[], money: MoneyView): string[] {
+  const notes: string[] = [];
+
+  for (const line of lines) {
+    const summary = appliedSummary(line);
+
+    if (summary?.kind !== "abono") {
+      continue;
+    }
+
+    const { number, remaining } = summary.installment;
+    // "de 3" only when we know the total, as on the receipt.
+    const total = line.installmentCount > 0 ? ` de ${line.installmentCount}` : "";
+
+    notes.push(
+      `${line.lotCode ?? "Lote"}: faltan ${formatDocumentMoney(remaining, money)} de la cuota ${number}${total}`,
+    );
+  }
+
+  return notes;
 }
 
 /**
