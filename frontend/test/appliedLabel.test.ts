@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { appliedLabel, moraCuotas, moraLabel } from "../src/features/receipts/appliedLabel";
+import {
+  appliedLabel,
+  appliedLabelWithRemaining,
+  moraCuotas,
+  moraLabel,
+  remainingNotes,
+} from "../src/features/receipts/appliedLabel";
 import type { AppliedLabelLine } from "../src/features/receipts/appliedLabel";
 import type { MoneyView } from "../src/lib/money";
 import { cents } from "../src/lib/money";
@@ -42,18 +48,17 @@ function line(
   };
 }
 
-const label = (value: AppliedLabelLine) => appliedLabel(value, HNL);
+const label = (value: AppliedLabelLine) => appliedLabel(value);
 
 describe("appliedLabel", () => {
   it("says a cuota paid in full is complete", () => {
     assert.equal(label(line([[4, CUOTA, 0]])), "Cuota 4 de 12 · completa");
   });
 
-  it("says what is still missing when the payment falls short of a cuota", () => {
-    assert.equal(
-      label(line([[4, 15_000, 10_000]])),
-      "Abono a cuota 4 de 12 · faltan L. 10,000.00",
-    );
+  it("says a payment that falls short of a cuota was part of it, without what is missing", () => {
+    // What is still owed is for the office, in the Nota del equipo: the receipt
+    // only confirms the money was received.
+    assert.equal(label(line([[4, 15_000, 10_000]])), "Abono a cuota 4 de 12");
   });
 
   it("names every cuota a larger payment finished", () => {
@@ -101,19 +106,13 @@ describe("appliedLabel", () => {
 
   it("names the cuota the money mostly went to when the rest was a sliver", () => {
     // A hundred lempiras finished cuota 4; the rest went most of the way into 5.
-    assert.equal(
-      label(line([[4, 100, 0], [5, 24_900, 100]])),
-      "Abono a cuota 5 de 12 · faltan L. 100.00",
-    );
+    assert.equal(label(line([[4, 100, 0], [5, 24_900, 100]])), "Abono a cuota 5 de 12");
   });
 
   it("still names a small payment that is all there is", () => {
     // The sliver rule never leaves a receipt with nothing to say.
     assert.equal(label(line([[4, 100, 0]])), "Cuota 4 de 12 · completa");
-    assert.equal(
-      label(line([[4, 100, 24_900]])),
-      "Abono a cuota 4 de 12 · faltan L. 24,900.00",
-    );
+    assert.equal(label(line([[4, 100, 24_900]])), "Abono a cuota 4 de 12");
   });
 
   it("says a payment that clears the contract paid it in full", () => {
@@ -140,6 +139,90 @@ describe("appliedLabel", () => {
   it("says nothing when the money went to no cuota at all", () => {
     // A prima, or a payment on a contract with no schedule to place it in.
     assert.equal(label(line([])), null);
+  });
+});
+
+describe("appliedLabelWithRemaining", () => {
+  // The «Después de este pago» boxes in «Registrar un pago» keep the figure the
+  // receipt no longer prints: it is how the person recording a payment sees
+  // what the cuota still needs.
+  const withRemaining = (value: AppliedLabelLine) => appliedLabelWithRemaining(value, HNL);
+
+  it("adds what the cuota still needs to a part payment", () => {
+    assert.equal(
+      withRemaining(line([[4, 15_000, 10_000]])),
+      "Abono a cuota 4 de 12 · faltan L. 10,000.00",
+    );
+  });
+
+  it("leaves every other wording exactly as the receipt prints it", () => {
+    assert.equal(withRemaining(line([[4, CUOTA, 0]])), "Cuota 4 de 12 · completa");
+    assert.equal(
+      withRemaining(line([[4, CUOTA, 0], [5, CUOTA, 0]])),
+      "Cuotas 4 y 5 de 12 · completas",
+    );
+    assert.equal(withRemaining(line([])), null);
+  });
+});
+
+describe("remainingNotes", () => {
+  const lot = (lotCode: string | null, value: AppliedLabelLine) => ({ ...value, lotCode });
+  const notes = (lines: Array<ReturnType<typeof lot>>) => remainingNotes(lines, HNL);
+
+  it("says what is missing on a lot that was only part paid", () => {
+    assert.deepEqual(notes([lot("B-04", line([[1, 40_000, 47_223]], { installmentCount: 3 }))]), [
+      "B-04: faltan L. 47,223.00 de la cuota 1 de 3",
+    ]);
+  });
+
+  it("gives one line per part-paid lot, in the receipt's order", () => {
+    // The production receipt: L. 40,000 split across three lots.
+    assert.deepEqual(
+      notes([
+        lot("B-04", line([[1, 13_333.34, 47_223]], { installmentCount: 3 })),
+        lot("B-06", line([[1, 13_333.33, 47_222.01]], { installmentCount: 3 })),
+        lot("B-05", line([[1, 13_333.33, 47_222.99]], { installmentCount: 3 })),
+      ]),
+      [
+        "B-04: faltan L. 47,223.00 de la cuota 1 de 3",
+        "B-06: faltan L. 47,222.01 de la cuota 1 de 3",
+        "B-05: faltan L. 47,222.99 de la cuota 1 de 3",
+      ],
+    );
+  });
+
+  it("skips a lot whose cuota the payment finished", () => {
+    assert.deepEqual(
+      notes([
+        lot("B-04", line([[4, CUOTA, 0]])),
+        lot("B-05", line([[4, 15_000, 10_000]])),
+      ]),
+      ["B-05: faltan L. 10,000.00 de la cuota 4 de 12"],
+    );
+  });
+
+  it("names the same cuota the receipt names when the rest was a sliver", () => {
+    assert.deepEqual(notes([lot("B-04", line([[4, 100, 0], [5, 24_900, 100]]))]), [
+      "B-04: faltan L. 100.00 de la cuota 5 de 12",
+    ]);
+  });
+
+  it("drops the total when the contract has no schedule", () => {
+    assert.deepEqual(
+      notes([lot("B-04", line([[1, 15_000, 10_000]], { installmentCount: 0 }))]),
+      ["B-04: faltan L. 10,000.00 de la cuota 1"],
+    );
+  });
+
+  it("calls a lot with no code a lot rather than printing nothing", () => {
+    assert.deepEqual(notes([lot(null, line([[4, 15_000, 10_000]]))]), [
+      "Lote: faltan L. 10,000.00 de la cuota 4 de 12",
+    ]);
+  });
+
+  it("is empty when no lot was left short", () => {
+    assert.deepEqual(notes([lot("B-04", line([[4, CUOTA, 0]])), lot("B-05", line([]))]), []);
+    assert.deepEqual(notes([]), []);
   });
 });
 
