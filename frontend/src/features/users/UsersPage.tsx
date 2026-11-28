@@ -118,7 +118,7 @@ export function UsersPage({
       <div className="card users-intro">
         <h3>Quién puede entrar</h3>
         <p>
-          Cada persona que usa Lindero necesita su propia cuenta. Compartir una sola cuenta
+          Cada persona que usa TerraCuota necesita su propia cuenta. Compartir una sola cuenta
           hace que el historial deje de servir: todo lo que hagan aparecerá con un mismo
           nombre, y la pregunta «¿quién registró este pago?» se queda sin respuesta.
         </p>

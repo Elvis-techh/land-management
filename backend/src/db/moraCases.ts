@@ -474,7 +474,7 @@ const PAYMENT_CASES: MoraCase[] = [
       installment,
       daysAgo: 3,
       amount: 200,
-      reason: "Mora de antes de Lindero, pasada a mano.",
+      reason: "Mora de antes de TerraCuota, pasada a mano.",
     })),
     notes:
       "Pago 12. Contrato pasado de Airtable con seis cuotas atrasadas y «Sin mora»; la mora de antes, L. 200 por cuota, se cargó a mano. Debe pasar en «Registrar un pago»: una línea para cada cuota de la 1 a la 4, y otra que dice «Y las cuotas 5 y 6: L. 400».",

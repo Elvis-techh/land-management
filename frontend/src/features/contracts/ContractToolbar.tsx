@@ -191,7 +191,7 @@ export function ContractToolbar({
         ))}
         {/* The one filter that starts switched on, so it says why. */}
         <span className="field-hint">
-          Nada se elimina en Lindero: los contratos cancelados siguen aquí. La lista abre en
+          Nada se elimina en TerraCuota: los contratos cancelados siguen aquí. La lista abre en
           vigentes para que sea la cartera viva.
         </span>
       </div>

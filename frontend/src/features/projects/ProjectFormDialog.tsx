@@ -74,7 +74,7 @@ export function ProjectFormDialog({ project, onCancel, onSave }: ProjectFormDial
             <input
               id="project-name"
               value={name}
-              placeholder="Ej. Villa Lindero"
+              placeholder="Ej. Villa Los Pinos"
               onChange={(event) => setName(event.target.value)}
             />
           </div>

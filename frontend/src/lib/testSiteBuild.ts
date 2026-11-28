@@ -4,14 +4,14 @@
  * and only when VITE_SITE=test.
  *
  * Both throw rather than return the file unchanged. A test site that Google can
- * index, or that a phone lists as a second «Lindero» in its share sheet, looks
+ * index, or that a phone lists as a second «TerraCuota» in its share sheet, looks
  * fine to whoever built it, so it has to stop the build instead.
  */
 
 /** The test site's colour, for the phone's status bar. Same as --test-site in styles.css. */
 const TEST_SITE_COLOUR = "#C2410C";
 
-export const TEST_SITE_NAME = "PRUEBA Lindero";
+export const TEST_SITE_NAME = "PRUEBA TerraCuota";
 
 function replaceOrThrow(text: string, find: RegExp, replacement: string): string {
   if (!find.test(text)) {
@@ -23,8 +23,8 @@ function replaceOrThrow(text: string, find: RegExp, replacement: string): string
 export function testSiteHtml(html: string): string {
   const named = replaceOrThrow(
     html,
-    /<title>Lindero<\/title>/,
-    '<title>PRUEBA · Lindero</title>\n  <meta name="robots" content="noindex, nofollow">',
+    /<title>TerraCuota<\/title>/,
+    '<title>PRUEBA · TerraCuota</title>\n  <meta name="robots" content="noindex, nofollow">',
   );
   return replaceOrThrow(named, /(<meta name="theme-color" content=")[^"]*/, `$1${TEST_SITE_COLOUR}`);
 }
