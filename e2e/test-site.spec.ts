@@ -116,7 +116,7 @@ test.describe("the real site", () => {
     await logIn(page);
     await expect(page.getByText("SITIO DE PRUEBA")).toHaveCount(0);
     await expect(page.locator('meta[name="robots"]')).toHaveCount(0);
-    await expect(page).toHaveTitle("Lindero");
+    await expect(page).toHaveTitle("TerraCuota");
 
     const chat = await chatLinkFromSending(page);
     expect(chat.origin + chat.pathname).toBe("https://wa.me/50499447781");

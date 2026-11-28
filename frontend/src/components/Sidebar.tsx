@@ -115,7 +115,7 @@ export function Sidebar({
           <IconBrand />
         </div>
         <div>
-          <div className="brand-name">Lindero</div>
+          <div className="brand-name">TerraCuota</div>
           <div className="brand-sub">Gestión de lotes</div>
         </div>
 

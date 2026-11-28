@@ -19,7 +19,7 @@ describe("a test-site build", () => {
   it("is hidden from search engines and named in the browser tab", () => {
     const html = testSiteHtml(realHtml);
     assert.match(html, /<meta name="robots" content="noindex, nofollow">/);
-    assert.match(html, /<title>PRUEBA · Lindero<\/title>/);
+    assert.match(html, /<title>PRUEBA · TerraCuota<\/title>/);
   });
 
   it("colours the phone's status bar, so it does not look like the real app", () => {
@@ -27,9 +27,9 @@ describe("a test-site build", () => {
     assert.doesNotMatch(testSiteHtml(realHtml), /<meta name="theme-color" content="#FCF9F5">/);
   });
 
-  it("installs under another name, so the share sheet does not list two Linderos", () => {
+  it("installs under another name, so the share sheet does not list two TerraCuotas", () => {
     const manifest = JSON.parse(testSiteManifest(realManifest));
-    assert.equal(manifest.name, "PRUEBA Lindero");
+    assert.equal(manifest.name, "PRUEBA TerraCuota");
     assert.equal(manifest.short_name, "PRUEBA");
     assert.notEqual(manifest.theme_color, JSON.parse(realManifest).theme_color);
     // Everything else stays, so the share target can be tried on the test site.

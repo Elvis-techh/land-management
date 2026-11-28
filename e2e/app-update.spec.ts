@@ -35,7 +35,7 @@ test("a newer version on the server is offered as a reload", async ({ page }) =>
   );
 
   await comeBack();
-  await expect(offer).toContainText("Hay una versión nueva de Lindero.");
+  await expect(offer).toContainText("Hay una versión nueva de TerraCuota.");
 
   // «Luego» puts it away until the next time the app is back on screen.
   await offer.getByRole("button", { name: "Luego" }).click();

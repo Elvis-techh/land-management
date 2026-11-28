@@ -88,7 +88,7 @@ describe("describeUndeliveredShare", () => {
       received,
     );
 
-    assert.match(notice, /^Lo compartido llegó a Lindero sin la imagen\./);
+    assert.match(notice, /^Lo compartido llegó a TerraCuota sin la imagen\./);
     assert.match(notice, /recibido: text: 0 caracteres; title: 0 caracteres/);
   });
 
@@ -119,7 +119,7 @@ describe("describeUndeliveredShare", () => {
   it("stays a plain sentence when there is no detail to add", () => {
     assert.equal(
       describeUndeliveredShare({ status: "missing" }, null),
-      "Lo compartido llegó, pero ya no estaba guardado al abrir Lindero. Adjunta el comprobante aquí abajo.",
+      "Lo compartido llegó, pero ya no estaba guardado al abrir TerraCuota. Adjunta el comprobante aquí abajo.",
     );
   });
 });

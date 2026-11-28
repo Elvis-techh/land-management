@@ -103,10 +103,10 @@ export function describeUndeliveredShare(
     outcome.status === "failed"
       ? "No se pudo leer lo que compartiste."
       : outcome.status === "missing"
-        ? "Lo compartido llegó, pero ya no estaba guardado al abrir Lindero."
+        ? "Lo compartido llegó, pero ya no estaba guardado al abrir TerraCuota."
         : outcome.status === "unreadable"
           ? "Lo compartido llegó, pero este teléfono no dejó leerlo."
-          : "Lo compartido llegó a Lindero sin la imagen.";
+          : "Lo compartido llegó a TerraCuota sin la imagen.";
 
   const details = [
     received ? `recibido: ${received}` : null,
