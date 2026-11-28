@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 #
-# Runbook step 14: put Lindero's test site on this droplet.
+# Runbook step 14: put Lindero's test site on this droplet, beside the live one.
 #
-# Run once, as root, in the droplet console (it logs you in as root). The address
-# must already point here, with the grey cloud in Cloudflare:
+# Run as root, in the droplet console (it logs you in as root), naming the
+# address the test site will have. It must already point here, with the grey
+# cloud in Cloudflare, and the live site must already be running:
 #
-#   bash /opt/lindero/deploy/setup-test-site.sh
+#   bash /opt/lindero/deploy/setup-test-site.sh prueba.example.com
+#
+# After that first run the address is in the site's settings, so it can be left
+# out. It works on either droplet: where the weight software is, it also proves
+# that it was left alone.
 #
 # What it does, reporting each part and stopping at the first problem:
 #
@@ -13,9 +18,11 @@
 #   2. Makes the test site's own user, folder and settings, with secrets made
 #      here. It also makes sure that user cannot read the live site's files.
 #   3. Adds its Nginx site and certificate. Nginx is checked first and reloaded,
-#      never restarted, because the scale stations come in through it too.
+#      never restarted, because every other site on the machine, the scale
+#      stations' one included, comes in through it too.
 #   4. Installs its services, runs the first deploy and adds the demo data.
-#   5. Checks that bascula-central and the live site did not notice.
+#   5. Checks that the live site, and bascula-central where it runs, did not
+#      notice.
 #
 # What it never does: restart bascula-central, Lindero or Nginx, change their
 # settings, or read bascula's files. It never prints a password.
@@ -29,15 +36,19 @@ set -euo pipefail
 
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/site-settings.sh" test
 
-HOST=prueba-lindero.basculacentral.com
-LIVE_HOST=lindero.basculacentral.com
+# The weight software's folder is how a script knows it is on droplet 1.
+BASCULA_DIR=/root/weight_software
 BASCULA_HOST=api.basculacentral.com
 LIVE_REPO=/opt/lindero
+LIVE_NGINX_SITE=/etc/nginx/sites-available/lindero
+NGINX_ENABLED=/etc/nginx/sites-enabled
+# The live site's Nginx steps put these there (runbook 9b and 9d), and the test
+# site's Nginx file includes them.
+SNIPPETS=(/etc/nginx/snippets/lindero-headers.conf /etc/nginx/snippets/lindero-api-gzip.conf)
 ORIGIN=https://github.com/Elvis-techh/land-management.git
 NGINX_SOURCE=$SCRIPTS/nginx-test-site.conf
 NGINX_SITE=/etc/nginx/sites-available/lindero-test
 NGINX_LINK=/etc/nginx/sites-enabled/lindero-test
-CERT=/etc/letsencrypt/live/$HOST/fullchain.pem
 WEBROOT=/var/www/certbot
 PM2_PID_FILE=/root/.pm2/pm2.pid
 LIVE_MODE_RECORD=$STATE_DIR/live-folder-mode-before-test-site
@@ -69,10 +80,45 @@ env_file() {
     "TEST_SITE_ASSOCIATE_PASSWORD=$3"
 }
 
+# The test site's Nginx file with its address filled in.
+site_file() {
+  sed "s/__TEST_HOST__/$HOST/g" "$NGINX_SOURCE"
+}
+
 # The plain-http part of the site alone: all a certificate check needs, and valid
 # before there is a certificate to name.
 http_half() {
-  sed -n '1,/^}/p' "$NGINX_SOURCE"
+  site_file | sed -n '1,/^}/p'
+}
+
+# A full name in small letters, such as prueba.example.com. It is written into
+# Nginx's settings, so nothing else gets through.
+valid_host() {
+  [[ $1 =~ ^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$ ]]
+}
+
+# The first address an Nginx site file answers to. Nothing if there is no file.
+site_host() {
+  [[ -f $1 ]] || return 0
+  awk '$1 == "server_name" { sub(/;.*/, "", $2); print $2; exit }' "$1"
+}
+
+# The address a test site already set up was given. Nothing before that.
+recorded_host() {
+  [[ -f $1 ]] || return 0
+  sed -n 's#^FRONTEND_ORIGIN=https://##p' "$1" | head -n 1
+}
+
+# Whether an Nginx site file answers to ADDRESS, as any of its names.
+answers_to() {
+  awk -v host="$2" '$1 == "server_name" {
+    for (i = 2; i <= NF; i++) {
+      name = $i
+      last = sub(/;.*/, "", name)
+      if (name == host) found = 1
+      if (last) break
+    }
+  } END { exit !found }' "$1"
 }
 
 # PID and every process below it, one per line, parents first.
@@ -96,10 +142,19 @@ fail() {
   exit 1
 }
 
+unknown() {
+  fail "Unknown option '$1'. Run it with the test site's address, with --undo, or, once it is set up, with nothing."
+}
+(($# <= 1)) || unknown "$*"
+ASKED=""
 case ${1:-} in
   "") mode=apply ;;
   --undo) mode=undo ;;
-  *) fail "Unknown option '$1'. Run it with nothing, or with --undo." ;;
+  *)
+    valid_host "$1" || unknown "$1"
+    mode=apply
+    ASKED=$1
+    ;;
 esac
 [[ $EUID -eq 0 ]] || fail "Run it as root (the droplet console logs you in as root)."
 
@@ -135,12 +190,26 @@ lindero_pid() {
   systemctl show lindero-api -p MainPID --value 2>/dev/null || true
 }
 
+# Nothing for an address that does not exist, instead of ending the script.
 ipv4_of() {
-  getent ahostsv4 "$1" | awk 'NR == 1 { print $1 }'
+  getent ahostsv4 "$1" | awk 'NR == 1 { print $1 }' || true
 }
 
+has_weight_software() {
+  [[ -d $BASCULA_DIR ]]
+}
+
+ENV_FILE=$REPO/backend/.env
+LIVE_HOST=$(site_host "$LIVE_NGINX_SITE")
+RECORDED=$(recorded_host "$ENV_FILE")
+HOST=${ASKED:-$RECORDED}
+CERT=/etc/letsencrypt/live/$HOST/fullchain.pem
+
 undo() {
-  echo "==> Taking the test site out. bascula-central and the live site are not touched."
+  echo "==> Taking the test site out. The live site is not touched."
+  if has_weight_software; then
+    echo "    bascula-central is not touched either."
+  fi
   systemctl disable --now "$TIMER" 2>/dev/null || true
   systemctl stop "$UPDATER" 2>/dev/null || true
   systemctl disable --now "$SERVICE" 2>/dev/null || true
@@ -154,7 +223,8 @@ undo() {
     echo "!! Nginx refuses its configuration for another reason, so it was not reloaded. Send Claude a screenshot."
   fi
 
-  if [[ -f $CERT ]]; then
+  # Never the live site's certificate, whatever the settings say.
+  if [[ -n $HOST && $HOST != "$LIVE_HOST" && -f $CERT ]]; then
     certbot delete --cert-name "$HOST" --non-interactive || echo "!! The certificate could not be deleted. It does no harm."
   fi
 
@@ -170,7 +240,9 @@ undo() {
     echo "    live folder: back to how it was"
   fi
   echo "==> Done. The test site is gone."
-  echo "    Live site: $(code "$LIVE_HOST" /api/health)   expect 200"
+  if [[ -n $LIVE_HOST ]]; then
+    echo "    Live site: $(code "$LIVE_HOST" /api/health)   expect 200"
+  fi
 }
 
 if [[ $mode == undo ]]; then
@@ -186,6 +258,29 @@ for needed in "$NGINX_SOURCE" "$UNIT_SOURCE" "$SCRIPTS/$UPDATER" "$SCRIPTS/$TIME
   [[ -f $needed ]] || fail "$needed is not on the droplet yet: run 'cd $LIVE_REPO && sudo -u lindero -H git fetch --quiet origin main && sudo -u lindero -H git merge --ff-only origin/main' first. Nothing was changed."
 done
 
+[[ -n $LIVE_HOST ]] ||
+  fail "The live site is not set up on this droplet yet ($LIVE_NGINX_SITE names no address), and the test site goes in after it. Nothing was changed."
+for needed in "${SNIPPETS[@]}"; do
+  [[ -f $needed ]] || fail "$needed is not there yet: the live site's Nginx steps add it (runbook 9b and 9d). Nothing was changed."
+done
+
+[[ -n $HOST ]] ||
+  fail "Give the test site's address, e.g.: bash setup-test-site.sh prueba.example.com. Nothing was changed."
+valid_host "$HOST" ||
+  fail "'$HOST', from $ENV_FILE, is not an address. Nothing was changed. Send Claude a screenshot."
+[[ -z $RECORDED || $RECORDED == "$HOST" ]] ||
+  fail "The test site is already set up at $RECORDED. To move it, run this with --undo first, which erases its data. Nothing was changed."
+# Two sites with one address: Nginx accepts that and sends visitors to only one
+# of them, which could take the other down.
+[[ $HOST != "$LIVE_HOST" ]] ||
+  fail "$HOST is the live site's address. The test site needs one of its own. Nothing was changed."
+for other in "$NGINX_ENABLED"/*; do
+  [[ -e $other && $other != "$NGINX_LINK" ]] || continue
+  if answers_to "$other" "$HOST"; then
+    fail "$HOST already belongs to another site on this droplet ($other). The test site needs one of its own. Nothing was changed."
+  fi
+done
+
 AVAILABLE_MB=$(free -m | awk '/^Mem:/ { print $7 }')
 echo "    memory available: $AVAILABLE_MB MB   need $MIN_AVAILABLE_MB"
 ((AVAILABLE_MB >= MIN_AVAILABLE_MB)) || fail "Not enough memory free beside the scale stations. Nothing was changed. Send Claude a screenshot."
@@ -194,12 +289,12 @@ FREE_DISK_GB=$(df --output=avail -BG / | tail -n 1 | tr -dc '0-9')
 echo "    disk free:        $FREE_DISK_GB GB   need $MIN_FREE_DISK_GB"
 ((FREE_DISK_GB >= MIN_FREE_DISK_GB)) || fail "Not enough disk free. Nothing was changed. Send Claude a screenshot."
 
-# The scale stations' own address is on this machine, so it is what the new
-# address must match. A Cloudflare orange cloud shows up here as a different one.
-THIS_MACHINE=$(ipv4_of "$BASCULA_HOST")
+# It must be one of this droplet's own addresses. A Cloudflare orange cloud
+# shows up here as one that is not.
+THIS_MACHINE=" $(hostname -I) "
 THE_ADDRESS=$(ipv4_of "$HOST")
-echo "    $HOST: ${THE_ADDRESS:-not found}   expect $THIS_MACHINE"
-[[ -n $THE_ADDRESS && $THE_ADDRESS == "$THIS_MACHINE" ]] ||
+echo "    $HOST: ${THE_ADDRESS:-not found}   expect this droplet's IP"
+[[ -n $THE_ADDRESS && $THIS_MACHINE == *" $THE_ADDRESS "* ]] ||
   fail "$HOST does not point at this droplet. In Cloudflare it needs an A record with this droplet's IP and the grey cloud (DNS only). Nothing was changed."
 
 if ss -ltnH | awk '{ print $4 }' | grep -qE ":$DEFAULT_PORT\$" && ! systemctl is-active --quiet "$SERVICE"; then
@@ -209,13 +304,18 @@ fi
 nginx_accepts || fail "Nginx refuses its configuration before this script touched it, so reloading could take every site down. Nothing was changed. Send Claude a screenshot."
 echo "    nginx configuration: accepted"
 
-BASCULA_BEFORE=$(code "$BASCULA_HOST" /api/health)
 LIVE_BEFORE=$(code "$LIVE_HOST" /api/health)
-TREE_BEFORE=$(pm2_tree)
 LINDERO_BEFORE=$(lindero_pid)
-echo "    bascula-central: $BASCULA_BEFORE, live site: $LIVE_BEFORE"
+echo "    live site ($LIVE_HOST): $LIVE_BEFORE"
 [[ $LIVE_BEFORE == 200 ]] || fail "The live site is not answering 200 before the change. Nothing was changed. Send Claude a screenshot."
-[[ -n $TREE_BEFORE ]] || fail "bascula-central's PM2 could not be found, so this could not prove it was left alone. Nothing was changed. Send Claude a screenshot."
+if has_weight_software; then
+  BASCULA_BEFORE=$(code "$BASCULA_HOST" /api/health)
+  TREE_BEFORE=$(pm2_tree)
+  echo "    bascula-central: $BASCULA_BEFORE"
+  [[ -n $TREE_BEFORE ]] || fail "bascula-central's PM2 could not be found, so this could not prove it was left alone. Nothing was changed. Send Claude a screenshot."
+else
+  echo "    weight software: not on this droplet"
+fi
 
 # --- 2. Its own user, folder and settings. -------------------------------------
 
@@ -235,7 +335,6 @@ if [[ ! -d $REPO/.git ]]; then
   sudo -u "$SITE_USER" -H git -C "$REPO" remote add origin "$ORIGIN"
 fi
 
-ENV_FILE=$REPO/backend/.env
 if [[ -f $ENV_FILE ]]; then
   echo "    settings: already there, passwords kept"
 else
@@ -271,10 +370,12 @@ if EXPOSED=$(readable_by_test_site); then
   fi
 fi
 echo "    live site's secrets and database: closed to the test site"
-if sudo -u "$SITE_USER" -H test -r /root/weight_software; then
-  fail "bascula-central's folder can be read by the test site's user. Stopping. Send Claude a screenshot."
+if has_weight_software; then
+  if sudo -u "$SITE_USER" -H test -r "$BASCULA_DIR"; then
+    fail "bascula-central's folder can be read by the test site's user. Stopping. Send Claude a screenshot."
+  fi
+  echo "    bascula-central's folder:         closed to the test site"
 fi
-echo "    bascula-central's folder:         closed to the test site"
 
 # --- 3. Nginx and the certificate. ---------------------------------------------
 
@@ -314,7 +415,7 @@ if ! said=$(timeout 300 certbot renew --dry-run --no-random-sleep-on-renew --cer
 fi
 echo "    renewal: rehearsed"
 
-cp "$NGINX_SOURCE" "$NGINX_SITE"
+site_file >"$NGINX_SITE"
 ln -sf "$NGINX_SITE" "$NGINX_LINK"
 if ! nginx_accepts; then
   http_half >"$NGINX_SITE"
@@ -354,14 +455,11 @@ fi
 echo "==> 5. Checking everything"
 TEST_HEALTH=$(code "$HOST" /api/health)
 TEST_PAGE=$(code "$HOST" /)
-BASCULA_AFTER=$(code "$BASCULA_HOST" /api/health)
 LIVE_AFTER=$(code "$LIVE_HOST" /api/health)
-TREE_AFTER=$(pm2_tree)
 LINDERO_AFTER=$(lindero_pid)
 
 echo "    test site:       page $TEST_PAGE, API $TEST_HEALTH   expect 200, 200"
 echo "    live site:       $LIVE_AFTER   expect 200"
-echo "    bascula-central: $BASCULA_AFTER   expect $BASCULA_BEFORE"
 TEST_MEMORY=$(systemctl show "$SERVICE" -p MemoryCurrent --value 2>/dev/null || true)
 if [[ $TEST_MEMORY =~ ^[0-9]+$ ]]; then
   echo "    test site memory: $((TEST_MEMORY / 1048576)) MB   cap 150"
@@ -370,12 +468,18 @@ echo "    memory available: $(free -m | awk '/^Mem:/ { print $7 }') MB"
 
 problem=0
 [[ $TEST_HEALTH == 200 && $TEST_PAGE == 200 ]] || problem=1
-[[ $LIVE_AFTER == 200 && $BASCULA_AFTER == "$BASCULA_BEFORE" ]] || problem=1
-if [[ "$(sort <<<"$TREE_BEFORE")" == "$(sort <<<"$TREE_AFTER")" ]]; then
-  echo "    bascula-central was not restarted: the same processes are running."
-else
-  echo "!!  PM2's process list changed while this ran. PM2 restarts programs on its own sometimes."
-  problem=1
+[[ $LIVE_AFTER == 200 ]] || problem=1
+if has_weight_software; then
+  BASCULA_AFTER=$(code "$BASCULA_HOST" /api/health)
+  TREE_AFTER=$(pm2_tree)
+  echo "    bascula-central: $BASCULA_AFTER   expect $BASCULA_BEFORE"
+  [[ $BASCULA_AFTER == "$BASCULA_BEFORE" ]] || problem=1
+  if [[ "$(sort <<<"$TREE_BEFORE")" == "$(sort <<<"$TREE_AFTER")" ]]; then
+    echo "    bascula-central was not restarted: the same processes are running."
+  else
+    echo "!!  PM2's process list changed while this ran. PM2 restarts programs on its own sometimes."
+    problem=1
+  fi
 fi
 if [[ $LINDERO_BEFORE == "$LINDERO_AFTER" ]]; then
   echo "    the live site was not restarted: the same process is running."

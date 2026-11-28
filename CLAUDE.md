@@ -13,6 +13,8 @@ never build on it. Mechanics and error messages: docs/github-actions-deploy.md.
 succeeded. The droplet installs the build within about three minutes.
 
 - Claude reaches the droplet only via `ssh lindero-ops <action>` (docs/claude-ops-key.md).
+  The second droplet (docs/second-droplet.md) does not serve Lindero yet; Claude only
+  reads it, via `ssh lindero-ops-2 <action>`.
 - Proof it is live, when the cloud environment allows `lindero.basculacentral.com`:
   `/api/health` answers, and the `/assets/index-*.js` in the live page matches the
   one on `deploy-build`. Screens behind the login need the owner: ask them to check

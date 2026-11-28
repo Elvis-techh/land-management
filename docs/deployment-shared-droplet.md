@@ -847,8 +847,12 @@ Once, in the droplet console. In Cloudflare, `prueba-lindero` must already be an
 bringing in `main` fails:
 
 ```bash
-cd /opt/lindero && sudo -u lindero -H git fetch --quiet origin main && sudo -u lindero -H git merge --ff-only origin/main && bash /opt/lindero/deploy/setup-test-site.sh
+cd /opt/lindero && sudo -u lindero -H git fetch --quiet origin main && sudo -u lindero -H git merge --ff-only origin/main && bash /opt/lindero/deploy/setup-test-site.sh prueba-lindero.basculacentral.com
 ```
+
+The address is only needed the first time: the script keeps it in the site's
+settings. The same script sets up the test site on
+[the second droplet](second-droplet.md), under its own address.
 
 It checks there is room and nothing in the way before changing anything. It then
 makes the site's user, folder and settings, adds its Nginx site and certificate,
