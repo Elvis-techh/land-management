@@ -384,6 +384,38 @@ describe("the Deploy test workflow", () => {
     assert.doesNotMatch(workflow, /VITE_GOOGLE/);
   });
 
+  // The workflow is read from `main` and the build comes from the branch, so a
+  // check that asked for the product's name would refuse the branch that renames it.
+  describe("its check that a build says it is the test site", () => {
+    const [, block = ""] =
+      /- name: The build says it is the test site\n\s+run: \|\n([\s\S]*?)\n\n {6}- name:/.exec(workflow) ?? [];
+
+    /** Runs the step's own script, as GitHub does, on a build holding these three files. */
+    const check = (name: string, shortName: string, robots: string, script: string) => {
+      const folder = mkdtempSync(join(tmpdir(), "test-site-check-"));
+      mkdirSync(join(folder, "frontend", "dist", "assets"), { recursive: true });
+      writeFileSync(join(folder, "frontend", "dist", "index.html"), `<title>${name}</title>${robots}\n`);
+      writeFileSync(
+        join(folder, "frontend", "dist", "manifest.webmanifest"),
+        JSON.stringify({ name, short_name: shortName }, null, 2),
+      );
+      writeFileSync(join(folder, "frontend", "dist", "assets", "index.js"), script);
+      return spawnSync("bash", ["-e", "-c", block], { cwd: folder, encoding: "utf8" }).status;
+    };
+    const noindex = '<meta name="robots" content="noindex, nofollow">';
+
+    it("passes a test-site build, whatever the product is called", () => {
+      assert.equal(check("PRUEBA Lindero", "PRUEBA", noindex, "SITIO DE PRUEBA"), 0);
+      assert.equal(check("PRUEBA Otro Nombre", "PRUEBA", noindex, "SITIO DE PRUEBA"), 0);
+    });
+
+    it("refuses a build that is missing any one of the test site's marks", () => {
+      assert.equal(check("Otro Nombre", "PRUEBA", noindex, "SITIO DE PRUEBA"), 1);
+      assert.equal(check("PRUEBA Otro Nombre", "PRUEBA", "", "SITIO DE PRUEBA"), 1);
+      assert.equal(check("PRUEBA Otro Nombre", "PRUEBA", noindex, "the real site"), 1);
+    });
+  });
+
   it("does not put what was typed straight into a script", () => {
     const script = workflow.replace(/env:\n(?:\s+\w+: .*\n)+/g, "");
     assert.doesNotMatch(script.replace(/ref: \$\{\{ inputs\.branch \}\}/, ""), /\$\{\{ inputs\./);

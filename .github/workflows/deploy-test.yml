@@ -58,10 +58,13 @@ jobs:
         run: VITE_TEST_COMMIT=$(git rev-parse --short HEAD) npm run build
 
       # A build that looks like the real site must never go out as the test site.
+      # The installed app's name is matched by its «PRUEBA » only: this file is
+      # read from `main`, so asking for the product's name too would refuse the
+      # branch that renames it.
       - name: The build says it is the test site
         run: |
           if ! grep -q noindex frontend/dist/index.html \
-            || ! grep -q "PRUEBA Lindero" frontend/dist/manifest.webmanifest \
+            || ! grep -q '"name": "PRUEBA ' frontend/dist/manifest.webmanifest \
             || ! grep -q "SITIO DE PRUEBA" frontend/dist/assets/*.js; then
             echo "::error::This build does not show «SITIO DE PRUEBA». The branch is probably older than the banner: bring it up to date with main and run this again."
             exit 1
