@@ -1,13 +1,19 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 
 const repo = join(import.meta.dirname, "..", "..");
 const source = (path: string) => readFileSync(join(repo, path), "utf8");
-const HOST = "prueba-lindero.basculacentral.com";
+
+/** The two kinds of droplet it runs on: with the weight software, and without. */
+const DROPLETS = {
+  one: { host: "prueba-lindero.basculacentral.com", live: "lindero.basculacentral.com", ip: "159.89.84.60", weightSoftware: true },
+  two: { host: "prueba.example.com", live: "app.example.com", ip: "203.0.113.7", weightSoftware: false },
+} as const;
+const HOST = DROPLETS.one.host;
 
 /*
  * deploy/setup-test-site.sh runs as root on the machine the scale stations
@@ -16,7 +22,8 @@ const HOST = "prueba-lindero.basculacentral.com";
  * that needs root or the real machine. Each stand-in writes to a log, and a
  * marker file makes it misbehave, so each failure can be walked through.
  */
-function droplet() {
+function droplet(kind: keyof typeof DROPLETS = "one") {
+  const { host, live, ip, weightSoftware } = DROPLETS[kind];
   const root = mkdtempSync(join(tmpdir(), "setup-test-site-"));
   const logFile = join(root, "commands.log");
   const env = {
@@ -47,12 +54,11 @@ function droplet() {
   stub("bin/free", `echo "Mem: 961 465 74 3 593 $(cat "$ROOT/available-mb" 2>/dev/null || echo 496)"`);
   stub("bin/df", `printf 'Avail\\n18G\\n'`);
   stub("bin/ss", `cat "$ROOT/ports" 2>/dev/null || echo "LISTEN 0 511 127.0.0.1:3001 0.0.0.0:*"`);
+  // Like the real one, it exits 2 for a name that does not exist.
   stub("bin/getent", `
-    if [[ "$2" == ${HOST} ]]; then
-      if [[ -e "$ROOT/address" ]]; then cat "$ROOT/address"; else echo "159.89.84.60 STREAM ${HOST}"; fi
-    else
-      echo "159.89.84.60 STREAM $2"
-    fi`);
+    if [[ -e "$ROOT/no-such-name" ]]; then exit 2; fi
+    if [[ -e "$ROOT/address" ]]; then cat "$ROOT/address"; else echo "${ip} STREAM $2"; fi`);
+  stub("bin/hostname", `echo "${ip} 10.10.0.5 "`);
   stub("bin/install", `
     args=()
     while [[ $# -gt 0 ]]; do
@@ -96,16 +102,16 @@ function droplet() {
     esac`);
   stub("bin/certbot", `
     if [[ -e "$ROOT/certbot-fails" ]]; then echo "Challenge failed: connection refused"; exit 1; fi
-    live="$ROOT/etc/letsencrypt/live/${HOST}"
+    live="$ROOT/etc/letsencrypt/live/${host}"
     if [[ "$1" == certonly && "$*" != *--dry-run* ]]; then mkdir -p "$live"; touch "$live/fullchain.pem"; fi
     if [[ "$1" == delete ]]; then rm -rf "$live"; fi
     exit 0`);
   stub("bin/curl", `
     url="\${*: -1}"
     case "$url" in
-      *://${HOST}/*)
+      *://${host}/*)
         if [[ -e "$ROOT/test-site-down" || ! -e "$ROOT/deploy-ran" ]]; then echo -n 502; else echo -n 200; fi ;;
-      *://lindero.*) if [[ -e "$ROOT/live-down" ]]; then echo -n 502; else echo -n 200; fi ;;
+      *://${live}/*) if [[ -e "$ROOT/live-down" ]]; then echo -n 502; else echo -n 200; fi ;;
       *) echo -n 200 ;;
     esac`);
   stub("opt/node22/bin/node", `
@@ -138,14 +144,27 @@ function droplet() {
   mkdirSync(join(root, "etc/nginx/sites-enabled"), { recursive: true });
   mkdirSync(join(root, "etc/systemd"), { recursive: true });
   write("www/lindero/frontend/dist/index.html", "the live site\n");
-  write("etc/nginx/sites-available/lindero", "the live site's nginx\n");
-  // A process that really is running, for the script to find as bascula's PM2.
-  write("rootdir/.pm2/pm2.pid", String(process.pid));
+  const liveNginx = `# the live site's nginx\nserver {\n    listen 80;\n    server_name ${live};\n}\n`;
+  write("etc/nginx/sites-available/lindero", liveNginx);
+  symlinkSync(join(root, "etc/nginx/sites-available/lindero"), join(root, "etc/nginx/sites-enabled/lindero"));
+  write("etc/nginx/snippets/lindero-headers.conf", "# headers\n");
+  write("etc/nginx/snippets/lindero-api-gzip.conf", "# gzip\n");
+  if (weightSoftware) {
+    mkdirSync(join(root, "rootdir/weight_software"), { recursive: true });
+    // A process that really is running, for the script to find as bascula's PM2.
+    write("rootdir/.pm2/pm2.pid", String(process.pid));
+  }
 
   const script = join(root, "opt/lindero/deploy/setup-test-site.sh");
   return {
     root,
+    host,
+    live,
+    liveNginx,
+    write,
     run: (...args: string[]) => spawnSync("bash", [script, ...args], { env, encoding: "utf8" }),
+    /** The first run, which names the test site's address. */
+    setup: () => spawnSync("bash", [script, host], { env, encoding: "utf8" }),
     log: () => (existsSync(logFile) ? readFileSync(logFile, "utf8") : ""),
     clearLog: () => writeFileSync(logFile, ""),
     mark: (name: string, text = "") => writeFileSync(join(root, name), text),
@@ -194,6 +213,7 @@ describe("setup-test-site.sh before it changes anything", () => {
 
   for (const [why, marker, text, message] of [
     ["the address does not point here", "address", "", /does not point at this droplet/],
+    ["the address does not exist yet", "no-such-name", "", /does not point at this droplet/],
     ["the address has the orange cloud", "address", `104.21.0.1 STREAM ${HOST}`, /grey cloud/],
     ["memory is short", "available-mb", "299", /Not enough memory/],
     ["its port is taken", "ports", "LISTEN 0 511 127.0.0.1:3101 0.0.0.0:*", /port 3101/],
@@ -203,7 +223,7 @@ describe("setup-test-site.sh before it changes anything", () => {
     it(`stops when ${why}, having changed nothing`, () => {
       const site = droplet();
       site.mark(marker, text);
-      const result = site.run();
+      const result = site.setup();
       assert.equal(result.status, 1);
       assert.match(result.stderr, message);
       assert.match(result.stderr, /Nothing was changed/);
@@ -211,10 +231,66 @@ describe("setup-test-site.sh before it changes anything", () => {
     });
   }
 
+  it("takes only a plain address, and one at a time", () => {
+    for (const args of [["https://prueba.example.com"], ["Prueba.example.com"], ["prueba"], ["prueba.example.com;id"], ["$(id).example.com"], ["a.example.com b.example.com"], ["prueba.example.com", "--undo"]]) {
+      const site = droplet();
+      const result = site.run(...args);
+      assert.equal(result.status, 1, args.join(" "));
+      assert.match(result.stderr, /Unknown option/, args.join(" "));
+      assert.equal(site.log(), "");
+    }
+  });
+
+  for (const [why, prepare, address, message] of [
+    ["no address was given the first time", () => {}, undefined, /Give the test site's address/],
+    ["the address is the live site's", () => {}, DROPLETS.two.live, /is the live site's address/],
+    [
+      "another site on the droplet already has the address",
+      (site: ReturnType<typeof droplet>) => site.write("etc/nginx/sites-enabled/pos", `server {\n    server_name pos.example.com ${DROPLETS.two.host};\n}\n`),
+      DROPLETS.two.host,
+      /already belongs to another site/,
+    ],
+    [
+      "the live site is not set up yet",
+      (site: ReturnType<typeof droplet>) => rmSync(join(site.root, "etc/nginx/sites-available/lindero")),
+      DROPLETS.two.host,
+      /live site is not set up/,
+    ],
+    [
+      "the live site's Nginx snippets are missing",
+      (site: ReturnType<typeof droplet>) => rmSync(join(site.root, "etc/nginx/snippets/lindero-headers.conf")),
+      DROPLETS.two.host,
+      /lindero-headers\.conf is not there/,
+    ],
+  ] as const) {
+    it(`stops when ${why}, having changed nothing`, () => {
+      const site = droplet("two");
+      prepare(site);
+      const result = address ? site.run(address) : site.run();
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, message);
+      assert.match(result.stderr, /Nothing was changed/);
+      assertNothingChanged(site);
+    });
+  }
+
+  it("will not move a test site that is already set up", () => {
+    const site = droplet("two");
+    assert.equal(site.setup().status, 0);
+    site.clearLog();
+
+    const result = site.run("otra.example.com");
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /already set up at prueba\.example\.com/);
+    assert.match(result.stderr, /--undo/);
+    assert.doesNotMatch(site.log(), /^(certbot|systemctl reload)/m);
+    assert.match(site.read("opt/lindero-test/backend/.env"), /^FRONTEND_ORIGIN=https:\/\/prueba\.example\.com$/m);
+  });
+
   it("stops when bascula's PM2 cannot be found, because it could not prove it left it alone", () => {
     const site = droplet();
     site.mark("rootdir/.pm2/pm2.pid", "not a number");
-    const result = site.run();
+    const result = site.setup();
     assert.equal(result.status, 1);
     assert.match(result.stderr, /PM2 could not be found/);
     assertNothingChanged(site);
@@ -224,7 +300,7 @@ describe("setup-test-site.sh before it changes anything", () => {
 describe("setup-test-site.sh when all goes well", () => {
   it("does things in the order that keeps Nginx valid at every moment", () => {
     const site = droplet();
-    const result = site.run();
+    const result = site.setup();
     assert.equal(result.status, 0, result.stderr);
 
     const log = site.log();
@@ -253,31 +329,31 @@ describe("setup-test-site.sh when all goes well", () => {
 
   it("never restarts Nginx or the live site, and never goes near bascula", () => {
     const site = droplet();
-    assert.equal(site.run().status, 0);
+    assert.equal(site.setup().status, 0);
     const log = site.log();
     assert.doesNotMatch(log, /^systemctl restart/m);
     assert.doesNotMatch(log, /^systemctl (stop|start|reload|enable|disable) lindero-api/m);
     assert.doesNotMatch(log, /pm2/);
-    assert.equal(site.read("etc/nginx/sites-available/lindero"), "the live site's nginx\n");
+    assert.equal(site.read("etc/nginx/sites-available/lindero"), site.liveNginx);
     assert.equal(site.read("www/lindero/frontend/dist/index.html"), "the live site\n");
   });
 
   it("asks for a certificate that reloads Nginx when it renews", () => {
     const site = droplet();
-    assert.equal(site.run().status, 0);
+    assert.equal(site.setup().status, 0);
     assert.match(site.log(), /^certbot certonly (?!.*--dry-run).*--webroot.*--deploy-hook systemctl reload nginx/m);
   });
 
   it("does not rehearse the certificate seconds before rehearsing its renewal", () => {
     const site = droplet();
-    assert.equal(site.run().status, 0);
+    assert.equal(site.setup().status, 0);
     assert.doesNotMatch(site.log(), /^certbot certonly .*--dry-run/m);
     assert.match(site.log(), /^certbot renew --dry-run/m);
   });
 
   it("writes its own secrets, readable only by its own user, and never prints them", () => {
     const site = droplet();
-    const result = site.run();
+    const result = site.setup();
     assert.equal(result.status, 0, result.stderr);
 
     const file = "opt/lindero-test/backend/.env";
@@ -310,7 +386,7 @@ describe("setup-test-site.sh when all goes well", () => {
 
   it("fills in the demo data as the test site's user, in its own folder", () => {
     const site = droplet();
-    const result = site.run();
+    const result = site.setup();
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /demo data: Seeded data\/lindero\.db/);
     assert.ok(site.log().indexOf("systemctl start lindero-test-autodeploy.service") < site.log().indexOf("node --env-file=.env dist/db/seed.js"));
@@ -318,11 +394,11 @@ describe("setup-test-site.sh when all goes well", () => {
 
   it("can run twice: it keeps the passwords and does not ask for a second certificate", () => {
     const site = droplet();
-    assert.equal(site.run().status, 0);
+    assert.equal(site.setup().status, 0);
     const first = site.read("opt/lindero-test/backend/.env");
     site.clearLog();
 
-    const result = site.run();
+    const result = site.setup();
     assert.equal(result.status, 0, result.stderr);
     assert.equal(site.read("opt/lindero-test/backend/.env"), first);
     assert.doesNotMatch(site.log(), /^certbot certonly/m);
@@ -330,10 +406,70 @@ describe("setup-test-site.sh when all goes well", () => {
   });
 });
 
+describe("setup-test-site.sh on the droplet without the weight software", () => {
+  it("sets the site up under the address it is given, with nothing about bascula", () => {
+    const site = droplet("two");
+    const result = site.setup();
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /weight software: not on this droplet/);
+    assert.match(result.stdout, /Done\. The test site is at https:\/\/prueba\.example\.com/);
+    assert.match(result.stdout, /the live site was not restarted/);
+    assert.doesNotMatch(result.stdout, /bascula/);
+    assert.doesNotMatch(site.log(), /bascula|weight_software|pm2/);
+
+    const nginx = site.read("etc/nginx/sites-available/lindero-test");
+    assert.equal([...nginx.matchAll(/^ +server_name prueba\.example\.com;$/gm)].length, 2);
+    assert.match(nginx, /ssl_certificate +\/\S+\/live\/prueba\.example\.com\/fullchain\.pem;/);
+    assert.doesNotMatch(nginx, /__TEST_HOST__|basculacentral/);
+    assert.match(site.read("opt/lindero-test/backend/.env"), /^FRONTEND_ORIGIN=https:\/\/prueba\.example\.com$/m);
+    assert.match(site.log(), /^certbot certonly .*-d prueba\.example\.com /m);
+    assert.match(site.log(), /^curl .*https:\/\/app\.example\.com\/api\/health$/m);
+  });
+
+  it("can run again without the address, which it kept", () => {
+    const site = droplet("two");
+    assert.equal(site.setup().status, 0);
+    const first = site.read("opt/lindero-test/backend/.env");
+    const result = site.run();
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(site.read("opt/lindero-test/backend/.env"), first);
+    assert.match(result.stdout, /https:\/\/prueba\.example\.com/);
+  });
+
+  it("still fails loudly if the live site restarted while it ran", () => {
+    const site = droplet("two");
+    site.mark("lindero-restarts");
+    const result = site.setup();
+    assert.equal(result.status, 1);
+    assert.match(result.stdout, /live site's process changed/);
+  });
+
+  it("is taken out again, certificate included", () => {
+    const site = droplet("two");
+    assert.equal(site.setup().status, 0);
+    site.clearLog();
+
+    const result = site.run("--undo");
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(site.log(), /^certbot delete --cert-name prueba\.example\.com /m);
+    assert.ok(!site.exists("opt/lindero-test"));
+    assert.doesNotMatch(result.stdout, /bascula/);
+  });
+
+  it("never deletes the live site's certificate, whatever the test site's settings say", () => {
+    const site = droplet("two");
+    site.write(`etc/letsencrypt/live/${site.live}/fullchain.pem`, "the live site's\n");
+    site.write("opt/lindero-test/backend/.env", `FRONTEND_ORIGIN=https://${site.live}\n`);
+    const result = site.run("--undo");
+    assert.equal(result.status, 0, result.stderr);
+    assert.doesNotMatch(site.log(), /^certbot/m);
+  });
+});
+
 describe("keeping the test site away from the live site's files", () => {
   it("leaves the live folder alone when the test site's user already cannot read into it", () => {
     const site = droplet();
-    assert.equal(site.run().status, 0);
+    assert.equal(site.setup().status, 0);
     assert.doesNotMatch(site.log(), /^chmod o-rx/m);
     assert.ok(!site.exists("var/lindero-autodeploy/live-folder-mode-before-test-site"));
   });
@@ -342,7 +478,7 @@ describe("keeping the test site away from the live site's files", () => {
     const site = droplet();
     site.setMode("opt/lindero", 0o755);
     site.mark("live-readable");
-    const result = site.run();
+    const result = site.setup();
     assert.equal(result.status, 0, result.stderr);
     assert.match(site.log(), /^chmod o-rx .*\/opt\/lindero$/m);
     assert.equal(site.mode("opt/lindero"), "750");
@@ -353,7 +489,7 @@ describe("keeping the test site away from the live site's files", () => {
     const site = droplet();
     site.mark("live-readable");
     site.mark("chmod-does-not-help");
-    const result = site.run();
+    const result = site.setup();
     assert.equal(result.status, 1);
     assert.match(result.stderr, /can still be read/);
     assert.doesNotMatch(site.log(), /^certbot/m);
@@ -363,7 +499,7 @@ describe("keeping the test site away from the live site's files", () => {
   it("stops if bascula's folder can be read", () => {
     const site = droplet();
     site.mark("bascula-readable");
-    const result = site.run();
+    const result = site.setup();
     assert.equal(result.status, 1);
     assert.match(result.stderr, /bascula-central's folder/);
     assert.doesNotMatch(site.log(), /^certbot/m);
@@ -376,7 +512,7 @@ describe("setup-test-site.sh when something goes wrong", () => {
     // Passes the first look, refuses once the test site's file is there.
     site.mark("nginx-refuses-whole-site");
     writeFileSync(join(site.root, "opt/lindero/deploy/nginx-test-site.conf"), "server {\n    listen 443 ssl http2;\n}\n");
-    const result = site.run();
+    const result = site.setup();
     assert.equal(result.status, 1);
     assert.match(result.stderr, /plain-http part/);
     assert.ok(!site.isLink("etc/nginx/sites-enabled/lindero-test"));
@@ -387,7 +523,7 @@ describe("setup-test-site.sh when something goes wrong", () => {
   it("goes back to the plain-http part if Nginx refuses the whole site", () => {
     const site = droplet();
     site.mark("nginx-refuses-whole-site");
-    const result = site.run();
+    const result = site.setup();
     assert.equal(result.status, 1);
     assert.match(result.stderr, /full configuration/);
     assert.doesNotMatch(site.read("etc/nginx/sites-available/lindero-test"), /^ +listen 443/m);
@@ -399,7 +535,7 @@ describe("setup-test-site.sh when something goes wrong", () => {
   it("carries on from where it stopped if the certificate cannot be issued", () => {
     const site = droplet();
     site.mark("certbot-fails");
-    const result = site.run();
+    const result = site.setup();
     assert.equal(result.status, 1);
     assert.match(result.stderr, /certificate could not be issued/);
     assert.match(result.stderr, /carries on from here/);
@@ -408,7 +544,7 @@ describe("setup-test-site.sh when something goes wrong", () => {
     assert.doesNotMatch(site.read("etc/nginx/sites-available/lindero-test"), /^ +listen 443/m);
 
     site.unmark("certbot-fails");
-    const again = site.run();
+    const again = site.setup();
     assert.equal(again.status, 0, again.stderr);
     assert.match(site.read("etc/nginx/sites-available/lindero-test"), /^ +listen 443/m);
   });
@@ -416,7 +552,7 @@ describe("setup-test-site.sh when something goes wrong", () => {
   it("says so if the first deploy fails, and tries that build again on the next run", () => {
     const site = droplet();
     site.mark("first-deploy-fails");
-    const result = site.run();
+    const result = site.setup();
     assert.equal(result.status, 1);
     assert.match(result.stderr, /first deploy failed/);
     assert.doesNotMatch(site.log(), /dist\/db\/seed\.js/);
@@ -425,14 +561,14 @@ describe("setup-test-site.sh when something goes wrong", () => {
     site.mark("var/lindero-autodeploy/last-build-test", "a build that was tried");
     site.unmark("first-deploy-fails");
     site.unmark("deploy-ran");
-    assert.equal(site.run().status, 0);
+    assert.equal(site.setup().status, 0);
     assert.ok(!site.exists("var/lindero-autodeploy/last-build-test"), "the record is cleared so the build is tried again");
   });
 
   it("says so if the demo data cannot be added", () => {
     const site = droplet();
     site.mark("seed-fails");
-    const result = site.run();
+    const result = site.setup();
     assert.equal(result.status, 1);
     assert.match(result.stderr, /demo data could not be added/);
     assert.doesNotMatch(result.stdout, /==> Done/);
@@ -441,7 +577,7 @@ describe("setup-test-site.sh when something goes wrong", () => {
   it("fails loudly if the test site does not answer at the end", () => {
     const site = droplet();
     site.mark("test-site-down");
-    const result = site.run();
+    const result = site.setup();
     assert.equal(result.status, 1);
     assert.match(result.stderr, /Something above is not as expected/);
     assert.doesNotMatch(result.stdout, /==> Done/);
@@ -450,7 +586,7 @@ describe("setup-test-site.sh when something goes wrong", () => {
   it("fails loudly if bascula's processes changed while it ran", () => {
     const site = droplet();
     site.mark("pm2-restarts");
-    const result = site.run();
+    const result = site.setup();
     assert.equal(result.status, 1);
     assert.match(result.stdout, /PM2's process list changed/);
   });
@@ -458,7 +594,7 @@ describe("setup-test-site.sh when something goes wrong", () => {
   it("fails loudly if the live site restarted while it ran", () => {
     const site = droplet();
     site.mark("lindero-restarts");
-    const result = site.run();
+    const result = site.setup();
     assert.equal(result.status, 1);
     assert.match(result.stdout, /live site's process changed/);
   });
@@ -469,7 +605,7 @@ describe("setup-test-site.sh --undo", () => {
     const site = droplet();
     site.setMode("opt/lindero", 0o755);
     site.mark("live-readable");
-    assert.equal(site.run().status, 0);
+    assert.equal(site.setup().status, 0);
     site.clearLog();
 
     const result = site.run("--undo");
@@ -493,7 +629,7 @@ describe("setup-test-site.sh --undo", () => {
     assert.doesNotMatch(site.log(), /^systemctl \S+( --now)? lindero-api/m);
 
     assert.equal(site.read("www/lindero/frontend/dist/index.html"), "the live site\n");
-    assert.equal(site.read("etc/nginx/sites-available/lindero"), "the live site's nginx\n");
+    assert.equal(site.read("etc/nginx/sites-available/lindero"), site.liveNginx);
     assert.ok(site.exists("opt/lindero/deploy/setup-test-site.sh"));
     assert.equal(site.mode("opt/lindero"), "755", "the live folder is back to how it was");
   });
@@ -507,6 +643,12 @@ describe("setup-test-site.sh --undo", () => {
 });
 
 describe("the test site's Nginx file", () => {
+  it("names no address of its own: the script fills it in", () => {
+    const text = source("deploy/nginx-test-site.conf");
+    assert.doesNotMatch(text, /basculacentral/);
+    assert.equal([...text.matchAll(/__TEST_HOST__/g)].length, 4);
+  });
+
   const conf = source("deploy/nginx-test-site.conf");
   const code = conf.split("\n").filter((line) => !line.trim().startsWith("#")).join("\n");
 
@@ -547,12 +689,13 @@ describe("the test site's Nginx file", () => {
   it("has a plain-http part that is valid before there is a certificate", () => {
     const result = spawnSync(
       "bash",
-      ["-c", 'source "$1"; NGINX_SOURCE="$2"; http_half', "setup-test", join(repo, "deploy/setup-test-site.sh"), join(repo, "deploy/nginx-test-site.conf")],
+      ["-c", 'source "$1"; NGINX_SOURCE="$2"; HOST=prueba.example.com; http_half', "setup-test", join(repo, "deploy/setup-test-site.sh"), join(repo, "deploy/nginx-test-site.conf")],
       { encoding: "utf8" },
     );
     assert.equal(result.status, 0, result.stderr);
     const half = result.stdout;
     assert.match(half, /listen 80;/);
+    assert.match(half, /server_name prueba\.example\.com;/);
     assert.match(half, /\.well-known\/acme-challenge/);
     assert.match(half, /root \/var\/www\/certbot;/);
     assert.doesNotMatch(half.split("\n").filter((line) => !line.trim().startsWith("#")).join("\n"), /443|ssl|letsencrypt/);

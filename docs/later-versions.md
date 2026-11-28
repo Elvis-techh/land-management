@@ -53,10 +53,11 @@ What it takes, in this order:
 
 **Two droplets.** Today's droplet keeps the weight software, whose address does
 not change, with the Junta de agua and its test copy. A second 1 GB droplet gets
-Lindero and its test site, so strangers signing up never share a machine with
-the scales. Both with weekly backups, plus Spaces, come to about $19.40 a month
-(prices read 25 Nov 2026). It is not needed until signup is about to open. This
-replaces the earlier plan of one 2 GB droplet.
+Lindero, its test site and later the POS, so strangers signing up never share a
+machine with the scales. Both with weekly backups, plus Spaces, come to about
+$19.40 a month (prices read 25 Nov 2026). This replaces the earlier plan of one
+2 GB droplet. The move, which also changes Lindero's address, has started:
+[second-droplet.md](second-droplet.md) says what is done and what is left.
 
 **Upload limits.** The disk is likely to run out before the memory. Every plan
 needs a limit on uploads, and the free month a small one. Nothing is deleted

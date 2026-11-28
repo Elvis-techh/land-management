@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# The only thing Claude's SSH key may run on the droplet.
+# The only thing Claude's SSH keys may run on a droplet.
 #
 # Installed as a forced command in /root/.ssh/authorized_keys, from a PINNED
 # copy at /usr/local/sbin/lindero-claude-ops (see docs/claude-ops-key.md). The
@@ -12,13 +12,21 @@
 # including extra words, is refused. Nothing the caller sends is ever run.
 #
 #   help             this list
-#   status           both apps' health, memory, disk, Lindero's service, the live build,
-#                    the step 13 guard rails (bascula's place in line, the journal cap),
-#                    the test site, and what else runs here (site, port and program names)
+#   status           the apps' health, memory, disk, Lindero's service, the live build,
+#                    the journal cap, the test site, and what else runs here (site,
+#                    port and program names). Where the weight software is: its health,
+#                    PM2 and place in line when memory runs out. Elsewhere: what
+#                    deploy/setup-new-droplet.sh set up
 #   nginx            Lindero's nginx sites, their snippets, and `nginx -t`
 #   logs             recent Lindero, test site, autodeploy and backup logs, secrets masked
 #   install-headers  runbook step 9d: the browser security headers
 #   undo-headers     takes the step 9d include lines out again
+#
+# The last two edit Nginx, and exist only on the droplet with the weight software
+# (droplet 1). On any other droplet this program only reads.
+#
+# Each site's address is read from its own Nginx file, so a new address needs no
+# change here.
 #
 # Every run is logged: journalctl -t lindero-claude-ops
 
@@ -31,14 +39,22 @@ HEADERS_SOURCE=$REPO/deploy/nginx-headers.conf
 HEADERS_SNIPPET=/etc/nginx/snippets/lindero-headers.conf
 BACKUPS=/root/lindero-nginx-backups
 TEST_SITE=/etc/nginx/sites-available/lindero-test
-LINDERO_HOST=lindero.basculacentral.com
-TEST_HOST=prueba-lindero.basculacentral.com
+# The weight software's folder is how a script knows it is on droplet 1.
+BASCULA_DIR=/root/weight_software
 BASCULA_HOST=api.basculacentral.com
+NODE22=/opt/node22/bin/node
 INCLUDE_LINE='include snippets/lindero-headers.conf;'
 
-ACTIONS=(help status nginx logs install-headers undo-headers)
+READ_ACTIONS=(help status nginx logs)
+CHANGE_ACTIONS=(install-headers undo-headers)
 
 # --- Pure helpers (also used by backend/test/claude-ops.test.ts) -------------
+
+# The first address an Nginx site file answers to. Nothing if there is no file.
+site_host() {
+  [[ -f $1 ]] || return 0
+  awk '$1 == "server_name" { sub(/;.*/, "", $2); print $2; exit }' "$1"
+}
 
 # Masks anything that looks like a secret, so logs and config can be shown.
 redact() {
@@ -71,6 +87,17 @@ if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
   return 0
 fi
 
+# --- This machine -------------------------------------------------------------
+
+has_weight_software() {
+  [[ -d $BASCULA_DIR ]]
+}
+
+ACTIONS=("${READ_ACTIONS[@]}")
+if has_weight_software; then
+  ACTIONS+=("${CHANGE_ACTIONS[@]}")
+fi
+
 # --- The actions --------------------------------------------------------------
 
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
@@ -91,30 +118,77 @@ headers() {
   curl -sI --max-time 10 --resolve "$1:443:127.0.0.1" "https://$1$2" || true
 }
 
-show_help() {
-  echo "Actions: ${ACTIONS[*]}"
-  echo "Send exactly one, e.g.: ssh lindero-ops status"
+# One status line for a site's health through Nginx, if it has an address yet.
+health_through_nginx() {
+  if [[ -n $1 ]]; then
+    echo "health (nginx):  $(code "$1" /api/health)   expect 200   ($1)"
+  else
+    echo "health (nginx):  no Nginx site yet"
+  fi
 }
 
-show_status() {
-  echo "==> Machine"
-  uptime
-  free -m
-  df -h / | tail -n 1
-  echo "journal:         $(journalctl --disk-usage 2>/dev/null | grep -oE '[0-9.]+[KMGT]' | head -n 1 || echo unknown), cap $(grep -hs '^SystemMaxUse=' /etc/systemd/journald.conf.d/*.conf | tail -n 1 || echo none)   expect SystemMaxUse=200M"
+show_help() {
+  echo "Actions: ${ACTIONS[*]}"
+  echo "Send exactly one, for example: status"
+}
 
+# What deploy/setup-new-droplet.sh leaves behind, read only.
+show_setup() {
+  echo "==> Setup (deploy/setup-new-droplet.sh)"
+  echo "swap:            $(swapon --show=NAME,SIZE --noheadings | tr -s ' ' | tr '\n' ' ')  expect /swapfile 2G"
+  echo "nginx:           $(systemctl is-active nginx || true)   expect active"
+  echo "certbot.timer:   $(systemctl is-active certbot.timer || true)   expect active"
+  echo "Node:            $("$NODE22" -v 2>/dev/null || echo missing)   expect v22"
+  echo "SSH passwords:   $(sshd -T 2>/dev/null | awk '$1 == "passwordauthentication" { print $2 }')   expect no"
+  echo "restart needed:  $(if [[ -f /var/run/reboot-required ]]; then echo yes; else echo no; fi)"
+  echo "firewall:        expect active, with 22, 80 and 443 only"
+  ufw status | sed 's/^/  /' || true
+}
+
+show_lindero() {
   echo "==> Lindero"
+  if ! systemctl cat lindero-api >/dev/null 2>&1; then
+    echo "not set up"
+    return
+  fi
   systemctl show lindero-api -p ActiveState -p MainPID -p NRestarts \
     -p ActiveEnterTimestamp -p MemoryCurrent -p MemoryMax
   echo "health (local):  $(curl -s --max-time 5 http://127.0.0.1:3001/api/health || echo 'no answer')"
-  echo "health (nginx):  $(code "$LINDERO_HOST" /api/health)   expect 200"
+  health_through_nginx "$(site_host "$SITE")"
   for unit in lindero-autodeploy.timer lindero-backup.timer nginx; do
     echo "$unit: $(systemctl is-active "$unit" || true)"
   done
   echo "checkout:        $(sudo -u lindero -H git -C "$REPO" log -1 --format='%h %s' || echo unknown)"
   echo "deployed build:  $(cat /var/lib/lindero-autodeploy/last-build 2>/dev/null || echo unknown)"
   echo "live page uses:  $(grep -o 'assets/index-[^"]*\.js' /var/www/lindero/frontend/dist/index.html || echo unknown)"
+}
 
+show_status() {
+  echo "==> Machine"
+  echo "name:            $(hostname)"
+  uptime
+  free -m
+  df -h / | tail -n 1
+  echo "journal:         $(journalctl --disk-usage 2>/dev/null | grep -oE '[0-9.]+[KMGT]' | head -n 1 || echo unknown), cap $(grep -hs '^SystemMaxUse=' /etc/systemd/journald.conf.d/*.conf | tail -n 1 || echo none)   expect SystemMaxUse=200M"
+
+  if ! has_weight_software; then
+    show_setup
+  fi
+  show_lindero
+  if has_weight_software; then
+    show_bascula
+  fi
+  show_test_site
+
+  # What else shares this droplet. Names and sizes only, never process arguments.
+  echo "==> Everything on this machine"
+  echo "nginx sites:     $(ls /etc/nginx/sites-enabled | tr '\n' ' ')"
+  echo "listening:       $(ss -ltnH | awk '{ print $4 }' | sort -u | tr '\n' ' ')"
+  echo "largest programs (MB):"
+  ps -eo rss=,comm= --sort=-rss | head -n 10 | awk '{ printf "  %5d  %s\n", $1 / 1024, $2 }'
+}
+
+show_bascula() {
   echo "==> bascula-central"
   echo "port 3000:       $(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:3000/ || true)   expect 401"
   echo "through nginx:   $(code "$BASCULA_HOST" /api/health)"
@@ -142,33 +216,36 @@ show_status() {
   else
     echo "pm2: daemon not running (not started from here)"
   fi
+}
 
+show_test_site() {
   echo "==> Lindero test site"
   if systemctl cat lindero-test-api >/dev/null 2>&1; then
     systemctl show lindero-test-api -p ActiveState -p MainPID -p NRestarts \
       -p ActiveEnterTimestamp -p MemoryCurrent -p MemoryPeak -p MemoryMax
     echo "health (local):  $(curl -s --max-time 5 http://127.0.0.1:3101/api/health || echo 'no answer')"
-    echo "health (nginx):  $(code "$TEST_HOST" /api/health)   expect 200"
-    echo "hidden from search engines: $(headers "$TEST_HOST" / | grep -ci '^x-robots-tag:' || true)   expect 1"
+    local test_host
+    test_host=$(site_host "$TEST_SITE")
+    health_through_nginx "$test_host"
+    if [[ -n $test_host ]]; then
+      echo "hidden from search engines: $(headers "$test_host" / | grep -ci '^x-robots-tag:' || true)   expect 1"
+    fi
     echo "lindero-test-autodeploy.timer: $(systemctl is-active lindero-test-autodeploy.timer || true)"
     echo "deployed build:  $(cat /var/lib/lindero-autodeploy/last-build-test 2>/dev/null || echo unknown)"
     echo "page uses:       $(grep -o 'assets/index-[^"]*\.js' /var/www/lindero-test/frontend/dist/index.html || echo unknown)"
   else
     echo "not set up"
   fi
-
-  # What else shares this droplet. Names and sizes only, never process arguments.
-  echo "==> Everything on this machine"
-  echo "nginx sites:     $(ls /etc/nginx/sites-enabled | tr '\n' ' ')"
-  echo "listening:       $(ss -ltnH | awk '{ print $4 }' | sort -u | tr '\n' ' ')"
-  echo "largest programs (MB):"
-  ps -eo rss=,comm= --sort=-rss | head -n 10 | awk '{ printf "  %5d  %s\n", $1 / 1024, $2 }'
 }
 
 show_nginx() {
-  echo "==> $SITE"
-  redact <"$SITE"
-  echo "==> sites-enabled/lindero -> $(readlink -f "$SITE_LINK")"
+  if [[ -f $SITE ]]; then
+    echo "==> $SITE"
+    redact <"$SITE"
+    echo "==> sites-enabled/lindero -> $(readlink -f "$SITE_LINK")"
+  else
+    echo "==> $SITE: not set up"
+  fi
   if [[ -f $TEST_SITE ]]; then
     echo "==> $TEST_SITE"
     redact <"$TEST_SITE"
@@ -179,6 +256,7 @@ show_nginx() {
     echo "$(sha256sum "$snippet" | cut -c1-12)  $snippet"
   done
   for source in "$REPO"/deploy/nginx-*.conf; do
+    [[ -e $source ]] || continue
     echo "$(sha256sum "$source" | cut -c1-12)  $source"
   done
   echo "==> nginx -t"
@@ -223,7 +301,8 @@ install_headers() {
     fail "$HEADERS_SOURCE is not on the droplet yet: run the Deploy workflow first. Nothing changed."
 
   echo "==> Before"
-  local lindero_before bascula_before
+  local lindero_before bascula_before LINDERO_HOST
+  LINDERO_HOST=$(site_host "$SITE")
   lindero_before=$(code "$LINDERO_HOST" /api/health)
   bascula_before=$(code "$BASCULA_HOST" /api/health)
   echo "Lindero $lindero_before, bascula $bascula_before"
@@ -285,7 +364,8 @@ install_headers() {
 
 undo_headers() {
   check_site_link
-  local site_copy new_site bascula_before
+  local site_copy new_site bascula_before LINDERO_HOST
+  LINDERO_HOST=$(site_host "$SITE")
   bascula_before=$(code "$BASCULA_HOST" /api/health)
   site_copy=$(backup_site)
   echo "backup: $site_copy"
