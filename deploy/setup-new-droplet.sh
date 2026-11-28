@@ -40,8 +40,8 @@ fail() {
 
 # --- 1. The right machine. Nothing changes until this has passed. -------------
 
-NAME=${1:-}
-[[ $NAME =~ ^[a-z][a-z0-9-]{1,30}$ ]] ||
+MACHINE=${1:-}
+[[ $MACHINE =~ ^[a-z][a-z0-9-]{1,30}$ ]] ||
   fail "Give the machine's name, e.g.: bash setup-new-droplet.sh apps-02"
 [[ $EUID -eq 0 ]] || fail "Run it as root."
 
@@ -51,10 +51,14 @@ for sign in /root/weight_software /root/.pm2 /opt/zoilabe-test; do
     fail "This is droplet 1 ($sign is here). Nothing was changed. Check the IP address."
 done
 
-# shellcheck disable=SC1091
-source /etc/os-release
-[[ $ID == ubuntu && $VERSION_ID == 24.04 ]] ||
-  fail "This needs Ubuntu 24.04; this is $PRETTY_NAME. Nothing was changed."
+# One setting from the system's description of itself. Read apart from this
+# script: the file sets variables of its own, NAME among them.
+os_setting() {
+  # shellcheck disable=SC1091
+  (source /etc/os-release && printf '%s' "${!1}")
+}
+[[ $(os_setting ID) == ubuntu && $(os_setting VERSION_ID) == 24.04 ]] ||
+  fail "This needs Ubuntu 24.04; this is $(os_setting PRETTY_NAME). Nothing was changed."
 [[ $(uname -m) == x86_64 ]] || fail "This needs a 64-bit Intel or AMD droplet. Nothing was changed."
 
 # --- 2. Name, updates and programs. -------------------------------------------
@@ -62,12 +66,14 @@ source /etc/os-release
 echo "==> Waiting for the new droplet to finish starting"
 cloud-init status --wait >/dev/null 2>&1 || true
 
-echo "==> Name: $NAME"
-hostnamectl set-hostname "$NAME"
+echo "==> Name: $MACHINE"
+hostnamectl set-hostname "$MACHINE"
 # Without these, a restart puts the old name back and sudo cannot find the new one.
 mkdir -p /etc/cloud/cloud.cfg.d
 echo "preserve_hostname: true" >/etc/cloud/cloud.cfg.d/99-hostname.cfg
-grep -qE "^127\.0\.1\.1[[:space:]]+$NAME\$" /etc/hosts || echo "127.0.1.1 $NAME" >>/etc/hosts
+# A new droplet may already list its name there, possibly among others.
+grep -qE "^127\.0\.1\.1[[:space:]]([^#]*[[:space:]])?$MACHINE([[:space:]]|\$)" /etc/hosts ||
+  echo "127.0.1.1 $MACHINE" >>/etc/hosts
 
 echo "==> System updates and programs (a few minutes)"
 export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a
@@ -165,7 +171,9 @@ check() {
 }
 has_swap() { [[ -n $(swapon --show --noheadings) ]]; }
 firewall_on() { ufw status | grep -q '^Status: active'; }
+has_name() { [[ $(hostname) == "$MACHINE" ]]; }
 
+check "name is $MACHINE" has_name
 check "swap on" has_swap
 check "firewall on" firewall_on
 check "nginx running" systemctl is-active --quiet nginx

@@ -10,6 +10,26 @@ const repo = join(import.meta.dirname, "..", "..");
 const source = (path: string) => readFileSync(join(repo, path), "utf8");
 
 /*
+ * /etc/os-release as Ubuntu ships it, every kind of line included. A shorter
+ * stand-in once hid a bug: the file sets NAME, and reading it into the setup
+ * script replaced the machine's new name with "Ubuntu".
+ */
+const osRelease = (id: string, version: string, name: string) =>
+  [
+    `PRETTY_NAME="${name} ${version} LTS"`,
+    `NAME="${name}"`,
+    `VERSION_ID="${version}"`,
+    `VERSION="${version} LTS (Noble Numbat)"`,
+    "VERSION_CODENAME=noble",
+    `ID=${id}`,
+    "ID_LIKE=debian",
+    'HOME_URL="https://www.ubuntu.com/"',
+    "UBUNTU_CODENAME=noble",
+    "LOGO=ubuntu-logo",
+    "",
+  ].join("\n");
+
+/*
  * deploy/setup-new-droplet.sh and deploy/setup-claude-access.sh run as root on
  * droplet 2. These run the REAL scripts against a throwaway copy of a new
  * machine, with stand-ins that log every command; a marker file makes one
@@ -75,9 +95,11 @@ function newMachine() {
   const checksum = createHash("sha256").update(readFileSync(join(root, `download/${version}.tar.xz`))).digest("hex");
   write("download/SHASUMS256.txt", `${"0".repeat(64)}  node-v22.99.0-linux-arm64.tar.xz\n${checksum}  ${version}.tar.xz\n`);
 
-  for (const quiet of ["cloud-init", "hostnamectl", "apt-get", "sysctl", "mkswap"]) {
+  for (const quiet of ["cloud-init", "apt-get", "sysctl", "mkswap"]) {
     stub(quiet, `[[ ! -e "$ROOT/${quiet}-fails" ]]`);
   }
+  stub("hostnamectl", `[[ -e "$ROOT/name-does-not-stick" ]] || echo "$2" > "$ROOT/hostname"`);
+  stub("hostname", `cat "$ROOT/hostname" 2>/dev/null || echo ubuntu`);
   stub("uname", `cat "$ROOT/arch" 2>/dev/null || echo x86_64`);
   stub("fallocate", `echo swap > "\${@: -1}"`);
   stub("swapon", `
@@ -100,7 +122,7 @@ function newMachine() {
   stub("reboot", "exit 0");
   stub("shutdown", "exit 0");
 
-  write("etc/os-release", 'ID=ubuntu\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04 LTS"\n');
+  write("etc/os-release", osRelease("ubuntu", "24.04", "Ubuntu"));
   write("etc/hosts", "127.0.0.1 localhost\n");
   write("etc/fstab", "LABEL=cloudimg-rootfs / ext4 defaults 0 1\n");
   mkdirSync(join(root, "etc/sysctl.d"), { recursive: true });
@@ -146,8 +168,8 @@ describe("setup-new-droplet.sh before it changes anything", () => {
   }
 
   for (const [why, file, text, message] of [
-    ["another Ubuntu", "etc/os-release", 'ID=ubuntu\nVERSION_ID="26.04"\nPRETTY_NAME="Ubuntu 26.04"\n', /needs Ubuntu 24\.04/],
-    ["another system", "etc/os-release", 'ID=debian\nVERSION_ID="24.04"\nPRETTY_NAME="Debian"\n', /needs Ubuntu 24\.04/],
+    ["another Ubuntu", "etc/os-release", osRelease("ubuntu", "26.04", "Ubuntu"), /needs Ubuntu 24\.04; this is Ubuntu 26\.04 LTS/],
+    ["another system", "etc/os-release", osRelease("debian", "24.04", "Debian"), /needs Ubuntu 24\.04; this is Debian/],
     ["another processor", "arch", "aarch64\n", /64-bit Intel or AMD/],
   ] as const) {
     it(`refuses ${why}`, () => {
@@ -182,6 +204,33 @@ describe("setup-new-droplet.sh on a new machine", () => {
     for (const name of ["nginx", "certbot", "rclone", "git", "rsync", "ufw", "build-essential"]) {
       assert.match(machine.log(), new RegExp(`^apt-get .* install -y .*\\b${name}\\b`, "m"), name);
     }
+  });
+
+  it("gives the machine the name it was asked to, not the system's own", () => {
+    const machine = newMachine();
+    const result = machine.run("apps-02");
+    assert.equal(result.status, 0, result.stderr + result.stdout);
+    assert.deepEqual([...machine.log().matchAll(/^hostnamectl set-hostname (.*)$/gm)].map((match) => match[1]), ["apps-02"]);
+    assert.equal(machine.read("hostname").trim(), "apps-02");
+    assert.doesNotMatch(machine.read("etc/hosts"), /Ubuntu/);
+    assert.match(result.stdout, /ok {7}name is apps-02/);
+  });
+
+  it("does not say it is ready if the name did not take", () => {
+    const machine = newMachine();
+    machine.mark("name-does-not-stick");
+    const result = machine.run("apps-02");
+    assert.equal(result.status, 1);
+    assert.match(result.stdout, /PROBLEM {2}name is apps-02/);
+    assert.doesNotMatch(result.stdout, /LISTO/);
+  });
+
+  it("adds no second line for a name the droplet already lists", () => {
+    // The line a new droplet writes itself, with the name twice.
+    const machine = newMachine();
+    machine.write("etc/hosts", "127.0.1.1 apps-02 apps-02\n127.0.0.1 localhost\n");
+    assert.equal(machine.run("apps-02").status, 0);
+    assert.equal(machine.read("etc/hosts"), "127.0.1.1 apps-02 apps-02\n127.0.0.1 localhost\n");
   });
 
   it("opens SSH before it turns the firewall on, and opens nothing but the web besides", () => {

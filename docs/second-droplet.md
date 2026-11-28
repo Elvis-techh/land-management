@@ -1,9 +1,12 @@
 # The second droplet
 
 `apps-02` is a second DigitalOcean droplet, for Lindero, its test site and later
-the POS. The first one keeps the weight software, whose address does not change,
-and the Junta de agua. So strangers who sign up for Lindero never share a
-machine with the scales.
+the POS. The first one, `apps-01` (it was called `ubuntu-server` until now, which
+older pages and screenshots still show), keeps the weight software, whose address
+does not change, and the Junta de agua. So strangers who sign up for Lindero
+never share a machine with the scales.
+
+Before pasting anything into a droplet's console, check the name in its prompt.
 
 **It does not serve Lindero yet.** The live site and the test site are still on
 the first droplet ([deployment-shared-droplet.md](deployment-shared-droplet.md)),
@@ -55,7 +58,7 @@ into droplet 2 would hold nothing of the weight software's.
 its apps: updates, 2 GB of swap, the journal capped at 200 MB, a firewall for
 SSH and the web only, Nginx with certificate renewal, and Node 22 in
 `/opt/node22`. It installs no app. It refuses to run on droplet 1, and running
-it twice is safe.
+it twice is safe. It ends with a report, which includes the machine's name.
 
 In a terminal on the laptop, in the repository's folder. First the droplet's
 address:
